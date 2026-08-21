@@ -68,6 +68,35 @@ NUM_TO_MONTH_ABBR = {v: k for k, v in MONTH_ABBR_TO_NUM.items()}
 CONTINUOUS_SUFFIX = re.compile(r'([1-9])!$', re.IGNORECASE)
 DERIVATIVE_PREFIX = re.compile(r'^(MCXFO|MCX|NSECD|NSEFO|NCDEX|BSEFO|BSECD|MSEI|CDS):', re.IGNORECASE)
 
+COMMODITY_MULTIPLIERS = {
+    "CRUDEOIL": 100.0,
+    "CRUDEOILM": 10.0,
+    "NATURALGAS": 1250.0,
+    "NATURALGASM": 250.0,
+    "GOLD": 100.0,
+    "GOLDM": 10.0,
+    "GOLDPETAL": 1.0,
+    "SILVER": 30.0,
+    "SILVERM": 5.0,
+    "SILVERMIC": 1.0,
+    "COPPER": 2500.0,
+    "ZINC": 5000.0,
+    "LEAD": 5000.0,
+    "ALUMINI": 1000.0,
+    "ALUMINIUM": 5000.0,
+    "COTTON": 25.0,
+    "MCXBULLDEX": 50.0,
+}
+
+def get_contract_multiplier(symbol: str, exch_seg: str = "") -> float:
+    if exch_seg and exch_seg not in ("MCXFO", "NCDEX"):
+        return 1.0
+    clean = resolve_symbol_smart(symbol)
+    for root, mult in COMMODITY_MULTIPLIERS.items():
+        if clean.startswith(root) or root in clean:
+            return mult
+    return 1.0
+
 COMMON_ALIASES = {
     "NIFTY50": "NIFTY",
     "NIFTYBANK": "BANKNIFTY",
@@ -602,6 +631,51 @@ def get_live_price(instrument_id, exch_seg):
         logger.error(f"get_live_price parse failure for instrument {instrument_id}: {e}")
     return None
 
+def get_live_prices_batch(instrument_pairs):
+    """Batch queries live quotes for a list of (instrument_id, exch_seg) tuples."""
+    if not instrument_pairs:
+        return {}
+    md_token, md_base_url = get_marketdata_token()
+    if not md_token:
+        return {}
+
+    inst_list = []
+    seen = set()
+    for iid, seg in instrument_pairs:
+        if iid and (iid, seg) not in seen:
+            seen.add((iid, seg))
+            inst_list.append({"exchangeSegment": SEGMENT_MAP.get(seg, 51), "exchangeInstrumentID": int(iid)})
+
+    if not inst_list:
+        return {}
+
+    url = f"{md_base_url}/instruments/quotes"
+    headers = {"authorization": md_token, "Content-Type": "application/json"}
+    payload = {
+        "instruments": inst_list,
+        "xtsMessageCode": 1512, "publishFormat": "JSON",
+    }
+    prices = {}
+    try:
+        response = api_session.post(url, headers=headers, json=payload, timeout=5)
+        data = response.json()
+        if data.get('type') == 'success':
+            list_quotes = data.get('result', {}).get('listQuotes', [])
+            if isinstance(list_quotes, list):
+                for raw in list_quotes:
+                    try:
+                        quote_data = json.loads(raw) if isinstance(raw, str) else raw
+                        touchline = quote_data.get('Touchline') or {}
+                        ltp = float(quote_data.get('LastTradedPrice') or touchline.get('LastTradedPrice', 0) or 0)
+                        iid = int(quote_data.get('ExchangeInstrumentID', 0) or touchline.get('ExchangeInstrumentID', 0))
+                        if iid and ltp > 0:
+                            prices[iid] = ltp
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.error(f"Batch quotes fetch error: {e}")
+    return prices
+
 def _get_daily_risk_file():
     data_dir = getattr(config, "DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(data_dir, "daily_risk_state.json")
@@ -840,7 +914,8 @@ def place_order(action, symbol, quantity, tv_price, order_ref):
     raw_limit_price = (base_price + buffer) if action == "BUY" else (base_price - buffer)
     execution_price = apply_tick_size(raw_limit_price, tick_size, action)
 
-    order_val = base_price * execution_qty
+    contract_mult = get_contract_multiplier(symbol, exch_seg)
+    order_val = base_price * execution_qty * contract_mult
     max_val = getattr(config, "MAX_ORDER_VALUE_INR", 5000000.0)
     if order_val > max_val:
         logger.error(f"POSITION VALUE SHIELD: Order value Rs {order_val:,.2f} exceeds cap Rs {max_val:,.2f}.")
@@ -1019,6 +1094,10 @@ def get_positions_telemetry():
         total_unrealized = 0.0
         total_realized = 0.0
 
+        # Batch query all live quotes in a single network request
+        batch_pairs = [(int(p.get("ExchangeInstrumentId", 0)), p.get("ExchangeSegment", "MCXFO")) for p in positions_raw]
+        live_prices_map = get_live_prices_batch(batch_pairs)
+
         for p in positions_raw:
             sym = p.get("TradingSymbol", "")
             inst_id = int(p.get("ExchangeInstrumentId", 0))
@@ -1029,8 +1108,8 @@ def get_positions_telemetry():
             buy_avg = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0))
             sell_avg = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0))
             
-            ltp = get_live_price(inst_id, exch_seg)
-            if not ltp or ltp == "TOKEN_EXPIRED":
+            ltp = live_prices_map.get(inst_id)
+            if not ltp:
                 ltp = float(p.get("LastTradedPrice", 0) or buy_avg)
 
             unrealized_pnl = 0.0
@@ -1121,32 +1200,41 @@ def panic_square_off_all():
             action = "SELL" if qty > 0 else "BUY"
             square_qty = abs(qty)
 
+            # Dynamic tick size & freeze quantity lookup
+            _, _, _, inst_tick, _, inst_freeze, _ = get_dynamic_contract_info(sym)
+            tick_size = inst_tick or 0.05
+            freeze_limit = inst_freeze or getattr(config, "DEFAULT_FREEZE_QTY_IF_UNKNOWN", 100000)
+
             live_price = get_live_price(inst_id, exch_seg) or float(p.get("BuyAveragePrice", 100))
-            tick_size = 0.05
             buffer = max(live_price * 0.01, tick_size * 10)
             raw_limit = (live_price + buffer) if action == "BUY" else (live_price - buffer)
             exec_price = apply_tick_size(raw_limit, tick_size, action)
 
-            order_ref = f"PANIC_{int(time.time()*1000)}"
-            order_url = f"{safe_url}/orders"
-            payload = {
-                "exchangeSegment": exch_seg,
-                "exchangeInstrumentID": inst_id,
-                "productType": prod_type,
-                "orderType": "LIMIT",
-                "orderSide": action,
-                "timeInForce": "DAY",
-                "disclosedQuantity": 0,
-                "orderQuantity": square_qty,
-                "limitPrice": exec_price,
-                "stopPrice": 0,
-                "apiOrderSource": "WEBAPI",
-                "orderUniqueIdentifier": order_ref,
-                "clientID": client_id,
-            }
-            res = api_session.post(order_url, headers=headers, json=payload, timeout=5).json()
-            results.append({"symbol": sym, "action": action, "qty": square_qty, "result": res})
-            logger.critical(f"🚨 PANIC SQUARE OFF EXECUTED: {action} {square_qty} of {sym} -> {res}")
+            # Slicing chunk for freeze limits
+            remaining_qty = square_qty
+            while remaining_qty > 0:
+                chunk_qty = min(remaining_qty, freeze_limit)
+                order_ref = f"PANIC_{int(time.time()*1000)}"
+                order_url = f"{safe_url}/orders"
+                payload = {
+                    "exchangeSegment": exch_seg,
+                    "exchangeInstrumentID": inst_id,
+                    "productType": prod_type,
+                    "orderType": "LIMIT",
+                    "orderSide": action,
+                    "timeInForce": "DAY",
+                    "disclosedQuantity": 0,
+                    "orderQuantity": chunk_qty,
+                    "limitPrice": exec_price,
+                    "stopPrice": 0,
+                    "apiOrderSource": "WEBAPI",
+                    "orderUniqueIdentifier": order_ref,
+                    "clientID": client_id,
+                }
+                res = api_session.post(order_url, headers=headers, json=payload, timeout=5).json()
+                results.append({"symbol": sym, "action": action, "qty": chunk_qty, "result": res})
+                logger.critical(f"🚨 PANIC SQUARE OFF EXECUTED: {action} {chunk_qty} of {sym} -> {res}")
+                remaining_qty -= chunk_qty
     except Exception as e:
         logger.error(f"Panic square off error: {e}")
         return {"status": "error", "error": str(e)}

@@ -143,3 +143,11 @@ def test_webhook_endpoints():
         res_panic = client.post("/panic", json=panic_payload)
         assert res_panic.status_code == 200
         assert res_panic.json()["status"] == "success"
+
+def test_commodity_multiplier():
+    assert xts_api.get_contract_multiplier("CRUDEOIL1!", "MCXFO") == 100.0
+    assert xts_api.get_contract_multiplier("NATGAS", "MCXFO") == 1250.0
+    assert xts_api.get_contract_multiplier("SILVER", "MCXFO") == 30.0
+    assert xts_api.get_contract_multiplier("GOLD", "MCXFO") == 100.0
+    assert xts_api.get_contract_multiplier("NIFTY", "NSEFO") == 1.0
+    assert xts_api.get_contract_multiplier("RELIANCE", "NSECM") == 1.0

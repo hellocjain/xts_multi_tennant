@@ -5,6 +5,7 @@ import logging
 from contextlib import closing
 from database import get_db_connection
 import docker_manager
+import security
 
 logger = logging.getLogger(__name__)
 
@@ -330,14 +331,25 @@ async def panic_single_client(tenant_id: str, webhook_secret: str) -> dict:
 
 async def panic_all_active_clients() -> dict:
     with closing(get_db_connection()) as conn:
-        tenants = conn.execute("SELECT id FROM tenants WHERE status='ACTIVE'").fetchall()
+        tenants = [dict(r) for r in conn.execute("""
+            SELECT t.id, c.encrypted_payload 
+            FROM tenants t 
+            LEFT JOIN tenant_credentials c ON t.id = c.tenant_id 
+            WHERE t.status='ACTIVE'
+        """).fetchall()]
 
     tasks = []
     async with httpx.AsyncClient() as client:
         for t in tenants:
             t_id = t["id"]
-            # In paper/internal mode, panic endpoint can be triggered with empty secret or fetched secret
-            tasks.append(panic_single_client(t_id, ""))
+            enc = t.get("encrypted_payload")
+            secret = ""
+            if enc:
+                try:
+                    secret = security.decrypt_credentials(enc).get("WEBHOOK_SECRET", "")
+                except Exception:
+                    secret = ""
+            tasks.append(panic_single_client(t_id, secret))
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     summary = []

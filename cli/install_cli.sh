@@ -106,7 +106,7 @@ EOF
 sudo tee /usr/local/bin/xts-backup > /dev/null << 'EOF'
 #!/bin/bash
 echo "📦 Initiating Hot SQLite Multi-Tenant Backup..."
-docker exec xts_portal python3 /app/backup/backup_engine.py || python3 /opt/xts_multi/backup/backup_engine.py
+docker exec xts_portal python3 /opt/xts_multi/backup/backup_engine.py || python3 /opt/xts_multi/backup/backup_engine.py
 EOF
 
 # 9. xts-admin-reset-2fa

@@ -60,6 +60,12 @@ def require_auth(request: Request) -> dict:
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": "/admin/login"}
         )
+    path = request.url.path
+    if not user.get("is_2fa_enabled") and path not in ("/admin/2fa-setup", "/admin/2fa-confirm", "/admin/logout"):
+        raise HTTPException(
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            headers={"Location": "/admin/2fa-setup"}
+        )
     return user
 
 @asynccontextmanager
@@ -504,7 +510,7 @@ async def edit_client_action(
 
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
-@app.get("/admin/clients/{tenant_id}/pause")
+@app.api_route("/admin/clients/{tenant_id}/pause", methods=["GET", "POST"])
 async def pause_client(tenant_id: str, user: dict = Depends(require_auth)):
     with closing(database.get_db_connection()) as conn:
         with conn:
@@ -514,7 +520,7 @@ async def pause_client(tenant_id: str, user: dict = Depends(require_auth)):
     database.record_audit(user["username"], "PAUSE_CLIENT", {}, tenant_id)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
-@app.get("/admin/clients/{tenant_id}/resume")
+@app.api_route("/admin/clients/{tenant_id}/resume", methods=["GET", "POST"])
 async def resume_client(tenant_id: str, user: dict = Depends(require_auth)):
     with closing(database.get_db_connection()) as conn:
         with conn:
@@ -524,7 +530,7 @@ async def resume_client(tenant_id: str, user: dict = Depends(require_auth)):
     database.record_audit(user["username"], "RESUME_CLIENT", {}, tenant_id)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
-@app.get("/admin/clients/{tenant_id}/restart")
+@app.api_route("/admin/clients/{tenant_id}/restart", methods=["GET", "POST"])
 async def restart_client(tenant_id: str, user: dict = Depends(require_auth)):
     docker_manager.restart_client_container(tenant_id)
     database.record_audit(user["username"], "RESTART_CONTAINER", {}, tenant_id)
@@ -668,51 +674,19 @@ async def settings_page(request: Request, user: dict = Depends(require_auth)):
 
 @app.post("/admin/settings/backup")
 async def trigger_manual_backup(request: Request, user: dict = Depends(require_auth)):
-    import tarfile, tempfile, shutil
     try:
-        data_root = docker_manager.get_client_data_root()
-        backup_dir = os.path.abspath(os.path.join(os.path.dirname(data_root), "backups"))
-        os.makedirs(backup_dir, exist_ok=True)
+        import sys
+        backup_dir_path = os.path.abspath(os.path.join(os.path.dirname(PORTAL_DIR), "backup"))
+        if backup_dir_path not in sys.path:
+            sys.path.insert(0, backup_dir_path)
+        import backup_engine
 
-        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # 1. Hot snapshot of portal.db via VACUUM INTO
-            portal_db_path = database.get_db_path()
-            snap_portal = os.path.join(tmp_dir, "portal_snapshot.db")
-            with closing(database.get_db_connection()) as conn:
-                conn.execute(f"VACUUM INTO '{snap_portal}'")
+        passphrase = os.environ.get("BACKUP_PASSPHRASE", "DefaultBackupPassphrase123!")
+        backup_file = backup_engine.create_backup_archive(passphrase)
+        filename = os.path.basename(backup_file)
 
-            # 2. Copy tenant databases and states
-            tenants_dir = os.path.join(tmp_dir, "tenants")
-            os.makedirs(tenants_dir, exist_ok=True)
-            if os.path.exists(data_root):
-                for t_id in os.listdir(data_root):
-                    t_path = os.path.join(data_root, t_id)
-                    if os.path.isdir(t_path):
-                        dest_t = os.path.join(tenants_dir, t_id)
-                        os.makedirs(dest_t, exist_ok=True)
-                        for fname in ["signals.db", "daily_risk_state.json", "config.json"]:
-                            src_f = os.path.join(t_path, fname)
-                            if os.path.exists(src_f):
-                                shutil.copy2(src_f, os.path.join(dest_t, fname))
-
-            # 3. Create tar archive
-            tar_path = os.path.join(tmp_dir, "backup.tar.gz")
-            with tarfile.open(tar_path, "w:gz") as tar:
-                tar.add(snap_portal, arcname="portal.db")
-                tar.add(tenants_dir, arcname="tenants")
-
-            # 4. Encrypt archive with Fernet master key
-            with open(tar_path, "rb") as tf:
-                raw_bytes = tf.read()
-            encrypted_data = security.get_fernet().encrypt(raw_bytes)
-
-            final_file = os.path.join(backup_dir, f"backup_{now_str}.enc")
-            with open(final_file, "wb") as bf:
-                bf.write(encrypted_data)
-
-        database.record_audit(user["username"], "MANUAL_BACKUP_CREATED", {"backup_file": f"backup_{now_str}.enc"})
-        return RedirectResponse(url=f"/admin/settings?msg=Backup+backup_{now_str}.enc+created+and+encrypted+successfully!", status_code=303)
+        database.record_audit(user["username"], "MANUAL_BACKUP_CREATED", {"backup_file": filename})
+        return RedirectResponse(url=f"/admin/settings?msg=Backup+{filename}+created+and+encrypted+successfully!", status_code=303)
     except Exception as e:
         logger.error(f"Backup trigger failed: {e}")
         return RedirectResponse(url=f"/admin/settings?err=Backup+failed:+{str(e)}", status_code=303)
@@ -720,9 +694,32 @@ async def trigger_manual_backup(request: Request, user: dict = Depends(require_a
 @app.post("/admin/settings/ip-allowlist")
 async def update_ip_allowlist(request: Request, allowed_ips: str = Form(...), user: dict = Depends(require_auth)):
     try:
+        clean_ips = allowed_ips.strip()
+        os.environ["ADMIN_ALLOWED_IPS"] = clean_ips
+        
+        # Persist to .env if present
+        env_path = os.path.join(database.get_portal_data_dir(), ".env")
+        if os.path.exists(env_path):
+            try:
+                lines = []
+                found = False
+                with open(env_path, "r") as f:
+                    for line in f:
+                        if line.startswith("ADMIN_ALLOWED_IPS="):
+                            lines.append(f"ADMIN_ALLOWED_IPS={clean_ips}\n")
+                            found = True
+                        else:
+                            lines.append(line)
+                if not found:
+                    lines.append(f"ADMIN_ALLOWED_IPS={clean_ips}\n")
+                with open(env_path, "w") as f:
+                    f.writelines(lines)
+            except Exception as e:
+                logger.warning(f"Could not persist allowlist to .env: {e}")
+
         # Update and re-sync Caddy config
         caddy_manager.sync_caddy_config()
-        database.record_audit(user["username"], "UPDATE_IP_ALLOWLIST", {"allowed_ips": allowed_ips})
+        database.record_audit(user["username"], "UPDATE_IP_ALLOWLIST", {"allowed_ips": clean_ips})
         return RedirectResponse(url="/admin/settings?msg=Admin+IP+allowlist+updated+successfully!", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/admin/settings?err=Failed+to+update+allowlist:+{str(e)}", status_code=303)
@@ -754,6 +751,35 @@ async def rotate_master_key(request: Request, new_master_key: str = Form(...), u
                     conn.execute("UPDATE admin_users SET totp_secret_enc=? WHERE id=?", (re_enc_totp, a_id))
 
         os.environ["PORTAL_MASTER_KEY"] = new_key_str
+
+        # Persist new master key to .env on disk
+        env_path = os.path.join(database.get_portal_data_dir(), ".env")
+        if os.path.exists(env_path):
+            try:
+                lines = []
+                found = False
+                with open(env_path, "r") as f:
+                    for line in f:
+                        if line.startswith("PORTAL_MASTER_KEY="):
+                            lines.append(f"PORTAL_MASTER_KEY={new_key_str}\n")
+                            found = True
+                        else:
+                            lines.append(line)
+                if not found:
+                    lines.append(f"PORTAL_MASTER_KEY={new_key_str}\n")
+                with open(env_path, "w") as f:
+                    f.writelines(lines)
+                os.chmod(env_path, 0o400)
+            except Exception as e:
+                logger.warning(f"Could not persist new master key to .env: {e}")
+
+        # Re-write client config files
+        for r in rows:
+            try:
+                docker_manager.write_client_config(r["tenant_id"])
+            except Exception:
+                pass
+
         database.record_audit(user["username"], "ROTATE_MASTER_VAULT_KEY", {"re_encrypted_tenants": len(rows), "re_encrypted_admins": len(admin_rows)})
         return RedirectResponse(url="/admin/settings?msg=Master+key+rotated+and+vault+re-encrypted+successfully!", status_code=303)
     except Exception as e:
