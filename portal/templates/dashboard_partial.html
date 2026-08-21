@@ -262,6 +262,15 @@
     {% endfor %}
 </div>
 
+<!-- Empty Cards Fallback Message -->
+<div id="noCardsMatchedMsg" class="hidden bg-cardbg border border-bordercolor rounded-2xl p-12 text-center mt-2">
+    <div class="w-12 h-12 rounded-2xl bg-slate-900 border border-bordercolor flex items-center justify-center mx-auto text-slate-500 mb-3">
+        <i data-lucide="filter" class="w-6 h-6"></i>
+    </div>
+    <h3 class="text-sm font-bold text-slate-300">No client accounts match this filter</h3>
+    <p class="text-xs text-slate-500 mt-1">Try selecting "All" or adjusting your search query.</p>
+</div>
+
 <!-- DENSE TABLE VIEW CONTAINER (Hidden by default, toggled via View Switcher) -->
 <div id="denseTableViewContainer" class="hidden bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl mt-2">
     <div class="overflow-x-auto">
@@ -341,6 +350,14 @@
                     </td>
                 </tr>
                 {% endfor %}
+                <tr id="noRowsMatchedMsg" class="hidden">
+                    <td colspan="9" class="px-6 py-12 text-center text-slate-500 font-sans">
+                        <div class="w-10 h-10 rounded-xl bg-slate-900 border border-bordercolor flex items-center justify-center mx-auto text-slate-500 mb-2">
+                            <i data-lucide="filter" class="w-5 h-5"></i>
+                        </div>
+                        <p class="text-xs font-semibold text-slate-300">No client accounts match this filter</p>
+                    </td>
+                </tr>
             </tbody>
         </table>
     </div>

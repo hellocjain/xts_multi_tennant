@@ -136,10 +136,8 @@
         viewMode: savedViewMode
     };
 
-    function setClientFilter(filter) {
-        window.DashboardState.activeFilter = filter;
-        
-        // Highlight active filter pill
+    function updateActiveFilterButtonUI() {
+        const filter = window.DashboardState.activeFilter;
         document.querySelectorAll('.client-filter-btn').forEach(btn => {
             btn.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
             btn.classList.add('text-slate-400', 'font-medium');
@@ -149,6 +147,11 @@
             activeBtn.classList.remove('text-slate-400', 'font-medium');
             activeBtn.classList.add('bg-brand-600', 'text-white', 'font-semibold');
         }
+    }
+
+    function setClientFilter(filter) {
+        window.DashboardState.activeFilter = filter;
+        updateActiveFilterButtonUI();
         applyFilters();
     }
 
@@ -171,9 +174,13 @@
         const containerTable = document.getElementById('denseTableViewContainer');
 
         if (mode === 'denseTable') {
-            if (table) {
-                table.classList.remove('hidden');
-                table.style.display = 'block';
+            if (containerCards) {
+                containerCards.classList.add('hidden');
+                containerCards.style.display = 'none';
+            }
+            if (containerTable) {
+                containerTable.classList.remove('hidden');
+                containerTable.style.display = 'block';
             }
             if (btnCards) {
                 btnCards.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
@@ -184,13 +191,13 @@
                 btnTable.classList.add('bg-brand-600', 'text-white', 'font-semibold');
             }
         } else {
-            if (cards) {
-                cards.classList.remove('hidden');
-                cards.style.display = '';
+            if (containerCards) {
+                containerCards.classList.remove('hidden');
+                containerCards.style.display = '';
             }
-            if (table) {
-                table.classList.add('hidden');
-                table.style.display = 'none';
+            if (containerTable) {
+                containerTable.classList.add('hidden');
+                containerTable.style.display = 'none';
             }
             if (btnTable) {
                 btnTable.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
@@ -227,9 +234,9 @@
 
         // 1. Filter Cards
         document.querySelectorAll('.client-card').forEach(card => {
-            const name = card.getAttribute('data-name') || '';
-            const id = card.getAttribute('data-id') || '';
-            const clientId = card.getAttribute('data-client-id') || '';
+            const name = (card.getAttribute('data-name') || '').toLowerCase();
+            const id = (card.getAttribute('data-id') || '').toLowerCase();
+            const clientId = (card.getAttribute('data-client-id') || '').toLowerCase();
             const isPaper = card.getAttribute('data-paper') === '1';
             const netMtm = parseFloat(card.getAttribute('data-net-mtm') || '0');
 
@@ -242,15 +249,15 @@
             else if (filter === 'loss') matchesFilter = netMtm < 0;
 
             const isVisible = matchesQuery && matchesFilter;
-            card.style.display = isVisible ? 'flex' : 'none';
+            card.style.display = isVisible ? '' : 'none';
             if (isVisible) visibleCardsCount++;
         });
 
         // 2. Filter Table Rows
         document.querySelectorAll('.client-table-row').forEach(row => {
-            const name = row.getAttribute('data-name') || '';
-            const id = row.getAttribute('data-id') || '';
-            const clientId = row.getAttribute('data-client-id') || '';
+            const name = (row.getAttribute('data-name') || '').toLowerCase();
+            const id = (row.getAttribute('data-id') || '').toLowerCase();
+            const clientId = (row.getAttribute('data-client-id') || '').toLowerCase();
             const isPaper = row.getAttribute('data-paper') === '1';
             const netMtm = parseFloat(row.getAttribute('data-net-mtm') || '0');
 
@@ -280,8 +287,12 @@
 
     function applyAllDashboardState() {
         updateFilterCounts();
+        updateActiveFilterButtonUI();
         applyViewMode();
         applyFilters();
+        if (window.lucide) {
+            lucide.createIcons();
+        }
     }
 
     // Auto-hook into HTMX events
