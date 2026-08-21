@@ -13,9 +13,15 @@ logger = logging.getLogger(__name__)
 def get_client_data_root():
     if "CLIENT_DATA_ROOT" in os.environ:
         return os.environ["CLIENT_DATA_ROOT"]
+    candidate_opt = "/opt/xts_multi/data"
+    if os.path.exists(candidate_opt):
+        return candidate_opt
     candidate_local = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "local_data", "data"))
     if os.path.exists(candidate_local):
         return candidate_local
+    candidate_parent = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"))
+    if os.path.exists(candidate_parent):
+        return candidate_parent
     return os.path.join(get_portal_data_dir(), "data")
 
 CLIENT_IMAGE = os.environ.get("CLIENT_IMAGE", "xts_bot:latest")
