@@ -115,6 +115,9 @@ def sync_caddy_config() -> bool:
     caddy_config_path = get_caddy_config_path()
     caddy_admin_socket = get_caddy_admin_socket()
     try:
+        if os.path.isdir(caddy_config_path):
+            import shutil
+            shutil.rmtree(caddy_config_path)
         os.makedirs(os.path.dirname(caddy_config_path), exist_ok=True)
         with open(caddy_config_path, "w") as f:
             f.write(content)

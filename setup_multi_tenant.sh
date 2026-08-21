@@ -87,6 +87,12 @@ sudo mkdir -p "$PROJECT_DIR/backups"
 sudo mkdir -p "$PROJECT_DIR/client"
 sudo mkdir -p "$PROJECT_DIR/cli"
 sudo mkdir -p /var/run/caddy
+sudo chmod 777 /var/run/caddy
+
+# Clean up any accidental directory created by docker on failed mounts
+if [ -d "$PROJECT_DIR/caddy/Caddyfile" ]; then
+    sudo rm -rf "$PROJECT_DIR/caddy/Caddyfile"
+fi
 
 # 3. Interactive Domain & Security Setup
 echo ""
@@ -132,6 +138,44 @@ BACKUP_PASSPHRASE=$BACKUP_PASS
 EOF
 sudo chmod 400 "$PROJECT_DIR/backup/.backup_env"
 
+# Generate Initial Caddyfile File (Guarantees valid file exists for Docker bind mount)
+echo "Generating initial Caddy Ingress configuration file..."
+if [ "$DOMAIN_NAME" == ":80" ] || [ -z "$DOMAIN_NAME" ] || [ "$DOMAIN_NAME" == "trading.yourdomain.com" ]; then
+    SITE_ADDR=":80"
+    GLOBAL_BLOCK="{\n    admin \"unix//var/run/caddy/admin.sock\"\n    auto_https off\n}"
+else
+    SITE_ADDR="$DOMAIN_NAME"
+    GLOBAL_BLOCK="{\n    admin \"unix//var/run/caddy/admin.sock\"\n}"
+fi
+
+sudo tee "$PROJECT_DIR/caddy/Caddyfile" > /dev/null << EOF
+# =====================================================================
+# XTS MULTI-TENANT DYNAMIC INGRESS CONFIGURATION (MANAGED BY PORTAL)
+# =====================================================================
+$GLOBAL_BLOCK
+
+$SITE_ADDR {
+    # 1. Hardened Admin Portal Access
+    handle /admin* {
+        reverse_proxy xts_portal:8500 {
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # 2. Root Redirect to Login
+    handle / {
+        redir /admin/login 302
+    }
+
+    # 3. Default Gateway Status
+    handle {
+        respond "XTS Enterprise Gateway Online" 200
+    }
+}
+EOF
+sudo chmod 644 "$PROJECT_DIR/caddy/Caddyfile"
+
 # 4. Copy Code & Build Docker Images
 echo "[4/7] Building Docker images for Client Engine & Admin Portal..."
 # Copy source files to $PROJECT_DIR
@@ -152,6 +196,7 @@ sudo docker build -t xts_portal:latest .
 # 5. Launch Cluster via Docker Compose
 echo "[5/7] Starting Multi-Tenant Cluster Services..."
 cd "$PROJECT_DIR"
+sudo docker compose down --remove-orphans 2>/dev/null || true
 sudo docker compose up -d
 
 # 6. Install CLI Suite
