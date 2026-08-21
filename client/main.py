@@ -295,13 +295,17 @@ async def telemetry():
     health_data = await health()
     pos_data = await anyio.to_thread.run_sync(xts_api.get_positions_telemetry)
     margin_data = await anyio.to_thread.run_sync(xts_api.get_margin_telemetry)
-    recent_signals = await anyio.to_thread.run_sync(db_fetch_recent, 25)
+    recent_signals = await anyio.to_thread.run_sync(db_fetch_recent, 50)
+    broker_orders = await anyio.to_thread.run_sync(xts_api.get_broker_orders)
+    broker_trades = await anyio.to_thread.run_sync(xts_api.get_broker_trades)
     
     return {
         "health": health_data,
         "positions": pos_data,
         "margin": margin_data,
         "recent_signals": recent_signals,
+        "broker_orders": broker_orders,
+        "broker_trades": broker_trades,
         "server_time": time.time()
     }
 

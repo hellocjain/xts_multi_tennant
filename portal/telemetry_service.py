@@ -32,6 +32,8 @@ def build_client_telemetry_dict(
     notional_today: float = 0.0,
     notional_cap: float = 10000000.0,
     notional_pct: float = 0.0,
+    broker_orders: list = None,
+    broker_trades: list = None,
     recent_signals: list = None,
     error: str = None
 ) -> dict:
@@ -59,6 +61,8 @@ def build_client_telemetry_dict(
         "notional_cap": float(notional_cap or 10000000.0),
         "notional_pct": float(notional_pct or 0.0),
         "recent_signals": recent_signals or [],
+        "broker_orders": broker_orders or [],
+        "broker_trades": broker_trades or [],
         "error": error
     }
 
@@ -128,6 +132,8 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
     pos = data.get("positions", {})
     margin = data.get("margin", {})
     recent = data.get("recent_signals", [])
+    broker_orders = data.get("broker_orders", [])
+    broker_trades = data.get("broker_trades", [])
 
     notional_today = float(health.get("notional_today", 0.0))
     notional_cap = float(health.get("notional_cap", 10000000.0))
@@ -174,6 +180,8 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
         notional_today=notional_today,
         notional_cap=notional_cap,
         notional_pct=notional_pct,
+        broker_orders=broker_orders,
+        broker_trades=broker_trades,
         recent_signals=recent,
         error=None
     )

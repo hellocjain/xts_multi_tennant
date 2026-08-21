@@ -1106,7 +1106,7 @@ def get_margin_telemetry():
     }
 
 def get_positions_telemetry():
-    """Fetches live broker positions and computes real-time MTM telemetry."""
+    """Fetches live broker positions (NetWise) and computes real-time MTM telemetry."""
     if getattr(config, "PAPER_TRADE_MODE", False):
         return {
             "is_paper_trade": True,
@@ -1122,7 +1122,7 @@ def get_positions_telemetry():
         return {"error": "Auth failed", "positions": []}
 
     safe_url = get_safe_base_url()
-    url = f"{safe_url}/portfolio/positions?dayOrNet=DayWise"
+    url = f"{safe_url}/portfolio/positions?dayOrNet=NetWise"
     headers = {"authorization": token}
 
     try:
@@ -1223,6 +1223,40 @@ def get_positions_telemetry():
         logger.error(f"Error fetching position telemetry: {e}")
         return {"error": str(e), "positions": []}
 
+def get_broker_orders():
+    """Fetches real-time broker order book."""
+    token = get_interactive_token()
+    if not token:
+        return []
+    safe_url = get_safe_base_url()
+    headers = {"authorization": token}
+    try:
+        resp = api_session.get(f"{safe_url}/orders", headers=headers, timeout=5)
+        if resp.status_code == 200:
+            return resp.json().get("result", []) or []
+    except Exception as e:
+        logger.error(f"Error fetching broker orders: {e}")
+    return []
+
+def get_broker_trades():
+    """Fetches real-time broker trade book."""
+    token = get_interactive_token()
+    if not token:
+        return []
+    safe_url = get_safe_base_url()
+    headers = {"authorization": token}
+    for endpoint in [f"{safe_url}/reports/trades", f"{safe_url}/trades"]:
+        try:
+            resp = api_session.get(endpoint, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                trades = data.get("result", [])
+                if isinstance(trades, list):
+                    return trades
+        except Exception:
+            pass
+    return []
+
 def panic_square_off_all():
     """Emergency Kill-Switch: Cancels all pending orders and squares off all open positions."""
     if getattr(config, "PAPER_TRADE_MODE", False):
@@ -1254,9 +1288,9 @@ def panic_square_off_all():
     except Exception as e:
         logger.error(f"Order cancellation sweep error: {e}")
 
-    # 2. Fetch and square off all open positions
+    # 2. Fetch and square off all open positions (NetWise)
     try:
-        pos_url = f"{safe_url}/portfolio/positions?dayOrNet=DayWise"
+        pos_url = f"{safe_url}/portfolio/positions?dayOrNet=NetWise"
         resp = api_session.get(pos_url, headers=headers, timeout=5)
         if resp.status_code in (400, 401, 403):
             clear_tokens()
