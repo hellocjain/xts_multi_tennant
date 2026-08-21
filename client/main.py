@@ -312,7 +312,31 @@ async def panic(request: Request):
     if expected_secret and not hmac.compare_digest(incoming_secret, expected_secret):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Unauthorized"})
     
+    sig_id = f"panic_{str(uuid.uuid4())[:8]}"
+    panic_ref = f"PANIC_{int(time.time()*1000)}"
+    panic_payload = {
+        "action": "PANIC_SELL",
+        "symbol": "ALL_OPEN",
+        "quantity": 0,
+        "price": 0.0,
+        "order_ref": panic_ref,
+        "source": "admin_portal_killswitch"
+    }
+    db_insert_pending(sig_id, panic_payload)
+
     result = await anyio.to_thread.run_sync(xts_api.panic_square_off_all)
+
+    # Enrich payload with executed details
+    squared_list = result.get("squared_off", []) if isinstance(result, dict) else []
+    if squared_list:
+        total_sq_qty = sum(item.get("qty", 0) for item in squared_list)
+        sym_names = ", ".join(list(set(item.get("symbol", "") for item in squared_list if item.get("symbol"))))
+        panic_payload["quantity"] = total_sq_qty
+        if sym_names:
+            panic_payload["symbol"] = sym_names
+
+    status = "done" if (isinstance(result, dict) and result.get("status") == "success") else "failed"
+    db_update_status(sig_id, status, result)
     return result
 
 @app.post("/")

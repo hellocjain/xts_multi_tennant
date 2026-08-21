@@ -234,13 +234,19 @@
                 <tbody class="divide-y divide-bordercolor/60">
                     {% for s in client.recent_signals %}
                     <tr class="hover:bg-slate-800/40 transition">
-                        <td class="px-5 py-3 text-slate-400">{{ s.received_at }}</td>
-                        <td class="px-4 py-3 font-bold {% if s.payload.action == 'BUY' %}text-green-400{% else %}text-red-400{% endif %}">
-                            {{ s.payload.action }}
+                        <td class="px-5 py-3 text-slate-400 font-mono">{{ s.received_at|inr if False else s.received_at }}</td>
+                        <td class="px-4 py-3 font-bold">
+                            {% if s.payload.action == 'BUY' or s.payload.action == 'LONG' %}
+                            <span class="text-green-400 bg-green-500/10 px-2 py-0.5 rounded border border-green-500/20 text-xs">BUY</span>
+                            {% elif 'PANIC' in s.payload.action %}
+                            <span class="text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 text-xs font-bold animate-pulse">🚨 PANIC</span>
+                            {% else %}
+                            <span class="text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 text-xs">SELL</span>
+                            {% endif %}
                         </td>
                         <td class="px-4 py-3 font-bold text-slate-200">{{ s.payload.symbol }}</td>
-                        <td class="px-4 py-3 text-right">{{ s.payload.quantity }}</td>
-                        <td class="px-4 py-3 text-right">₹{{ s.payload.price }}</td>
+                        <td class="px-4 py-3 text-right font-mono">{{ s.payload.quantity }}</td>
+                        <td class="px-4 py-3 text-right font-mono">{% if s.payload.price %}₹{{ s.payload.price }}{% else %}-{% endif %}</td>
                         <td class="px-4 py-3">
                             <span class="px-2 py-0.5 rounded text-[11px] font-semibold
                                 {% if s.status in ('done', 'paper_done') %}bg-green-500/20 text-green-400
@@ -249,7 +255,7 @@
                                 {{ s.status }}
                             </span>
                         </td>
-                        <td class="px-5 py-3 text-slate-400">{{ s.payload.order_ref }}</td>
+                        <td class="px-5 py-3 text-slate-400 font-mono text-xs">{{ s.payload.order_ref }}</td>
                     </tr>
                     {% else %}
                     <tr>
