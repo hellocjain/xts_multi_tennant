@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 import datetime
@@ -9,12 +10,16 @@ import telemetry_service
 
 logger = logging.getLogger(__name__)
 
-async def run_rolling_cache_warmup(batch_size=4, delay_between_batches_sec=5.0):
+async def run_rolling_cache_warmup(batch_size: int = None, delay_between_batches_sec=3.0):
     """
     Executes a staged rolling restart across all active client containers
     to warm up the Symphony XTS instrument master caches at 08:30 IST without API rate-limit bans.
     """
-    logger.info("🌅 [08:30 IST WARMUP] Initiating Staged Rolling Cache Warmup Engine...")
+    if batch_size is None:
+        cpu_n = os.cpu_count() or 1
+        batch_size = 2 if cpu_n <= 1 else 4
+
+    logger.info(f"🌅 [08:30 IST WARMUP] Initiating Staged Rolling Warmup (Batch Size: {batch_size}, CPU: {os.cpu_count() or 1})...")
     start_time = time.time()
 
     with closing(database.get_db_connection()) as conn:

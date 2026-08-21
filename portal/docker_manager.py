@@ -112,7 +112,8 @@ def provision_client_container(tenant_id: str) -> dict:
                 network=INGRESS_NETWORK,
                 volumes={tenant_data_dir: {"bind": "/app/data", "mode": "rw"}},
                 environment={"DATA_DIR": "/app/data", "CLIENT_ID": tenant_id},
-                mem_limit="384m",
+                mem_reservation="45m",
+                mem_limit="256m",
                 restart_policy={"Name": "unless-stopped"},
                 detach=True
             )

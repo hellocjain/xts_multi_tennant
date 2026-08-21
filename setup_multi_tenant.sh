@@ -39,6 +39,15 @@ else
     echo "✅ Existing swap memory detected (${SWAP_TOTAL}MB)."
 fi
 
+# Kernel Memory Tuning (Locks Active Trading Processes into Fast Physical RAM)
+echo "⚡ Tuning Linux kernel memory parameters for zero-latency execution..."
+sudo sysctl -w vm.swappiness=20 2>/dev/null || true
+sudo sysctl -w vm.vfs_cache_pressure=50 2>/dev/null || true
+sudo tee /etc/sysctl.d/99-xts.conf > /dev/null << 'EOF'
+vm.swappiness=20
+vm.vfs_cache_pressure=50
+EOF
+
 # Detect VPS Public IP Address
 echo "🌐 Probing VPS Public IP address..."
 SERVER_PUBLIC_IP=$(curl -s4 --max-time 3 https://api.ipify.org 2>/dev/null || curl -s4 --max-time 3 https://ifconfig.me 2>/dev/null || curl -s4 --max-time 3 https://icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
