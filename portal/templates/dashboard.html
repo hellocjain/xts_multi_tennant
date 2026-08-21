@@ -81,10 +81,14 @@
 
 <script>
     // Persistent Global Dashboard State
+    const savedViewMode = (function() {
+        try { return localStorage.getItem('dashboard_view_mode') || 'cards'; } catch(e) { return 'cards'; }
+    })();
+
     window.DashboardState = {
         activeFilter: 'all',
         searchQuery: '',
-        viewMode: 'cards' // 'cards' or 'denseTable'
+        viewMode: savedViewMode
     };
 
     function setClientFilter(filter) {
@@ -110,35 +114,52 @@
 
     function setViewMode(mode) {
         window.DashboardState.viewMode = mode;
-        
-        const btnCards = document.getElementById('view-btn-cards');
-        const btnTable = document.getElementById('view-btn-table');
-        
-        if (mode === 'denseTable') {
-            btnCards?.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
-            btnCards?.classList.add('text-slate-400', 'font-medium');
-            btnTable?.classList.remove('text-slate-400', 'font-medium');
-            btnTable?.classList.add('bg-brand-600', 'text-white', 'font-semibold');
-        } else {
-            btnTable?.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
-            btnTable?.classList.add('text-slate-400', 'font-medium');
-            btnCards?.classList.remove('text-slate-400', 'font-medium');
-            btnCards?.classList.add('bg-brand-600', 'text-white', 'font-semibold');
-        }
+        try { localStorage.setItem('dashboard_view_mode', mode); } catch(e) {}
         applyViewMode();
+        applyFilters();
     }
 
     function applyViewMode() {
+        const mode = window.DashboardState.viewMode || 'cards';
         const cards = document.getElementById('cardsViewContainer');
         const table = document.getElementById('denseTableViewContainer');
-        if (!cards || !table) return;
+        const btnCards = document.getElementById('view-btn-cards');
+        const btnTable = document.getElementById('view-btn-table');
 
-        if (window.DashboardState.viewMode === 'denseTable') {
-            cards.classList.add('hidden');
-            table.classList.remove('hidden');
+        if (mode === 'denseTable') {
+            if (cards) {
+                cards.classList.add('hidden');
+                cards.style.display = 'none';
+            }
+            if (table) {
+                table.classList.remove('hidden');
+                table.style.display = 'block';
+            }
+            if (btnCards) {
+                btnCards.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
+                btnCards.classList.add('text-slate-400', 'font-medium');
+            }
+            if (btnTable) {
+                btnTable.classList.remove('text-slate-400', 'font-medium');
+                btnTable.classList.add('bg-brand-600', 'text-white', 'font-semibold');
+            }
         } else {
-            cards.classList.remove('hidden');
-            table.classList.add('hidden');
+            if (cards) {
+                cards.classList.remove('hidden');
+                cards.style.display = '';
+            }
+            if (table) {
+                table.classList.add('hidden');
+                table.style.display = 'none';
+            }
+            if (btnTable) {
+                btnTable.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
+                btnTable.classList.add('text-slate-400', 'font-medium');
+            }
+            if (btnCards) {
+                btnCards.classList.remove('text-slate-400', 'font-medium');
+                btnCards.classList.add('bg-brand-600', 'text-white', 'font-semibold');
+            }
         }
     }
 
@@ -217,18 +238,18 @@
         }
     }
 
-    // Auto-hook into HTMX afterSwap to instantly re-apply active filter and view mode
-    document.addEventListener('htmx:afterSwap', function(evt) {
-        if (evt.detail.target.id === 'dashboardStreamContainer') {
-            updateFilterCounts();
-            applyViewMode();
-            applyFilters();
-        }
-    });
+    function applyAllDashboardState() {
+        updateFilterCounts();
+        applyViewMode();
+        applyFilters();
+    }
+
+    // Auto-hook into HTMX events
+    document.addEventListener('htmx:afterSwap', applyAllDashboardState);
+    document.addEventListener('htmx:afterSettle', applyAllDashboardState);
+    document.addEventListener('DOMContentLoaded', applyAllDashboardState);
 
     // Initial run
-    updateFilterCounts();
-    applyViewMode();
-    applyFilters();
+    applyAllDashboardState();
 </script>
 {% endblock %}
