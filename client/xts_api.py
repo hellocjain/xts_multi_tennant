@@ -1167,7 +1167,27 @@ def get_positions_telemetry():
                 side = "SHORT"
                 unrealized_pnl = (sell_avg - ltp) * abs(qty) * mult
             
-            realized_pnl = float(p.get("RealizedMTM", 0) or 0)
+            realized_raw = float(p.get("RealizedMTM", 0) or 0)
+            if realized_raw != 0:
+                realized_pnl = realized_raw
+            else:
+                net_amt = float(p.get("NetAmount", 0) or 0)
+                buy_amt = float(p.get("BuyAmount", 0) or p.get("ActualBuyAmount", 0) or 0)
+                sell_amt = float(p.get("SellAmount", 0) or p.get("ActualSellAmount", 0) or 0)
+                
+                open_buy_qty = int(p.get("OpenBuyQuantity", 0) or 0)
+                open_sell_qty = int(p.get("OpenSellQuantity", 0) or 0)
+                closed_qty = min(open_buy_qty, open_sell_qty)
+
+                if closed_qty > 0 and buy_avg > 0 and sell_avg > 0:
+                    realized_pnl = (sell_avg - buy_avg) * closed_qty * mult
+                elif sell_amt > 0 and buy_amt > 0:
+                    realized_pnl = (sell_amt - buy_amt)
+                elif net_amt != 0 and qty == 0:
+                    realized_pnl = net_amt
+                else:
+                    realized_pnl = 0.0
+
             total_realized += realized_pnl
             total_unrealized += unrealized_pnl
 
