@@ -219,7 +219,8 @@ async def dashboard(request: Request, user: dict = Depends(require_auth)):
         "summary": data["summary"],
         "clients": data["clients"],
         "current_user": user,
-        "domain": DOMAIN_NAME
+        "domain": DOMAIN_NAME,
+        "server_info": get_server_info()
     })
 
 @app.get("/admin/dashboard-partial", response_class=HTMLResponse)
@@ -229,35 +230,51 @@ async def dashboard_partial(request: Request, user: dict = Depends(require_auth)
         "summary": data["summary"],
         "clients": data["clients"],
         "current_user": user,
-        "domain": DOMAIN_NAME
+        "domain": DOMAIN_NAME,
+        "server_info": get_server_info()
     })
 
-def build_webhook_info(request: Request, tenant_id: str, secret: str) -> tuple[str, str]:
+def get_server_info() -> dict:
+    server_ip = os.environ.get("SERVER_PUBLIC_IP", "").strip()
+    if not server_ip or server_ip == ":80":
+        server_ip = "127.0.0.1"
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    ist_time_str = datetime.datetime.now(IST).strftime("%H:%M:%S IST")
+    return {
+        "server_ip": server_ip,
+        "timezone": "Asia/Kolkata (IST)",
+        "current_time": ist_time_str,
+        "domain": os.environ.get("DOMAIN_NAME", ":80")
+    }
+
+def build_webhook_info(request: Request, tenant_id: str, secret: str) -> dict:
     domain_env = os.environ.get("DOMAIN_NAME", "").strip()
+    server_ip = os.environ.get("SERVER_PUBLIC_IP", "").strip()
     host_header = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").strip()
 
-    # 1. If explicit valid domain name configured
+    # 1. If explicit custom domain configured
     if domain_env and domain_env not in (":80", "trading.yourdomain.com", "localhost", "127.0.0.1"):
         if domain_env.startswith("http://") or domain_env.startswith("https://"):
             base = domain_env.rstrip("/")
         else:
             base = f"https://{domain_env}"
         webhook_url = f"{base}/webhook/{tenant_id}"
+    # 2. If valid auto-detected server public IP available
+    elif server_ip and server_ip not in ("127.0.0.1", "localhost", ":80"):
+        webhook_url = f"http://{server_ip}/webhook/{tenant_id}"
+    # 3. If accessing via browser host header
     elif host_header:
         if "127.0.0.1" in host_header or "localhost" in host_header or ":8500" in host_header:
             port = docker_manager.get_tenant_port(tenant_id)
             webhook_url = f"http://127.0.0.1:{port}/webhook"
         else:
             proto = request.headers.get("x-forwarded-proto", "http")
-            if host_header.endswith(":80") or host_header.endswith(":443"):
-                clean_host = host_header.split(":")[0]
-            else:
-                clean_host = host_header
+            clean_host = host_header.split(":")[0] if (host_header.endswith(":80") or host_header.endswith(":443")) else host_header
             webhook_url = f"{proto}://{clean_host}/webhook/{tenant_id}"
     else:
         webhook_url = f"http://YOUR_SERVER_IP/webhook/{tenant_id}"
 
-    webhook_json = json.dumps({
+    webhook_json_strategy = json.dumps({
         "secret": secret,
         "action": "{{strategy.order.action}}",
         "symbol": "{{ticker}}",
@@ -265,7 +282,20 @@ def build_webhook_info(request: Request, tenant_id: str, secret: str) -> tuple[s
         "price": "{{close}}"
     }, indent=2)
 
-    return webhook_url, webhook_json
+    webhook_json_indicator = json.dumps({
+        "secret": secret,
+        "action": "BUY",
+        "symbol": "CRUDEOIL1!",
+        "quantity": 1,
+        "price": "{{close}}"
+    }, indent=2)
+
+    return {
+        "webhook_url": webhook_url,
+        "webhook_json": webhook_json_strategy,
+        "webhook_json_strategy": webhook_json_strategy,
+        "webhook_json_indicator": webhook_json_indicator
+    }
 
 @app.get("/admin/clients/{tenant_id}/webhook-modal", response_class=HTMLResponse)
 async def client_webhook_modal(tenant_id: str, request: Request, user: dict = Depends(require_auth)):
@@ -280,14 +310,17 @@ async def client_webhook_modal(tenant_id: str, request: Request, user: dict = De
     secret = creds.get("WEBHOOK_SECRET", "")
     port = docker_manager.get_tenant_port(tenant_id)
 
-    webhook_url, webhook_json = build_webhook_info(request, tenant_id, secret)
+    wb_data = build_webhook_info(request, tenant_id, secret)
 
     return templates.TemplateResponse(request=request, name="webhook_modal.html", context={
         "tenant": tenant,
         "secret": secret,
-        "webhook_url": webhook_url,
-        "webhook_json": webhook_json,
-        "port": port
+        "webhook_url": wb_data["webhook_url"],
+        "webhook_json": wb_data["webhook_json"],
+        "webhook_json_strategy": wb_data["webhook_json_strategy"],
+        "webhook_json_indicator": wb_data["webhook_json_indicator"],
+        "port": port,
+        "server_info": get_server_info()
     })
 
 @app.get("/admin/clients/add", response_class=HTMLResponse)
@@ -377,7 +410,7 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
     secret = creds.get("WEBHOOK_SECRET", "")
     port = docker_manager.get_tenant_port(tenant_id)
 
-    webhook_url, webhook_json = build_webhook_info(request, tenant_id, secret)
+    wb_data = build_webhook_info(request, tenant_id, secret)
 
     t_dict = dict(t_row)
     if c_row:
@@ -393,10 +426,13 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         "client": tel_data,
         "logs": logs,
         "domain": DOMAIN_NAME,
-        "webhook_url": webhook_url,
+        "webhook_url": wb_data["webhook_url"],
         "webhook_secret": secret,
-        "webhook_json": webhook_json,
-        "current_user": user
+        "webhook_json": wb_data["webhook_json"],
+        "webhook_json_strategy": wb_data["webhook_json_strategy"],
+        "webhook_json_indicator": wb_data["webhook_json_indicator"],
+        "current_user": user,
+        "server_info": get_server_info()
     })
 
 @app.get("/admin/clients/{tenant_id}/edit", response_class=HTMLResponse)

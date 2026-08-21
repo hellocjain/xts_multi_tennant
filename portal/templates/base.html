@@ -53,7 +53,16 @@
             {% endif %}
         </div>
 
-        <div class="flex items-center space-x-4">
+        <div class="flex items-center space-x-3">
+            {% if server_info %}
+            <div class="hidden lg:flex items-center space-x-2 text-[11px] bg-slate-900/90 border border-bordercolor px-2.5 py-1 rounded-lg font-mono text-slate-300">
+                <span class="text-brand-400 font-semibold">🌐 {{ server_info.server_ip }}</span>
+                <span class="text-slate-600">|</span>
+                <span class="text-amber-400">🕒 IST</span>
+                <span class="text-slate-600">|</span>
+                <span class="text-blue-400">💾 Swap Active</span>
+            </div>
+            {% endif %}
             {% if current_user %}
             <span class="text-xs text-slate-400 font-mono">Admin: <strong class="text-slate-200">{{ current_user.username }}</strong></span>
             <a href="/admin/logout" class="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 text-xs font-semibold px-3 py-1.5 rounded-md transition">Logout</a>

@@ -92,19 +92,42 @@
                 </div>
             </div>
 
-            <!-- Right: Exact JSON Message Box -->
-            <div class="space-y-1.5">
+            <!-- Right: Exact JSON Message Box with Dual-Tab Switcher -->
+            <div class="space-y-2">
                 <div class="flex items-center justify-between">
-                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">2. Alert Message (Settings Tab &rarr; Message Box)</label>
-                    <button onclick="copyElementText('detail-webhook-json', this)" 
+                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">2. Alert Message Body</label>
+                    <button id="detail-copy-btn" onclick="copyDetailActiveJson()" 
                             class="text-xs text-brand-400 hover:text-brand-300 font-semibold flex items-center gap-1">
                         <span>📋 Copy JSON</span>
                     </button>
                 </div>
-                <div class="relative group">
-                    <pre id="detail-webhook-json" class="bg-slate-950 border border-bordercolor rounded-xl p-4 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json }}</pre>
-                    <button onclick="copyElementText('detail-webhook-json', this)" 
-                            class="absolute top-2.5 right-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-bordercolor transition flex items-center gap-1">
+
+                <!-- Tab Switcher -->
+                <div class="flex items-center bg-slate-900 border border-bordercolor p-1 rounded-xl gap-1">
+                    <button id="dtab-strat-btn" onclick="switchDetailTab('strategy')" 
+                            class="flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center justify-center gap-1">
+                        <span>📈 Pine Strategy (Dynamic)</span>
+                    </button>
+                    <button id="dtab-ind-btn" onclick="switchDetailTab('indicator')" 
+                            class="flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1">
+                        <span>🎯 Indicator (Fixed)</span>
+                    </button>
+                </div>
+
+                <!-- Strategy JSON Block -->
+                <div id="dstrat-wrapper" class="relative group">
+                    <pre id="detail-webhook-strat" class="bg-slate-950 border border-bordercolor rounded-xl p-3.5 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json_strategy }}</pre>
+                    <button onclick="copyElementText('detail-webhook-strat', this)" 
+                            class="absolute top-2 right-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1 rounded-lg border border-bordercolor transition flex items-center gap-1">
+                        Copy Message
+                    </button>
+                </div>
+
+                <!-- Indicator JSON Block -->
+                <div id="dind-wrapper" class="relative group hidden">
+                    <pre id="detail-webhook-ind" class="bg-slate-950 border border-bordercolor rounded-xl p-3.5 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json_indicator }}</pre>
+                    <button onclick="copyElementText('detail-webhook-ind', this)" 
+                            class="absolute top-2 right-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1 rounded-lg border border-bordercolor transition flex items-center gap-1">
                         Copy Message
                     </button>
                 </div>
@@ -252,4 +275,33 @@
     </div>
 
 </div>
+
+<script>
+    var activeDetailTab = 'strategy';
+    function switchDetailTab(tab) {
+        activeDetailTab = tab;
+        const sBtn = document.getElementById('dtab-strat-btn');
+        const iBtn = document.getElementById('dtab-ind-btn');
+        const sWrap = document.getElementById('dstrat-wrapper');
+        const iWrap = document.getElementById('dind-wrapper');
+
+        if (tab === 'strategy') {
+            sBtn.className = 'flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center justify-center gap-1';
+            iBtn.className = 'flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1';
+            sWrap.classList.remove('hidden');
+            iWrap.classList.add('hidden');
+        } else {
+            iBtn.className = 'flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center justify-center gap-1';
+            sBtn.className = 'flex-1 py-1 px-2.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1';
+            iWrap.classList.remove('hidden');
+            sWrap.classList.add('hidden');
+        }
+    }
+
+    function copyDetailActiveJson() {
+        const targetId = activeDetailTab === 'strategy' ? 'detail-webhook-strat' : 'detail-webhook-ind';
+        const btn = document.getElementById('detail-copy-btn');
+        copyElementText(targetId, btn);
+    }
+</script>
 {% endblock %}

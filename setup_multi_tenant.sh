@@ -16,19 +16,47 @@ echo "==========================================================="
 echo "   🚀 XTS V10.0-ENTERPRISE MULTI-TENANT CLUSTER INSTALLER  "
 echo "==========================================================="
 
-# 1. System Dependencies & Port Freeing
-echo "[1/7] Updating system and installing Docker & Security utilities..."
+# 1. System Dependencies, Timezone & 2GB Swap Configuration
+echo "[1/7] Updating system, configuring IST Timezone & allocating 2GB Swap..."
 sudo systemctl stop apache2 nginx 2>/dev/null || true
 
+# Set System Timezone to Asia/Kolkata (IST)
+echo "🕒 Setting system timezone to Asia/Kolkata (IST)..."
+sudo timedatectl set-timezone Asia/Kolkata 2>/dev/null || true
+
+# Provision 2GB Swap Memory if not present
+echo "💾 Checking swap memory..."
+SWAP_TOTAL=$(free -m | awk '/^Swap:/ {print $2}')
+if [ -z "$SWAP_TOTAL" ] || [ "$SWAP_TOTAL" -lt 1000 ]; then
+    echo "Creating 2GB swap file to prevent Out-Of-Memory during volatility & builds..."
+    sudo fallocate -l 2G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile 2>/dev/null || true
+    sudo swapon /swapfile 2>/dev/null || true
+    grep -qxF '/swapfile none swap sw 0 0' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    echo "✅ 2GB Swapfile activated and persisted in /etc/fstab"
+else
+    echo "✅ Existing swap memory detected (${SWAP_TOTAL}MB)."
+fi
+
+# Detect VPS Public IP Address
+echo "🌐 Probing VPS Public IP address..."
+SERVER_PUBLIC_IP=$(curl -s4 --max-time 3 https://api.ipify.org 2>/dev/null || curl -s4 --max-time 3 https://ifconfig.me 2>/dev/null || curl -s4 --max-time 3 https://icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
+SERVER_PUBLIC_IP=$(echo "$SERVER_PUBLIC_IP" | tr -d ' \n\r')
+if [ -z "$SERVER_PUBLIC_IP" ]; then
+    SERVER_PUBLIC_IP="127.0.0.1"
+fi
+echo "✅ Detected Public Server IP: $SERVER_PUBLIC_IP"
+
 sudo apt-get update -y
-sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release ufw fail2ban python3 python3-pip
+sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release ufw fail2ban python3 python3-pip tzdata
 
 # Install Docker CE & Compose Plugin if missing
 if ! command -v docker &> /dev/null; then
     echo "Installing Docker Engine..."
     sudo mkdir -p /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
-    echo       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu       $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
     sudo apt-get update -y
     sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 fi
@@ -54,7 +82,7 @@ sudo mkdir -p /var/run/caddy
 # 3. Interactive Domain & Security Setup
 echo ""
 echo "=== 3. DOMAIN & SECURITY CONFIGURATION ==="
-read -p "Enter your Domain Name (e.g. trading.yourdomain.com) [Press Enter for Direct Server IP]: " DOMAIN_NAME
+read -p "Enter your Domain Name (or Press Enter for Direct Server IP [$SERVER_PUBLIC_IP]): " DOMAIN_NAME
 DOMAIN_NAME=${DOMAIN_NAME:-":80"}
 
 read -p "Enter Allowed Admin IP/CIDR (e.g. 1.2.3.4/32 or press Enter to allow all): " ADMIN_IPS
@@ -79,6 +107,7 @@ PORTAL_MASTER_KEY=$MASTER_KEY
 PORTAL_ADMIN_USER=$ADMIN_USER
 PORTAL_ADMIN_PASSWORD=$ADMIN_PASS
 DOMAIN_NAME=$DOMAIN_NAME
+SERVER_PUBLIC_IP=$SERVER_PUBLIC_IP
 ADMIN_ALLOWED_IPS=$ADMIN_IPS
 PORTAL_DATA_DIR=/opt/xts_multi/portal
 CLIENT_DATA_ROOT=/opt/xts_multi/data

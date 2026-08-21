@@ -3,10 +3,13 @@ FROM python:3.11-slim
 LABEL maintainer="XTS Multi-Tenant Engine"
 LABEL version="10.0-PRO"
 
-# Install system dependencies
+# Install system dependencies & timezone data
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+ENV TZ="Asia/Kolkata"
 
 WORKDIR /app
 

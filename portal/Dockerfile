@@ -5,7 +5,10 @@ LABEL version="10.0-PRO"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+ENV TZ="Asia/Kolkata"
 
 WORKDIR /app
 

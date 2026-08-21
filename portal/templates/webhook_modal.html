@@ -36,35 +36,62 @@
                 </div>
             </div>
 
-            <!-- Step 2: Message Payload (JSON) -->
-            <div class="space-y-1.5">
+            <!-- Step 2: Message Payload (JSON) with Dual-Tab Switcher -->
+            <div class="space-y-2">
                 <div class="flex items-center justify-between">
                     <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">
                         2. Alert Message Body (Paste into TradingView "Message" Box)
                     </label>
-                    <button onclick="copyElementText('webhook-json-block', this)" 
+                    <button id="copy-json-btn" onclick="copyActiveJson()" 
                             class="text-xs text-brand-400 hover:text-brand-300 font-semibold flex items-center gap-1">
                         <span>📋 Copy JSON</span>
                     </button>
                 </div>
-                <div class="relative group">
-                    <pre id="webhook-json-block" class="bg-slate-950 border border-bordercolor rounded-xl p-4 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json }}</pre>
-                    <button onclick="copyElementText('webhook-json-block', this)" 
-                            class="absolute top-2.5 right-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-bordercolor transition flex items-center gap-1">
+
+                <!-- Tab Segmented Control -->
+                <div class="flex items-center bg-slate-900 border border-bordercolor p-1 rounded-xl gap-1">
+                    <button id="tab-strat-btn" onclick="switchAlertTab('strategy')" 
+                            class="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center justify-center gap-1.5">
+                        <span>📈 Pine Script Strategy (Dynamic)</span>
+                    </button>
+                    <button id="tab-ind-btn" onclick="switchAlertTab('indicator')" 
+                            class="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1.5">
+                        <span>🎯 Indicator / Custom (Fixed Values)</span>
+                    </button>
+                </div>
+
+                <!-- Strategy JSON Block -->
+                <div id="strat-json-wrapper" class="relative group">
+                    <pre id="webhook-json-strat" class="bg-slate-950 border border-bordercolor rounded-xl p-4 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json_strategy }}</pre>
+                    <button onclick="copyElementText('webhook-json-strat', this)" 
+                            class="absolute top-2.5 right-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-bordercolor transition flex items-center gap-1 shadow">
                         <span>Copy Message</span>
                     </button>
                 </div>
+
+                <!-- Indicator JSON Block (Hidden by default) -->
+                <div id="ind-json-wrapper" class="relative group hidden">
+                    <pre id="webhook-json-ind" class="bg-slate-950 border border-bordercolor rounded-xl p-4 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json_indicator }}</pre>
+                    <button onclick="copyElementText('webhook-json-ind', this)" 
+                            class="absolute top-2.5 right-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-bordercolor transition flex items-center gap-1 shadow">
+                        <span>Copy Message</span>
+                    </button>
+                </div>
+                <p id="tab-desc" class="text-[11px] text-slate-400">
+                    💡 Uses TradingView Pine Script dynamic placeholders (<code class="text-brand-400 font-mono">&#123;&#123;ticker&#125;&#125;</code>, <code class="text-brand-400 font-mono">&#123;&#123;strategy.order.contracts&#125;&#125;</code>) for automated multi-lot strategy orders.
+                </p>
             </div>
 
             <!-- Instructions Card -->
-            <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-xs text-slate-400 space-y-2">
-                <div class="font-bold text-slate-200 flex items-center gap-1.5">
-                    <span>💡 How to Setup in TradingView (30 Seconds):</span>
+            <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4 text-xs text-slate-400 space-y-2.5">
+                <div class="font-bold text-slate-200 flex items-center gap-2">
+                    <span class="text-brand-400">⚡</span>
+                    <span>30-Second TradingView Alert Setup:</span>
                 </div>
-                <ol class="list-decimal list-inside space-y-1 text-slate-300">
-                    <li>Open your TradingView Chart & Click <strong class="text-white">Create Alert</strong> (<kbd class="bg-slate-800 px-1 py-0.5 rounded text-[10px]">Alt + A</kbd>).</li>
+                <ol class="list-decimal list-inside space-y-1.5 text-slate-300">
+                    <li>Open your TradingView Chart & Click <strong class="text-white">Create Alert</strong> (<kbd class="bg-slate-800 text-slate-200 px-1.5 py-0.5 rounded text-[11px] font-mono border border-slate-700">Alt + A</kbd>).</li>
                     <li>In the <strong class="text-white">Notifications</strong> tab, check <strong class="text-white">Webhook URL</strong> and paste the URL from Step 1.</li>
-                    <li>In the <strong class="text-white">Settings</strong> tab, paste the JSON from Step 2 directly into the <strong class="text-white">Message</strong> box.</li>
+                    <li>In the <strong class="text-white">Settings</strong> tab, paste the JSON payload above into the <strong class="text-white">Message</strong> box.</li>
                 </ol>
             </div>
 
@@ -79,4 +106,36 @@
         </div>
 
     </div>
+
+    <script>
+        var activeAlertTab = 'strategy';
+        function switchAlertTab(tab) {
+            activeAlertTab = tab;
+            const stratBtn = document.getElementById('tab-strat-btn');
+            const indBtn = document.getElementById('tab-ind-btn');
+            const stratWrapper = document.getElementById('strat-json-wrapper');
+            const indWrapper = document.getElementById('ind-json-wrapper');
+            const desc = document.getElementById('tab-desc');
+
+            if (tab === 'strategy') {
+                stratBtn.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center justify-center gap-1.5';
+                indBtn.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1.5';
+                stratWrapper.classList.remove('hidden');
+                indWrapper.classList.add('hidden');
+                desc.innerHTML = '💡 Uses TradingView Pine Script dynamic placeholders (<code class="text-brand-400 font-mono">&#123;&#123;ticker&#125;&#125;</code>, <code class="text-brand-400 font-mono">&#123;&#123;strategy.order.contracts&#125;&#125;</code>) for automated multi-lot strategy orders.';
+            } else {
+                indBtn.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center justify-center gap-1.5';
+                stratBtn.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center justify-center gap-1.5';
+                indWrapper.classList.remove('hidden');
+                stratWrapper.classList.add('hidden');
+                desc.innerHTML = '💡 Fixed values alert format. Replace <code class="text-brand-400 font-mono">CRUDEOIL1!</code> or <code class="text-brand-400 font-mono">BUY</code> with your indicator signal values.';
+            }
+        }
+
+        function copyActiveJson() {
+            const targetId = activeAlertTab === 'strategy' ? 'webhook-json-strat' : 'webhook-json-ind';
+            const btn = document.getElementById('copy-json-btn');
+            copyElementText(targetId, btn);
+        }
+    </script>
 </div>
