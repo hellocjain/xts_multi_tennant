@@ -1184,13 +1184,15 @@ def get_positions_telemetry():
                 "realized_pnl": round(realized_pnl, 2),
             })
 
+        active_positions = [p for p in pos_list if p["quantity"] != 0]
+
         return {
             "is_paper_trade": False,
-            "positions_count": len(pos_list),
+            "positions_count": len(active_positions),
             "unrealized_mtm": round(total_unrealized, 2),
             "realized_pnl": round(total_realized, 2),
             "net_mtm": round(total_unrealized + total_realized, 2),
-            "positions": pos_list
+            "positions": active_positions
         }
     except Exception as e:
         logger.error(f"Error fetching position telemetry: {e}")
@@ -1294,6 +1296,13 @@ def panic_square_off_all():
                     "clientID": client_id,
                 }
                 res = api_session.post(order_url, headers=headers, json=payload, timeout=5).json()
+                if res.get('type') == 'error' and any(kw in str(res).lower() for kw in ('token', 'session', 'auth')):
+                    clear_tokens()
+                    token = get_interactive_token(force_refresh=True)
+                    if token:
+                        headers = {"authorization": token, "Content-Type": "application/json"}
+                        res = api_session.post(order_url, headers=headers, json=payload, timeout=5).json()
+
                 results.append({"symbol": sym, "action": action, "qty": chunk_qty, "result": res})
                 logger.critical(f"🚨 PANIC SQUARE OFF EXECUTED: {action} {chunk_qty} of {sym} -> {res}")
                 remaining_qty -= chunk_qty
