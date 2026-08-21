@@ -90,13 +90,19 @@ def db_insert_pending(sig_id, payload_dict):
             )
             conn.commit()
 
-def db_update_status(sig_id, status, result=None):
+def db_update_status(sig_id, status, result=None, payload=None):
     with _DB_LOCK:
         with closing(_db_conn()) as conn:
-            conn.execute(
-                "UPDATE signals SET status=?, result=?, updated_at=? WHERE id=?",
-                (status, json.dumps(result) if result is not None else None, time.time(), sig_id),
-            )
+            if payload is not None:
+                conn.execute(
+                    "UPDATE signals SET status=?, result=?, payload=?, updated_at=? WHERE id=?",
+                    (status, json.dumps(result) if result is not None else None, json.dumps(payload), time.time(), sig_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE signals SET status=?, result=?, updated_at=? WHERE id=?",
+                    (status, json.dumps(result) if result is not None else None, time.time(), sig_id),
+                )
             conn.commit()
 
 def db_fetch_unfinished():
@@ -336,7 +342,7 @@ async def panic(request: Request):
             panic_payload["symbol"] = sym_names
 
     status = "done" if (isinstance(result, dict) and result.get("status") == "success") else "failed"
-    db_update_status(sig_id, status, result)
+    db_update_status(sig_id, status, result, payload=panic_payload)
     return result
 
 @app.post("/")
