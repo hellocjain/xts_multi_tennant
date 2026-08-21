@@ -129,9 +129,51 @@ echo "☀️ Running Rolling Master Cache Warmup for all active clients..."
 docker exec xts_portal python3 -c "
 import asyncio, scheduler, json
 async def main():
-    res = await scheduler.run_rolling_cache_warmup(batch_size=4, delay_between_batches_sec=3.0)
+    res = await scheduler.run_rolling_cache_warmup(delay_between_batches_sec=3.0)
     print(json.dumps(res, indent=2))
 asyncio.run(main())
+"
+EOF
+
+# 12. xts-test
+sudo tee /usr/local/bin/xts-test > /dev/null << 'EOF'
+#!/bin/bash
+CLIENT_ID=$1
+SYMBOL=${2:-"MCX:CRUDEOIL1!"}
+ACTION=${3:-"BUY"}
+QTY=${4:-1}
+PRICE=${5:-6500.0}
+
+if [ -z "$CLIENT_ID" ]; then
+    echo "Usage: xts-test <client_id> [symbol] [action] [quantity] [price]"
+    echo "Example: xts-test c01 MCX:CRUDEOIL1! BUY 1 6500.0"
+    exit 1
+fi
+
+docker exec xts_portal python3 -c "
+import sqlite3, requests, json, security
+with sqlite3.connect('/opt/xts_multi/portal/portal.db') as conn:
+    conn.row_factory = sqlite3.Row
+    row = conn.execute('SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?', ('$CLIENT_ID',)).fetchone()
+    if not row:
+        print('❌ Client $CLIENT_ID not found in database')
+        exit(1)
+    creds = security.decrypt_credentials(row['encrypted_payload'])
+    secret = creds.get('WEBHOOK_SECRET', '')
+
+payload = {
+    'secret': secret,
+    'action': '$ACTION',
+    'symbol': '$SYMBOL',
+    'quantity': int('$QTY'),
+    'price': float('$PRICE')
+}
+print(f'📤 Dispatching Test Webhook for client $CLIENT_ID -> $ACTION $QTY x $SYMBOL @ Rs $PRICE')
+try:
+    r = requests.post(f'http://xts_client_$CLIENT_ID:8000/webhook', json=payload, timeout=5)
+    print(f'📥 Response: {r.status_code} | {r.text}')
+except Exception as e:
+    print(f'❌ Failed: {e}')
 "
 EOF
 

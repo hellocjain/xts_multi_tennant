@@ -230,9 +230,8 @@ sudo systemctl enable xts-backup.timer
 sudo systemctl start xts-warmup.timer
 sudo systemctl start xts-backup.timer
 
-SERVER_IP=$(curl -s ifconfig.me || echo "YOUR_SERVER_IP")
 if [ "$DOMAIN_NAME" == ":80" ] || [ -z "$DOMAIN_NAME" ]; then
-    PORTAL_ACCESS_URL="http://$SERVER_IP/admin/login"
+    PORTAL_ACCESS_URL="http://$SERVER_PUBLIC_IP/admin/login"
 else
     PORTAL_ACCESS_URL="https://$DOMAIN_NAME/admin/login"
 fi
@@ -255,6 +254,8 @@ echo "   • xts-clients      : View all active client containers   "
 echo "   • xts-status       : Check token & cache health          "
 echo "   • xts-positions    : View client open positions          "
 echo "   • xts-mtm          : Live portfolio MTM summary          "
+echo "   • xts-test         : Dispatch test webhook signal        "
+echo "   • xts-logs         : Stream client container logs        "
 echo "   • xts-warmup       : Run rolling master cache warmup     "
 echo "   • xts-panic        : Panic square-off single client      "
 echo "   • xts-panic-all    : Emergency Global Kill-Switch        "
