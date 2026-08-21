@@ -127,16 +127,17 @@ def send_ops_alert(message):
         pass
 
 def clear_tokens():
-    global INTERACTIVE_TOKEN, MARKET_DATA_TOKEN
+    global INTERACTIVE_TOKEN, MARKET_DATA_TOKEN, LAST_INTERACTIVE_AUTH_ATTEMPT
     with INTERACTIVE_REFRESH_CV:
         INTERACTIVE_TOKEN = None
+        LAST_INTERACTIVE_AUTH_ATTEMPT = 0
     with MD_REFRESH_CV:
         MARKET_DATA_TOKEN = None
     logger.info("Session tokens cleared.")
 
 LAST_INTERACTIVE_AUTH_ATTEMPT = 0
 LAST_INTERACTIVE_AUTH_ERROR = None
-INTERACTIVE_COOLDOWN_SECONDS = 30
+INTERACTIVE_COOLDOWN_SECONDS = 15
 
 def get_last_auth_error():
     return LAST_INTERACTIVE_AUTH_ERROR
@@ -148,9 +149,9 @@ def get_interactive_token(force_refresh=False):
     if not force_refresh and INTERACTIVE_TOKEN:
         return INTERACTIVE_TOKEN
 
-    # Cooldown guard to avoid spamming broker on IP/Auth rejection
+    # Cooldown guard only when there was an auth failure and not forced
     now = time.time()
-    if not force_refresh and (now - LAST_INTERACTIVE_AUTH_ATTEMPT < INTERACTIVE_COOLDOWN_SECONDS) and not INTERACTIVE_TOKEN:
+    if not force_refresh and LAST_INTERACTIVE_AUTH_ERROR and (now - LAST_INTERACTIVE_AUTH_ATTEMPT < INTERACTIVE_COOLDOWN_SECONDS) and not INTERACTIVE_TOKEN:
         return None
 
     with INTERACTIVE_REFRESH_CV:
