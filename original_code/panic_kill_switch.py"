@@ -1,0 +1,8 @@
+import sys
+sys.path.append("/opt/xts_bot")
+import xts_api, json
+
+print("\n🚨 INITIATING EMERGENCY KILL-SWITCH: SQUARING OFF ALL POSITIONS & CANCELLING ORDERS...")
+res = xts_api.panic_square_off_all()
+print(json.dumps(res, indent=2))
+print("✅ EMERGENCY SQUARING COMPLETE.\n")

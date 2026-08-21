@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Cluster Settings & 100% Frontend Operations - XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-5xl mx-auto">
+    <!-- Header -->
+    <div class="bg-cardbg border border-bordercolor p-6 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                <span>⚙️</span> Cluster Operations &amp; Settings
+            </h1>
+            <p class="text-xs text-slate-400 mt-1">
+                100% In-Portal Management: Trigger hot backups, manage admin IP allowlists, rotate cryptographic vault keys, and tune rollout schedules.
+            </p>
+        </div>
+        <div class="bg-brand-600/20 border border-brand-500/30 text-brand-400 text-xs px-3 py-1.5 rounded-lg font-semibold">
+            Zero-SSH Day-to-Day Operations
+        </div>
+    </div>
+
+    <!-- Flash Feedback Alert -->
+    {% if flash_message %}
+    <div class="bg-green-500/10 border border-green-500/30 p-4 rounded-xl text-green-400 text-xs flex items-center space-x-2 font-medium">
+        <span>✅</span>
+        <span>{{ flash_message }}</span>
+    </div>
+    {% endif %}
+    {% if flash_error %}
+    <div class="bg-red-500/10 border border-red-500/30 p-4 rounded-xl text-red-400 text-xs flex items-center space-x-2 font-medium">
+        <span>❌</span>
+        <span>{{ flash_error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- 1. On-Demand Hot Backup -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl p-6 space-y-4">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-2">
+                <span class="text-xl">📦</span>
+                <h2 class="font-bold text-slate-100 text-sm uppercase tracking-wider">On-Demand Hot Backup &amp; Disaster Recovery</h2>
+            </div>
+            <span class="text-xs font-mono text-slate-400">AES-256 Encrypted Tarball</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div class="space-y-2">
+                <p class="text-slate-300 leading-relaxed">
+                    Creates a non-blocking hot SQLite snapshot (<code class="bg-slate-900 px-1 py-0.5 rounded text-brand-400">VACUUM INTO</code>) of the portal database and all tenant trade logs (<code class="bg-slate-900 px-1 py-0.5 rounded text-brand-400">signals.db</code>), then packages and encrypts them using your Master Key.
+                </p>
+                <div class="text-slate-400 font-mono space-y-1">
+                    <div>• Total Archives: <strong class="text-slate-200">{{ backup_count }}</strong></div>
+                    <div>• Latest Backup File: <strong class="text-brand-400">{{ latest_backup }}</strong></div>
+                </div>
+            </div>
+
+            <div class="flex flex-col justify-center items-start md:items-end">
+                <form method="POST" action="/admin/settings/backup">
+                    <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs px-5 py-3 rounded-xl transition shadow-lg shadow-brand-600/30 flex items-center gap-2">
+                        <span>📦</span> Trigger Hot Backup Now
+                    </button>
+                </form>
+                <span class="text-[11px] text-slate-500 mt-2">Zero downtime. Execution takes &lt; 200ms.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Admin IP Allowlist Manager -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl p-6 space-y-4">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-2">
+                <span class="text-xl">🛡️</span>
+                <h2 class="font-bold text-slate-100 text-sm uppercase tracking-wider">Admin Portal IP Allowlist (Caddy Ingress)</h2>
+            </div>
+            <span class="text-xs font-mono text-green-400">Live Dynamic Reload</span>
+        </div>
+
+        <form method="POST" action="/admin/settings/ip-allowlist" class="space-y-3">
+            <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1">Allowed Admin IP Addresses / CIDRs (space-separated)</label>
+                <input type="text" name="allowed_ips" value="{{ allowed_ips }}" required
+                       class="w-full bg-slate-900 border border-bordercolor rounded-lg px-4 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-brand-500">
+                <p class="text-[11px] text-slate-500 mt-1">Example: <code class="text-slate-400">49.36.241.251/32 127.0.0.1 10.0.0.0/8</code>. Requests outside these IPs are blocked at the proxy edge.</p>
+            </div>
+            <div class="flex justify-end">
+                <button type="submit" class="bg-slate-700 hover:bg-slate-600 text-slate-100 font-semibold text-xs px-4 py-2 rounded-lg transition">
+                    Save &amp; Sync Caddy Allowlist
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- 3. Master Key Vault Rotation -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl p-6 space-y-4">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-2">
+                <span class="text-xl">🔐</span>
+                <h2 class="font-bold text-slate-100 text-sm uppercase tracking-wider">Master Encryption Key Vault Rotation</h2>
+            </div>
+            <span class="text-xs font-mono text-amber-400">Zero Downtime Vault Re-Encryption</span>
+        </div>
+
+        <form method="POST" action="/admin/settings/rotate-master-key" class="space-y-3"
+              onsubmit="return confirm('⚠️ Rotate Master Encryption Key?
+
+All stored broker API keys and secrets in the database will be decrypted and re-encrypted with this new key.');">
+            <div>
+                <label class="block text-xs font-semibold text-slate-300 mb-1">New Fernet 32-Byte Base64 Master Key</label>
+                <input type="text" name="new_master_key" required placeholder="Enter new base64 Fernet key..."
+                       class="w-full bg-slate-900 border border-bordercolor rounded-lg px-4 py-2.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-brand-500">
+                <p class="text-[11px] text-slate-500 mt-1">Generate with <code class="text-slate-400">Fernet.generate_key()</code>. Retain custody of this key off-server.</p>
+            </div>
+            <div class="flex justify-end">
+                <button type="submit" class="bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs px-4 py-2 rounded-lg transition shadow-md shadow-amber-600/20">
+                    Rotate Key &amp; Re-Encrypt Vault
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- 4. 08:30 IST Rolling Warmup Configuration -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl p-6 space-y-4">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-2">
+                <span class="text-xl">⏰</span>
+                <h2 class="font-bold text-slate-100 text-sm uppercase tracking-wider">Daily Morning Warmup Schedule (08:30 IST)</h2>
+            </div>
+            <span class="text-xs font-mono text-brand-400">Rolling Batches</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div class="bg-slate-900/60 p-3.5 rounded-lg border border-bordercolor/60">
+                <span class="text-slate-400 block text-[11px] font-semibold uppercase">Scheduled Trigger</span>
+                <span class="text-sm font-bold text-slate-100 font-mono mt-1 block">{{ warmup_time }}</span>
+            </div>
+            <div class="bg-slate-900/60 p-3.5 rounded-lg border border-bordercolor/60">
+                <span class="text-slate-400 block text-[11px] font-semibold uppercase">Batch Concurrency</span>
+                <span class="text-sm font-bold text-slate-100 font-mono mt-1 block">{{ warmup_batch_size }} Containers / Batch</span>
+            </div>
+            <div class="bg-slate-900/60 p-3.5 rounded-lg border border-bordercolor/60">
+                <span class="text-slate-400 block text-[11px] font-semibold uppercase">Inter-Batch Delay</span>
+                <span class="text-sm font-bold text-slate-100 font-mono mt-1 block">{{ warmup_interval_seconds }} Seconds</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

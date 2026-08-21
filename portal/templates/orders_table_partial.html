@@ -1,0 +1,68 @@
+
+<table class="w-full text-left text-sm">
+    <thead class="bg-slate-900 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
+        <tr>
+            <th class="px-5 py-3.5">Timestamp (IST)</th>
+            <th class="px-4 py-3.5">Client Account</th>
+            <th class="px-4 py-3.5">Symbol</th>
+            <th class="px-3 py-3.5">Action</th>
+            <th class="px-3 py-3.5 text-right">Qty</th>
+            <th class="px-4 py-3.5 text-right">Price (₹)</th>
+            <th class="px-4 py-3.5">Status</th>
+            <th class="px-5 py-3.5">Order Reference</th>
+        </tr>
+    </thead>
+    <tbody class="divide-y divide-bordercolor/60">
+        {% for s in signals %}
+        <tr class="hover:bg-slate-800/40 transition">
+            <td class="px-5 py-3.5 font-mono text-xs text-slate-400 whitespace-nowrap">
+                {{ s.timestamp }}
+            </td>
+            <td class="px-4 py-3.5 font-medium text-slate-200">
+                <a href="/admin/clients/{{ s.tenant_id }}" class="hover:text-brand-400 font-semibold">{{ s.client_name }}</a>
+                <span class="text-xs text-slate-500 font-mono">({{ s.tenant_id }})</span>
+            </td>
+            <td class="px-4 py-3.5 font-mono font-bold text-slate-100">
+                {{ s.symbol }}
+            </td>
+            <td class="px-3 py-3.5 font-bold">
+                {% if s.action == 'BUY' %}
+                <span class="text-green-400 bg-green-500/10 px-2 py-0.5 rounded border border-green-500/20 text-xs">BUY</span>
+                {% else %}
+                <span class="text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 text-xs">SELL</span>
+                {% endif %}
+            </td>
+            <td class="px-3 py-3.5 text-right font-mono font-semibold text-slate-200">
+                {{ s.quantity }}
+            </td>
+            <td class="px-4 py-3.5 text-right font-mono text-slate-300">
+                {% if s.price %}₹{{ s.price|inr }}{% else %}-{% endif %}
+            </td>
+            <td class="px-4 py-3.5">
+                {% if s.status in ('done', 'paper_done', 'filled') %}
+                <span class="bg-green-500/20 text-green-400 text-xs font-semibold px-2 py-0.5 rounded border border-green-500/30">
+                    ✅ {{ s.status|upper }}
+                </span>
+                {% elif s.status == 'duplicate_suppressed' %}
+                <span class="bg-amber-500/20 text-amber-400 text-xs font-semibold px-2 py-0.5 rounded border border-amber-500/30">
+                    ⚡ DUP SUPPRESSED
+                </span>
+                {% else %}
+                <span class="bg-red-500/20 text-red-400 text-xs font-semibold px-2 py-0.5 rounded border border-red-500/30">
+                    ❌ {{ s.status|upper }}
+                </span>
+                {% endif %}
+            </td>
+            <td class="px-5 py-3.5 font-mono text-xs text-slate-400 truncate max-w-xs" title="{{ s.order_ref }}">
+                {{ s.order_ref or '-' }}
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="8" class="px-6 py-12 text-center text-slate-500">
+                No trading signals or orders match the current filter criteria.
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

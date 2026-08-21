@@ -1,0 +1,34 @@
+import sys
+sys.path.append("/opt/xts_bot")
+import config, xts_api, requests
+
+token = xts_api.get_interactive_token()
+if not token:
+    print("❌ Failed to get Interactive Token")
+    sys.exit(1)
+
+base_url = config.XTS_API_BASE_URL.rstrip('/')
+url = f"{base_url}/portfolio/positions?dayOrNet=DayWise"
+headers = {"authorization": token}
+
+try:
+    resp = requests.get(url, headers=headers, timeout=5)
+    positions = resp.json().get("result", {}).get("positionList", [])
+    
+    if not positions:
+        print("\n📊 No Open Positions Found\n")
+    else:
+        print("\n========================= 📊 LIVE BROKER POSITIONS =========================")
+        print(f"{'SYMBOL':<24} {'SIDE':<6} {'QTY':<6} {'BUY AVG':<12} {'VALUE':<14} {'MTM P&L'}")
+        print("-" * 75)
+        for p in positions:
+            sym = p.get("TradingSymbol", "")
+            qty = int(p.get("Quantity", 0))
+            side = "LONG" if qty > 0 else ("SHORT" if qty < 0 else "FLAT")
+            buy_avg = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0))
+            val = float(p.get("BuyAmount", 0) or p.get("ActualBuyAmount", 0))
+            mtm = p.get("MTM", "0.00")
+            print(f"{sym:<24} {side:<6} {qty:<6} ₹{buy_avg:<10.2f} ₹{val:<12.2f} ₹{mtm}")
+        print("============================================================================\n")
+except Exception as e:
+    print(f"Error checking positions: {e}")

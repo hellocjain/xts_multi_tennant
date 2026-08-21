@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Authentication - XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-[75vh]">
+    <div class="bg-cardbg border border-bordercolor w-full max-w-md p-8 rounded-xl shadow-2xl">
+        <div class="text-center mb-6">
+            <span class="text-4xl">🛡️</span>
+            <h1 class="text-2xl font-bold mt-2">Admin Portal Login</h1>
+            <p class="text-xs text-slate-400 mt-1">Multi-Factor Authentication Required</p>
+        </div>
+
+        {% if error %}
+        <div class="bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3 rounded-lg mb-6">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <form method="POST" action="/admin/login" class="space-y-4">
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Username</label>
+                <input type="text" name="username" required autofocus autocomplete="username"
+                    class="w-full bg-slate-900 border border-bordercolor rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 font-mono">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Password</label>
+                <input type="password" name="password" required autocomplete="current-password"
+                    class="w-full bg-slate-900 border border-bordercolor rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500">
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    2FA Code / Recovery Code
+                </label>
+                <input type="text" name="totp_or_recovery" placeholder="6-digit TOTP or AB12-CD34" autocomplete="one-time-code"
+                    class="w-full bg-slate-900 border border-bordercolor rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 font-mono text-center tracking-widest">
+                <p class="text-[11px] text-slate-500 mt-1">Leave empty on first-time setup to enroll 2FA.</p>
+            </div>
+
+            <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-lg transition duration-150 shadow-lg shadow-brand-600/20 text-sm">
+                Authenticate Securely &rarr;
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

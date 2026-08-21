@@ -1,0 +1,62 @@
+services:
+  # 1. Caddy Reverse Proxy & Automatic SSL
+  caddy:
+    image: caddy:2.7-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/xts_multi/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - /var/run/caddy:/var/run/caddy
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - xts_mgmt_net
+      - xts_ingress_net
+
+  # 2. Hardened Multi-Tenant Admin Portal
+  xts_portal:
+    build:
+      context: ./portal
+      dockerfile: Dockerfile
+    image: xts_portal:latest
+    container_name: xts_portal
+    restart: unless-stopped
+    env_file:
+      - /opt/xts_multi/portal/.env
+    environment:
+      - PORTAL_DATA_DIR=/opt/xts_multi/portal
+      - CLIENT_DATA_ROOT=/opt/xts_multi/data
+      - CADDY_CONFIG_PATH=/opt/xts_multi/caddy/Caddyfile
+      - CADDY_ADMIN_SOCKET=/var/run/caddy/admin.sock
+      - DOMAIN_NAME=${DOMAIN_NAME:-trading.yourdomain.com}
+      - INGRESS_NETWORK=xts_ingress_net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+      - /var/run/caddy:/var/run/caddy:rw
+      - /opt/xts_multi:/opt/xts_multi:rw
+    networks:
+      - xts_mgmt_net
+
+networks:
+  # Isolated Management Network (Portal <-> Caddy)
+  xts_mgmt_net:
+    name: xts_mgmt_net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+  # Isolated Ingress Network (Caddy <-> Client Trading Containers)
+  xts_ingress_net:
+    name: xts_ingress_net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:

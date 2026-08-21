@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Global Order Audit Stream - XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="bg-cardbg border border-bordercolor p-6 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                <span>📜</span> Global Order Audit Stream
+            </h1>
+            <p class="text-xs text-slate-400 mt-1">
+                Unified real-time audit feed of every TradingView webhook alert and broker execution across all accounts today.
+            </p>
+        </div>
+        <div class="flex items-center space-x-2">
+            <span class="bg-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-lg border border-bordercolor font-mono">
+                Live Signals: <strong class="text-brand-400">{{ signals|length }}</strong>
+            </span>
+        </div>
+    </div>
+
+    <!-- Filters Bar -->
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4">
+        <form method="GET" action="/admin/orders" class="flex flex-wrap items-center gap-3 w-full">
+            <!-- Search -->
+            <div class="relative flex-1 min-w-[200px]">
+                <input type="text" name="search" value="{{ search }}" placeholder="Search symbol (e.g. CRUDEOIL), order ref, or client..." 
+                       class="w-full bg-slate-900 border border-bordercolor rounded-lg px-3.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500 font-mono">
+            </div>
+
+            <!-- Client Filter -->
+            <select name="client_id" class="bg-slate-900 border border-bordercolor rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-500">
+                <option value="">All Clients</option>
+                {% for t in tenants %}
+                <option value="{{ t.id }}" {{ 'selected' if selected_client == t.id else '' }}>{{ t.name }} ({{ t.id }})</option>
+                {% endfor %}
+            </select>
+
+            <!-- Status Filter -->
+            <select name="status" class="bg-slate-900 border border-bordercolor rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-500">
+                <option value="">All Statuses</option>
+                <option value="done" {{ 'selected' if selected_status == 'done' else '' }}>Done (Live Filled)</option>
+                <option value="paper_done" {{ 'selected' if selected_status == 'paper_done' else '' }}>Paper Done</option>
+                <option value="duplicate_suppressed" {{ 'selected' if selected_status == 'duplicate_suppressed' else '' }}>Duplicate Suppressed</option>
+                <option value="failed" {{ 'selected' if selected_status == 'failed' else '' }}>Failed</option>
+            </select>
+
+            <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs px-4 py-2 rounded-lg transition shadow-md shadow-brand-600/20">
+                Filter
+            </button>
+            <a href="/admin/orders" class="text-xs text-slate-400 hover:text-slate-200 px-2 py-2">Reset</a>
+        </form>
+    </div>
+
+    <!-- Orders Stream Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto" id="ordersTableContainer"
+             hx-get="/admin/orders-partial?search={{ search }}&client_id={{ selected_client }}&status={{ selected_status }}"
+             hx-trigger="every 4s" hx-swap="innerHTML">
+            {% include "orders_table_partial.html" %}
+        </div>
+    </div>
+</div>
+{% endblock %}

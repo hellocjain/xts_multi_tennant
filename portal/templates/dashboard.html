@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block title %}Executive Trading Dashboard - XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Global Emergency Panic Bar -->
+    <div class="bg-red-950/40 border border-red-500/40 p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg shadow-red-950/20">
+        <div class="flex items-center space-x-3">
+            <span class="text-3xl animate-pulse">🚨</span>
+            <div>
+                <h2 class="font-bold text-red-400 text-base flex items-center gap-2">
+                    EMERGENCY GLOBAL KILL-SWITCH
+                    <span class="bg-red-500/20 text-red-300 text-[10px] font-mono px-2 py-0.5 rounded border border-red-500/30">ALL CLIENTS</span>
+                </h2>
+                <p class="text-xs text-slate-400">Cancels all open orders and squares off all open positions across ALL active client accounts simultaneously.</p>
+            </div>
+        </div>
+        <form method="POST" action="/admin/panic-all" onsubmit="return confirm('⚠️ CRITICAL ACTION: Are you sure you want to SQUARE OFF ALL CLIENTS immediately? This cannot be undone.');">
+            <button type="submit" class="bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs uppercase tracking-wider transition shadow-lg shadow-red-600/30 whitespace-nowrap flex items-center gap-1.5">
+                <span>🔥</span> PANIC SQUARE OFF ALL
+            </button>
+        </form>
+    </div>
+
+    <!-- Persistent Search, Quick Filter Tabs, and View Switcher -->
+    <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+        <!-- Left: Search Box -->
+        <div class="relative flex-1 max-w-md">
+            <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500 pointer-events-none">🔍</span>
+            <input type="text" id="clientSearchInput" oninput="onSearchInput(this.value)" placeholder="Search Client Name, Tenant ID, Broker ID..." 
+                   class="w-full bg-cardbg border border-bordercolor rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-brand-500 font-medium placeholder-slate-500 transition">
+        </div>
+
+        <!-- Right: Filter Badges & Segmented View Switcher -->
+        <div class="flex flex-wrap items-center gap-2" id="filterButtonsGroup">
+            <!-- Filter Pills -->
+            <div class="flex items-center space-x-1.5 bg-slate-900/80 p-1 rounded-xl border border-bordercolor">
+                <button onclick="setClientFilter('all')" id="filter-btn-all" class="client-filter-btn bg-brand-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap">
+                    All (<span id="cnt-all">{{ clients|length }}</span>)
+                </button>
+                <button onclick="setClientFilter('paper')" id="filter-btn-paper" class="client-filter-btn text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap">
+                    📝 Paper (<span id="cnt-paper">0</span>)
+                </button>
+                <button onclick="setClientFilter('live')" id="filter-btn-live" class="client-filter-btn text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap">
+                    🔥 Live (<span id="cnt-live">0</span>)
+                </button>
+                <button onclick="setClientFilter('profit')" id="filter-btn-profit" class="client-filter-btn text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap">
+                    🟢 Profit (<span id="cnt-profit">0</span>)
+                </button>
+                <button onclick="setClientFilter('loss')" id="filter-btn-loss" class="client-filter-btn text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap">
+                    🔴 Loss (<span id="cnt-loss">0</span>)
+                </button>
+            </div>
+
+            <!-- Segmented View Switcher (Cards vs Table) -->
+            <div class="flex items-center space-x-1 bg-slate-900/80 p-1 rounded-xl border border-bordercolor">
+                <button onclick="setViewMode('cards')" id="view-btn-cards" class="view-mode-btn bg-brand-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                    <span>🗂️</span> Cards
+                </button>
+                <button onclick="setViewMode('denseTable')" id="view-btn-table" class="view-mode-btn text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1">
+                    <span>📑</span> Table
+                </button>
+            </div>
+
+            <!-- Add Client CTA -->
+            <a href="/admin/clients/add" class="bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold px-3.5 py-2.5 rounded-xl transition shadow-md shadow-brand-600/20 whitespace-nowrap flex items-center gap-1">
+                <span>+</span> Add Client
+            </a>
+        </div>
+    </div>
+
+    <!-- Live Telemetry Stream Target (Auto-refreshed via HTMX every 3s) -->
+    <div id="dashboardStreamContainer"
+         hx-get="/admin/dashboard-partial"
+         hx-trigger="every 3s"
+         hx-swap="innerHTML">
+        {% include "dashboard_partial.html" %}
+    </div>
+</div>
+
+<script>
+    // Persistent Global Dashboard State
+    window.DashboardState = {
+        activeFilter: 'all',
+        searchQuery: '',
+        viewMode: 'cards' // 'cards' or 'denseTable'
+    };
+
+    function setClientFilter(filter) {
+        window.DashboardState.activeFilter = filter;
+        
+        // Highlight active filter pill
+        document.querySelectorAll('.client-filter-btn').forEach(btn => {
+            btn.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
+            btn.classList.add('text-slate-400', 'font-medium');
+        });
+        const activeBtn = document.getElementById('filter-btn-' + filter);
+        if (activeBtn) {
+            activeBtn.classList.remove('text-slate-400', 'font-medium');
+            activeBtn.classList.add('bg-brand-600', 'text-white', 'font-semibold');
+        }
+        applyFilters();
+    }
+
+    function onSearchInput(val) {
+        window.DashboardState.searchQuery = (val || '').toLowerCase().trim();
+        applyFilters();
+    }
+
+    function setViewMode(mode) {
+        window.DashboardState.viewMode = mode;
+        
+        const btnCards = document.getElementById('view-btn-cards');
+        const btnTable = document.getElementById('view-btn-table');
+        
+        if (mode === 'denseTable') {
+            btnCards?.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
+            btnCards?.classList.add('text-slate-400', 'font-medium');
+            btnTable?.classList.remove('text-slate-400', 'font-medium');
+            btnTable?.classList.add('bg-brand-600', 'text-white', 'font-semibold');
+        } else {
+            btnTable?.classList.remove('bg-brand-600', 'text-white', 'font-semibold');
+            btnTable?.classList.add('text-slate-400', 'font-medium');
+            btnCards?.classList.remove('text-slate-400', 'font-medium');
+            btnCards?.classList.add('bg-brand-600', 'text-white', 'font-semibold');
+        }
+        applyViewMode();
+    }
+
+    function applyViewMode() {
+        const cards = document.getElementById('cardsViewContainer');
+        const table = document.getElementById('denseTableViewContainer');
+        if (!cards || !table) return;
+
+        if (window.DashboardState.viewMode === 'denseTable') {
+            cards.classList.add('hidden');
+            table.classList.remove('hidden');
+        } else {
+            cards.classList.remove('hidden');
+            table.classList.add('hidden');
+        }
+    }
+
+    function updateFilterCounts() {
+        const allCards = Array.from(document.querySelectorAll('.client-card'));
+        const total = allCards.length;
+        const paper = allCards.filter(c => c.getAttribute('data-paper') === '1').length;
+        const live = allCards.filter(c => c.getAttribute('data-paper') === '0').length;
+        const profit = allCards.filter(c => parseFloat(c.getAttribute('data-net-mtm') || '0') > 0).length;
+        const loss = allCards.filter(c => parseFloat(c.getAttribute('data-net-mtm') || '0') < 0).length;
+
+        const elAll = document.getElementById('cnt-all'); if (elAll) elAll.innerText = total;
+        const elPaper = document.getElementById('cnt-paper'); if (elPaper) elPaper.innerText = paper;
+        const elLive = document.getElementById('cnt-live'); if (elLive) elLive.innerText = live;
+        const elProfit = document.getElementById('cnt-profit'); if (elProfit) elProfit.innerText = profit;
+        const elLoss = document.getElementById('cnt-loss'); if (elLoss) elLoss.innerText = loss;
+    }
+
+    function applyFilters() {
+        const query = window.DashboardState.searchQuery;
+        const filter = window.DashboardState.activeFilter;
+
+        let visibleCardsCount = 0;
+        let visibleRowsCount = 0;
+
+        // 1. Filter Cards
+        document.querySelectorAll('.client-card').forEach(card => {
+            const name = card.getAttribute('data-name') || '';
+            const id = card.getAttribute('data-id') || '';
+            const clientId = card.getAttribute('data-client-id') || '';
+            const isPaper = card.getAttribute('data-paper') === '1';
+            const netMtm = parseFloat(card.getAttribute('data-net-mtm') || '0');
+
+            const matchesQuery = !query || name.includes(query) || id.includes(query) || clientId.includes(query);
+            let matchesFilter = true;
+
+            if (filter === 'paper') matchesFilter = isPaper;
+            else if (filter === 'live') matchesFilter = !isPaper;
+            else if (filter === 'profit') matchesFilter = netMtm > 0;
+            else if (filter === 'loss') matchesFilter = netMtm < 0;
+
+            const isVisible = matchesQuery && matchesFilter;
+            card.style.display = isVisible ? 'flex' : 'none';
+            if (isVisible) visibleCardsCount++;
+        });
+
+        // 2. Filter Table Rows
+        document.querySelectorAll('.client-table-row').forEach(row => {
+            const name = row.getAttribute('data-name') || '';
+            const id = row.getAttribute('data-id') || '';
+            const clientId = row.getAttribute('data-client-id') || '';
+            const isPaper = row.getAttribute('data-paper') === '1';
+            const netMtm = parseFloat(row.getAttribute('data-net-mtm') || '0');
+
+            const matchesQuery = !query || name.includes(query) || id.includes(query) || clientId.includes(query);
+            let matchesFilter = true;
+
+            if (filter === 'paper') matchesFilter = isPaper;
+            else if (filter === 'live') matchesFilter = !isPaper;
+            else if (filter === 'profit') matchesFilter = netMtm > 0;
+            else if (filter === 'loss') matchesFilter = netMtm < 0;
+
+            const isVisible = matchesQuery && matchesFilter;
+            row.style.display = isVisible ? '' : 'none';
+            if (isVisible) visibleRowsCount++;
+        });
+
+        // Empty state handling
+        const emptyCardsMsg = document.getElementById('noCardsMatchedMsg');
+        if (emptyCardsMsg) {
+            emptyCardsMsg.style.display = (visibleCardsCount === 0) ? 'block' : 'none';
+        }
+        const emptyTableMsg = document.getElementById('noRowsMatchedMsg');
+        if (emptyTableMsg) {
+            emptyTableMsg.style.display = (visibleRowsCount === 0) ? '' : 'none';
+        }
+    }
+
+    // Auto-hook into HTMX afterSwap to instantly re-apply active filter and view mode
+    document.addEventListener('htmx:afterSwap', function(evt) {
+        if (evt.detail.target.id === 'dashboardStreamContainer') {
+            updateFilterCounts();
+            applyViewMode();
+            applyFilters();
+        }
+    });
+
+    // Initial run
+    updateFilterCounts();
+    applyViewMode();
+    applyFilters();
+</script>
+{% endblock %}

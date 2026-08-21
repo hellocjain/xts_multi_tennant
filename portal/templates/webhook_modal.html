@@ -1,0 +1,82 @@
+<div id="modal-backdrop" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onclick="if(event.target === this) closeModal()">
+    <div class="bg-cardbg border border-bordercolor w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        
+        <!-- Modal Header -->
+        <div class="px-6 py-4 bg-slate-900/90 border-b border-bordercolor flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 rounded-lg bg-brand-500/20 text-brand-400 flex items-center justify-center font-bold text-base">
+                    🔗
+                </div>
+                <div>
+                    <h3 class="font-bold text-slate-100 text-base">TradingView Webhook Setup</h3>
+                    <p class="text-xs text-slate-400">Client: <span class="text-brand-400 font-semibold">{{ tenant.name }}</span> (ID: <span class="font-mono">{{ tenant.id }}</span>)</p>
+                </div>
+            </div>
+            <button onclick="closeModal()" class="text-slate-400 hover:text-slate-200 text-lg p-1 rounded-lg hover:bg-slate-800 transition">
+                ✕
+            </button>
+        </div>
+
+        <!-- Modal Body -->
+        <div class="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+            
+            <!-- Step 1: Webhook URL -->
+            <div class="space-y-1.5">
+                <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                    <span>1. Webhook URL (Paste into TradingView Notification Tab)</span>
+                    <span class="text-[11px] font-normal text-slate-400">Endpoint</span>
+                </label>
+                <div class="flex items-center space-x-2">
+                    <input type="text" id="webhook-url-input" readonly value="{{ webhook_url }}" 
+                           class="w-full bg-slate-900 border border-bordercolor rounded-lg px-3.5 py-2.5 text-xs text-brand-400 font-mono focus:outline-none select-all" />
+                    <button onclick="copyElementText('webhook-url-input', this)" 
+                            class="bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs px-4 py-2.5 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 shadow-md shadow-brand-600/20">
+                        <span>📋 Copy URL</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 2: Message Payload (JSON) -->
+            <div class="space-y-1.5">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                        2. Alert Message Body (Paste into TradingView "Message" Box)
+                    </label>
+                    <button onclick="copyElementText('webhook-json-block', this)" 
+                            class="text-xs text-brand-400 hover:text-brand-300 font-semibold flex items-center gap-1">
+                        <span>📋 Copy JSON</span>
+                    </button>
+                </div>
+                <div class="relative group">
+                    <pre id="webhook-json-block" class="bg-slate-950 border border-bordercolor rounded-xl p-4 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json }}</pre>
+                    <button onclick="copyElementText('webhook-json-block', this)" 
+                            class="absolute top-2.5 right-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-bordercolor transition flex items-center gap-1">
+                        <span>Copy Message</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Instructions Card -->
+            <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-xs text-slate-400 space-y-2">
+                <div class="font-bold text-slate-200 flex items-center gap-1.5">
+                    <span>💡 How to Setup in TradingView (30 Seconds):</span>
+                </div>
+                <ol class="list-decimal list-inside space-y-1 text-slate-300">
+                    <li>Open your TradingView Chart & Click <strong class="text-white">Create Alert</strong> (<kbd class="bg-slate-800 px-1 py-0.5 rounded text-[10px]">Alt + A</kbd>).</li>
+                    <li>In the <strong class="text-white">Notifications</strong> tab, check <strong class="text-white">Webhook URL</strong> and paste the URL from Step 1.</li>
+                    <li>In the <strong class="text-white">Settings</strong> tab, paste the JSON from Step 2 directly into the <strong class="text-white">Message</strong> box.</li>
+                </ol>
+            </div>
+
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="px-6 py-3.5 bg-slate-900/90 border-t border-bordercolor flex items-center justify-between">
+            <span class="text-[11px] text-slate-500 font-mono">Client ID: {{ tenant.id }}</span>
+            <button onclick="closeModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-4 py-2 rounded-lg transition">
+                Close
+            </button>
+        </div>
+
+    </div>
+</div>

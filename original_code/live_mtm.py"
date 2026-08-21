@@ -1,0 +1,84 @@
+import sys
+sys.path.append("/opt/xts_bot")
+import config, xts_api, requests, time
+
+def get_live_mtm():
+    token = xts_api.get_interactive_token()
+    if not token:
+        print("❌ Failed to get Interactive Token")
+        return
+
+    base_url = config.XTS_API_BASE_URL.rstrip('/')
+    url = f"{base_url}/portfolio/positions?dayOrNet=DayWise"
+    headers = {"authorization": token}
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        data = resp.json()
+        positions = data.get("result", {}).get("positionList", [])
+        
+        if not positions:
+            print("\n📊 No positions found for today.\n")
+            return
+
+        total_unrealized_pnl = 0.0
+        total_realized_pnl = 0.0
+
+        print("\n" + "=" * 90)
+        print(f"   📈 LIVE REAL-TIME MTM DASHBOARD (AC AGARWAL / XTS) - {time.strftime('%H:%M:%S IST')}")
+        print("=" * 90)
+        print(f"{'SYMBOL':<22} {'SIDE':<6} {'QTY':<5} {'BUY AVG':<10} {'SELL AVG':<10} {'LTP':<10} {'PTS':<8} {'MTM (₹)'}")
+        print("-" * 90)
+
+        for p in positions:
+            sym = p.get("TradingSymbol", "")
+            inst_id = int(p.get("ExchangeInstrumentId", 0))
+            exch_seg = p.get("ExchangeSegment", "MCXFO")
+            qty = int(p.get("Quantity", 0))
+            mult = float(p.get("Multiplier", 1) or 1)
+            
+            buy_avg = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0))
+            sell_avg = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0))
+            
+            ltp = xts_api.get_live_price(inst_id, exch_seg)
+            if not ltp or ltp == "TOKEN_EXPIRED":
+                ltp = float(p.get("LastTradedPrice", 0) or buy_avg)
+
+            unrealized_pnl = 0.0
+            pts_diff = 0.0
+            side = "FLAT"
+
+            if qty > 0:
+                side = "LONG"
+                pts_diff = ltp - buy_avg
+                unrealized_pnl = pts_diff * qty * mult
+            elif qty < 0:
+                side = "SHORT"
+                pts_diff = sell_avg - ltp
+                unrealized_pnl = pts_diff * abs(qty) * mult
+            
+            realized_pnl = float(p.get("RealizedMTM", 0) or 0)
+            total_realized_pnl += realized_pnl
+            total_unrealized_pnl += unrealized_pnl
+
+            pnl_color = "\033[92m" if unrealized_pnl >= 0 else "\033[91m"
+            reset_color = "\033[0m"
+            pts_str = f"{pts_diff:+.1f}"
+            pnl_str = f"₹{unrealized_pnl:+,.2f}"
+
+            print(f"{sym:<22} {side:<6} {qty:<5} ₹{buy_avg:<9.1f} ₹{sell_avg:<9.1f} ₹{ltp:<9.1f} {pts_str:<8} {pnl_color}{pnl_str:<12}{reset_color}")
+
+        total_net_pnl = total_unrealized_pnl + total_realized_pnl
+        net_color = "\033[92m" if total_net_pnl >= 0 else "\033[91m"
+        reset_color = "\033[0m"
+
+        print("-" * 90)
+        print(f"📊 Realized P&L: ₹{total_realized_pnl:+,.2f}  |  Unrealized P&L: ₹{total_unrealized_pnl:+,.2f}")
+        print(f"💰 {net_color}TOTAL NET MTM P&L: ₹{total_net_pnl:+,.2f}{reset_color}")
+        print("=" * 90 + "\n")
+
+    except Exception as e:
+        print(f"Error fetching live MTM: {e}")
+
+if __name__ == "__main__":
+    get_live_mtm()

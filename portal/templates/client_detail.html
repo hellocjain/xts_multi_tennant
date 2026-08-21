@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+
+{% block title %}{{ client.name }} - Client Telemetry{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Header & Actions -->
+    <div class="bg-cardbg border border-bordercolor p-6 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center space-x-3">
+                <h1 class="text-2xl font-bold text-slate-100">{{ client.name }}</h1>
+                {% if client.paper_mode %}
+                <span class="bg-blue-500/20 text-blue-400 text-xs font-semibold px-2.5 py-0.5 rounded border border-blue-500/30">PAPER TRADING</span>
+                {% else %}
+                <span class="bg-red-500/20 text-red-400 text-xs font-semibold px-2.5 py-0.5 rounded border border-red-500/30 font-bold">LIVE REAL MONEY</span>
+                {% endif %}
+                <span class="bg-slate-800 text-slate-400 text-xs font-mono px-2.5 py-0.5 rounded border border-bordercolor">Tenant: {{ client.id }}</span>
+                <span class="bg-slate-800 text-slate-400 text-xs font-mono px-2.5 py-0.5 rounded border border-bordercolor">Broker ID: <strong class="text-slate-200">{{ client.client_id }}</strong></span>
+            </div>
+            <div class="text-xs text-slate-400 mt-2 font-mono flex items-center gap-2">
+                <span>Webhook URL:</span>
+                <span class="bg-slate-900 px-3 py-1 rounded text-brand-400 border border-bordercolor select-all">{{ webhook_url }}</span>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <a href="/admin/clients/{{ client.id }}/edit" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition">Edit Config</a>
+            <a href="/admin/clients/{{ client.id }}/restart" class="bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg transition">Restart</a>
+            {% if client.status == 'PAUSED' %}
+            <a href="/admin/clients/{{ client.id }}/resume" class="bg-green-700/40 hover:bg-green-700/60 text-green-300 text-xs font-semibold px-3 py-2 rounded-lg transition">Resume</a>
+            {% else %}
+            <a href="/admin/clients/{{ client.id }}/pause" class="bg-amber-700/40 hover:bg-amber-700/60 text-amber-300 text-xs font-semibold px-3 py-2 rounded-lg transition">Pause</a>
+            {% endif %}
+            <form method="POST" action="/admin/clients/{{ client.id }}/panic" class="inline" onsubmit="return confirm('⚠️ Square off all positions for {{ client.name }}?');">
+                <button type="submit" class="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition shadow-lg shadow-red-600/20">Panic Square Off</button>
+            </form>
+            <form method="POST" action="/admin/clients/{{ client.id }}/delete" class="inline" onsubmit="return confirm('⚠️ PERMANENTLY DELETE {{ client.name }}? Container and routes will be destroyed.');">
+                <button type="submit" class="bg-slate-800 hover:bg-red-950 text-red-400 border border-red-500/20 text-xs font-semibold px-3 py-2 rounded-lg transition">Delete</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- TradingView Webhook & Alert Message Setup Card -->
+    <div class="bg-cardbg border border-bordercolor p-6 rounded-xl space-y-4">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-2">
+                <span class="text-xl">⚡</span>
+                <h2 class="font-bold text-slate-100 text-sm uppercase tracking-wider">TradingView Alert Integration</h2>
+            </div>
+            <span class="text-xs text-brand-400 font-medium">Ready to Paste in TradingView</span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <!-- Left: Webhook URL & Secret -->
+            <div class="space-y-4">
+                <div class="space-y-1.5">
+                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">1. Webhook URL (Notifications Tab)</label>
+                    <div class="flex items-center space-x-2">
+                        <input type="text" id="detail-webhook-url" readonly value="{{ webhook_url }}" 
+                               class="w-full bg-slate-900 border border-bordercolor rounded-lg px-3.5 py-2 text-xs text-brand-400 font-mono select-all focus:outline-none" />
+                        <button onclick="copyElementText('detail-webhook-url', this)" 
+                                class="bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg transition whitespace-nowrap shadow-md shadow-brand-600/20">
+                            📋 Copy URL
+                        </button>
+                    </div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">Webhook Secret</label>
+                    <div class="flex items-center space-x-2">
+                        <input type="password" id="detail-secret" readonly value="{{ webhook_secret }}" 
+                               class="w-full bg-slate-900 border border-bordercolor rounded-lg px-3.5 py-2 text-xs text-slate-300 font-mono select-all focus:outline-none" />
+                        <button onclick="const el=document.getElementById('detail-secret'); el.type = el.type === 'password' ? 'text' : 'password'; this.innerText = el.type === 'password' ? '👁️ Show' : '🔒 Hide';" 
+                                class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs px-3 py-2 rounded-lg border border-bordercolor transition whitespace-nowrap">
+                            👁️ Show
+                        </button>
+                        <button onclick="copyElementText('detail-secret', this)" 
+                                class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs px-3 py-2 rounded-lg border border-bordercolor transition whitespace-nowrap">
+                            📋 Copy
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-400 space-y-1.5">
+                    <div class="font-bold text-slate-200">💡 Quick TradingView Setup:</div>
+                    <ol class="list-decimal list-inside space-y-1 text-[11px] text-slate-300">
+                        <li>In TradingView, create a new Alert (<kbd class="bg-slate-800 px-1 py-0.5 rounded text-[10px]">Alt + A</kbd>).</li>
+                        <li>In the <strong>Notifications</strong> tab, enable <strong>Webhook URL</strong> and paste the URL above.</li>
+                        <li>In the <strong>Settings</strong> tab, paste the JSON on the right into the <strong>Message</strong> box.</li>
+                    </ol>
+                </div>
+            </div>
+
+            <!-- Right: Exact JSON Message Box -->
+            <div class="space-y-1.5">
+                <div class="flex items-center justify-between">
+                    <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">2. Alert Message (Settings Tab &rarr; Message Box)</label>
+                    <button onclick="copyElementText('detail-webhook-json', this)" 
+                            class="text-xs text-brand-400 hover:text-brand-300 font-semibold flex items-center gap-1">
+                        <span>📋 Copy JSON</span>
+                    </button>
+                </div>
+                <div class="relative group">
+                    <pre id="detail-webhook-json" class="bg-slate-950 border border-bordercolor rounded-xl p-4 text-xs font-mono text-slate-200 overflow-x-auto select-all leading-relaxed">{{ webhook_json }}</pre>
+                    <button onclick="copyElementText('detail-webhook-json', this)" 
+                            class="absolute top-2.5 right-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-bordercolor transition flex items-center gap-1">
+                        Copy Message
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Telemetry Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-cardbg border border-bordercolor p-5 rounded-xl">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Net Mark-To-Market (MTM)</span>
+            <div class="text-2xl font-bold mt-1 font-mono {% if client.net_mtm >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                ₹{{ client.net_mtm|inr }}
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">Unrealized: ₹{{ client.unrealized_mtm|inr }} | Realized: ₹{{ client.realized_pnl|inr }}</div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor p-5 rounded-xl">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Open Positions</span>
+            <div class="text-2xl font-bold mt-1 text-slate-100 font-mono">
+                {{ client.positions_count }}
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">Active market exposure</div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor p-5 rounded-xl">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Daily Notional Traded</span>
+            <div class="text-2xl font-bold mt-1 text-slate-100 font-mono">
+                ₹{{ client.notional_today|num }} <span class="text-xs text-slate-500 font-normal">/ ₹{{ client.notional_cap|num }}</span>
+            </div>
+            <div class="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden mt-2">
+                <div class="bg-brand-500 h-1.5 rounded-full" style="width: {{ client.notional_pct }}%"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Positions Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl overflow-hidden shadow-xl">
+        <div class="px-6 py-4 border-b border-bordercolor">
+            <h2 class="font-bold text-slate-200">Live Open Positions</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="bg-slate-900/80 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
+                    <tr>
+                        <th class="px-5 py-3">Symbol</th>
+                        <th class="px-4 py-3">Side</th>
+                        <th class="px-4 py-3 text-right">Qty</th>
+                        <th class="px-4 py-3 text-right">Buy Avg</th>
+                        <th class="px-4 py-3 text-right">Sell Avg</th>
+                        <th class="px-4 py-3 text-right">LTP</th>
+                        <th class="px-5 py-3 text-right">Unrealized MTM (₹)</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor/60">
+                    {% for p in client.positions %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="px-5 py-3 font-bold font-mono">{{ p.symbol }}</td>
+                        <td class="px-4 py-3">
+                            {% if p.side == 'LONG' or p.side == 'BUY' %}
+                            <span class="text-green-400 font-bold text-xs bg-green-500/10 px-2 py-0.5 rounded">LONG</span>
+                            {% else %}
+                            <span class="text-red-400 font-bold text-xs bg-red-500/10 px-2 py-0.5 rounded">SHORT</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-right font-mono">{{ p.quantity }}</td>
+                        <td class="px-4 py-3 text-right font-mono">₹{{ p.buy_avg|inr }}</td>
+                        <td class="px-4 py-3 text-right font-mono">₹{{ p.sell_avg|inr }}</td>
+                        <td class="px-4 py-3 text-right font-mono">₹{{ p.ltp|inr }}</td>
+                        <td class="px-5 py-3 text-right font-mono font-bold {% if p.unrealized_mtm >= 0 %}text-green-400{% else %}text-red-400{% endif %}">
+                            ₹{{ p.unrealized_mtm|inr }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="px-6 py-6 text-center text-slate-500">
+                            No open positions found in broker account.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Recent Signals Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl overflow-hidden shadow-xl">
+        <div class="px-6 py-4 border-b border-bordercolor">
+            <h2 class="font-bold text-slate-200">Recent Webhook Signals (signals.db)</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+                <thead class="bg-slate-900/80 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
+                    <tr>
+                        <th class="px-5 py-3">Received Time</th>
+                        <th class="px-4 py-3">Action</th>
+                        <th class="px-4 py-3">Symbol</th>
+                        <th class="px-4 py-3 text-right">Qty</th>
+                        <th class="px-4 py-3 text-right">TV Price</th>
+                        <th class="px-4 py-3">Status</th>
+                        <th class="px-5 py-3">Order Ref</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor/60">
+                    {% for s in client.recent_signals %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="px-5 py-3 text-slate-400">{{ s.received_at }}</td>
+                        <td class="px-4 py-3 font-bold {% if s.payload.action == 'BUY' %}text-green-400{% else %}text-red-400{% endif %}">
+                            {{ s.payload.action }}
+                        </td>
+                        <td class="px-4 py-3 font-bold text-slate-200">{{ s.payload.symbol }}</td>
+                        <td class="px-4 py-3 text-right">{{ s.payload.quantity }}</td>
+                        <td class="px-4 py-3 text-right">₹{{ s.payload.price }}</td>
+                        <td class="px-4 py-3">
+                            <span class="px-2 py-0.5 rounded text-[11px] font-semibold
+                                {% if s.status in ('done', 'paper_done') %}bg-green-500/20 text-green-400
+                                {% elif s.status == 'pending' %}bg-amber-500/20 text-amber-400
+                                {% else %}bg-red-500/20 text-red-400{% endif %}">
+                                {{ s.status }}
+                            </span>
+                        </td>
+                        <td class="px-5 py-3 text-slate-400">{{ s.payload.order_ref }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="px-6 py-6 text-center text-slate-500">
+                            No signal execution history found in local SQLite database.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Container Logs -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl overflow-hidden shadow-xl">
+        <div class="px-6 py-4 border-b border-bordercolor flex items-center justify-between">
+            <h2 class="font-bold text-slate-200">Raw Container Log Stream</h2>
+            <button onclick="window.location.reload();" class="text-xs text-brand-400 hover:underline">Refresh Logs</button>
+        </div>
+        <div class="p-4 bg-slate-950 font-mono text-xs text-slate-300 max-h-96 overflow-y-auto whitespace-pre-wrap select-all">
+{{ logs }}
+        </div>
+    </div>
+
+</div>
+{% endblock %}

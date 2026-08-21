@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}System Audit Logs - XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-100">Immutable Audit Trail</h1>
+            <p class="text-xs text-slate-400 mt-1">Chronological record of all administrative operations, config edits, and panic sweeps</p>
+        </div>
+        <a href="/admin/dashboard" class="text-xs text-slate-400 hover:text-slate-200 transition">&larr; Back to Dashboard</a>
+    </div>
+
+    <div class="bg-cardbg border border-bordercolor rounded-xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+                <thead class="bg-slate-900/80 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
+                    <tr>
+                        <th class="px-5 py-3">Timestamp</th>
+                        <th class="px-4 py-3">Actor</th>
+                        <th class="px-4 py-3">Action</th>
+                        <th class="px-4 py-3">Target Client</th>
+                        <th class="px-5 py-3">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor/60">
+                    {% for log in logs %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="px-5 py-3 text-slate-400">{{ log.formatted_time }}</td>
+                        <td class="px-4 py-3 font-bold text-slate-300">{{ log.actor }}</td>
+                        <td class="px-4 py-3">
+                            <span class="px-2 py-0.5 rounded font-semibold text-[11px]
+                                {% if 'PANIC' in log.action %}bg-red-500/20 text-red-400
+                                {% elif 'PROVISION' in log.action or 'CREATE' in log.action %}bg-green-500/20 text-green-400
+                                {% elif 'UPDATE' in log.action %}bg-blue-500/20 text-blue-400
+                                {% else %}bg-slate-700 text-slate-300{% endif %}">
+                                {{ log.action }}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 text-brand-400">{{ log.target_tenant_id or '-' }}</td>
+                        <td class="px-5 py-3 text-slate-400 max-w-md truncate" title="{{ log.details_json }}">
+                            {{ log.details_json }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="px-6 py-6 text-center text-slate-500">
+                            No administrative audit records logged yet.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.class
+*.so
+
+# Environments & Dependencies
+.venv/
+venv/
+env/
+ENV/
+.env
+
+# Local runtime data & SQLite DBs
+local_data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+daily_risk_state.json
+paper_trades.log
+
+# Caches & Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+
+# Secret keys and backup dumps
+*.enc
+*.tar.gz
+*.gpg
+.backup_env

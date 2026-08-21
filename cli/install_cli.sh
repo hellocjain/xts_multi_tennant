@@ -1,0 +1,139 @@
+#!/bin/bash
+# =====================================================================
+# XTS MULTI-TENANT ENTERPRISE CLI SUITE
+# =====================================================================
+set -e
+
+SCRIPT_DIR="/opt/xts_multi"
+
+# 1. xts-clients
+sudo tee /usr/local/bin/xts-clients > /dev/null << 'EOF'
+#!/bin/bash
+docker ps --filter "name=xts_client_" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+EOF
+
+# 2. xts-status
+sudo tee /usr/local/bin/xts-status > /dev/null << 'EOF'
+#!/bin/bash
+CLIENT_ID=$1
+if [ -z "$CLIENT_ID" ]; then
+    echo "=== 📊 ALL ACTIVE CLIENT STATUS ==="
+    for c in $(docker ps --filter "name=xts_client_" --format "{{.Names}}"); do
+        echo "--- Container: $c ---"
+        docker exec "$c" curl -s http://127.0.0.1:8000/health | python3 -m json.tool || true
+    done
+else
+    CONTAINER="xts_client_$CLIENT_ID"
+    docker exec "$CONTAINER" curl -s http://127.0.0.1:8000/health | python3 -m json.tool
+fi
+EOF
+
+# 3. xts-positions
+sudo tee /usr/local/bin/xts-positions > /dev/null << 'EOF'
+#!/bin/bash
+CLIENT_ID=$1
+if [ -z "$CLIENT_ID" ]; then
+    echo "Usage: xts-positions <client_id>"
+    exit 1
+fi
+CONTAINER="xts_client_$CLIENT_ID"
+docker exec "$CONTAINER" python3 -c "import xts_api, json; print(json.dumps(xts_api.get_positions_telemetry(), indent=2))"
+EOF
+
+# 4. xts-mtm
+sudo tee /usr/local/bin/xts-mtm > /dev/null << 'EOF'
+#!/bin/bash
+docker exec xts_portal python3 -c "
+import asyncio, telemetry_service
+async def main():
+    res = await telemetry_service.aggregate_all_telemetry()
+    s = res['summary']
+    print('\n========================= 📈 LIVE MULTI-TENANT MTM SUMMARY =========================')
+    print(f'Total Clients: {s[\"total_clients\"]} | Active: {s[\"active_clients\"]} | Healthy: {s[\"healthy_clients\"]}')
+    print(f'Total Unrealized MTM: ₹{s[\"total_unrealized_mtm\"]:,.2f}')
+    print(f'Total Realized P&L:  ₹{s[\"total_realized_pnl\"]:,.2f}')
+    print(f'TOTAL NET PORTFOLIO MTM: ₹{s[\"total_net_mtm\"]:,.2f}')
+    print('-------------------------------------------------------------------------------------')
+    print(f'{\"CLIENT ID\":<16} {\"STATUS\":<10} {\"MODE\":<6} {\"POSITIONS\":<10} {\"LIVE MTM (₹)\"}')
+    print('-' * 85)
+    for c in res['clients']:
+        mode = 'PAPER' if c.get('paper_mode') else 'LIVE'
+        print(f'{c[\"id\"]::<16} {c[\"status\"]::<10} {mode::<6} {c[\"positions_count\"]::<10} ₹{c[\"net_mtm\"]:,.2f}')
+    print('=====================================================================================\n')
+asyncio.run(main())
+"
+EOF
+
+# 5. xts-panic
+sudo tee /usr/local/bin/xts-panic > /dev/null << 'EOF'
+#!/bin/bash
+CLIENT_ID=$1
+if [ -z "$CLIENT_ID" ]; then
+    echo "Usage: xts-panic <client_id>"
+    exit 1
+fi
+CONTAINER="xts_client_$CLIENT_ID"
+echo "🚨 INITIATING EMERGENCY SQUARE-OFF FOR $CLIENT_ID..."
+docker exec "$CONTAINER" python3 -c "import xts_api, json; print(json.dumps(xts_api.panic_square_off_all(), indent=2))"
+EOF
+
+# 6. xts-panic-all
+sudo tee /usr/local/bin/xts-panic-all > /dev/null << 'EOF'
+#!/bin/bash
+read -p "⚠️ CRITICAL: Are you sure you want to SQUARE OFF ALL CLIENTS? (yes/no): " CONFIRM
+if [ "$CONFIRM" != "yes" ]; then
+    echo "Aborted."
+    exit 0
+fi
+echo "🚨 INITIATING GLOBAL PANIC SWEEP ACROSS ALL CLIENT CONTAINERS..."
+docker exec xts_portal python3 -c "import asyncio, telemetry_service, json; print(json.dumps(asyncio.run(telemetry_service.panic_all_active_clients()), indent=2))"
+EOF
+
+# 7. xts-logs
+sudo tee /usr/local/bin/xts-logs > /dev/null << 'EOF'
+#!/bin/bash
+CLIENT_ID=$1
+if [ -z "$CLIENT_ID" ]; then
+    echo "Usage: xts-logs <client_id> [-f]"
+    exit 1
+fi
+CONTAINER="xts_client_$CLIENT_ID"
+shift || true
+docker logs "$CONTAINER" "$@"
+EOF
+
+# 8. xts-backup
+sudo tee /usr/local/bin/xts-backup > /dev/null << 'EOF'
+#!/bin/bash
+echo "📦 Initiating Hot SQLite Multi-Tenant Backup..."
+docker exec xts_portal python3 /app/backup/backup_engine.py || python3 /opt/xts_multi/backup/backup_engine.py
+EOF
+
+# 9. xts-admin-reset-2fa
+sudo tee /usr/local/bin/xts-admin-reset-2fa > /dev/null << 'EOF'
+#!/bin/bash
+echo "🚨 Initiating Host Emergency 2FA Break-Glass Tool..."
+python3 /opt/xts_multi/portal/scripts/break_glass.py "$@"
+EOF
+
+# 10. xts-dr-restore
+sudo tee /usr/local/bin/xts-dr-restore > /dev/null << 'EOF'
+#!/bin/bash
+python3 /opt/xts_multi/backup/dr_restore.py "$@"
+EOF
+
+# 11. xts-warmup
+sudo tee /usr/local/bin/xts-warmup > /dev/null << 'EOF'
+#!/bin/bash
+echo "☀️ Running Rolling Master Cache Warmup for all active clients..."
+docker exec xts_portal python3 -c "
+import asyncio, scheduler, json
+async def main():
+    res = await scheduler.run_rolling_cache_warmup(batch_size=4, delay_between_batches_sec=3.0)
+    print(json.dumps(res, indent=2))
+asyncio.run(main())
+"
+EOF
+
+sudo chmod +x /usr/local/bin/xts-*
+echo "✅ Multi-Tenant CLI Suite installed in /usr/local/bin/xts-*"

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}XTS Multi-Tenant Enterprise Gateway{% endblock %}</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0fdf4',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                        },
+                        darkbg: '#0f172a',
+                        cardbg: '#1e293b',
+                        bordercolor: '#334155',
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- HTMX for reactive real-time dashboard updates -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    </style>
+</head>
+<body class="bg-darkbg text-slate-100 min-h-screen flex flex-col">
+
+    <!-- Top Navigation Bar -->
+    <nav class="bg-cardbg border-b border-bordercolor px-6 py-3 flex items-center justify-between sticky top-0 z-50">
+        <div class="flex items-center space-x-4">
+            <a href="/admin/dashboard" class="flex items-center space-x-2">
+                <span class="text-2xl">⚡</span>
+                <span class="font-bold text-xl tracking-tight text-brand-500">XTS Multi-Tenant</span>
+                <span class="bg-brand-700/30 text-brand-500 text-xs px-2 py-0.5 rounded font-mono border border-brand-500/20">v10.0-PRO</span>
+            </a>
+            {% if current_user %}
+            <div class="hidden md:flex space-x-2 pl-6">
+                <a href="/admin/dashboard" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">🎛️ Profiles</a>
+                <a href="/admin/orders" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">📜 Orders & Signals</a>
+                <a href="/admin/clients/add" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">+ Add Client</a>
+                <a href="/admin/settings" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">⚙️ Settings</a>
+                <a href="/admin/audit-logs" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">🔒 Audit</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="flex items-center space-x-4">
+            {% if current_user %}
+            <span class="text-xs text-slate-400 font-mono">Admin: <strong class="text-slate-200">{{ current_user.username }}</strong></span>
+            <a href="/admin/logout" class="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 text-xs font-semibold px-3 py-1.5 rounded-md transition">Logout</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 p-6 max-w-7xl mx-auto w-full">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Modal Container for dynamic HTMX modals -->
+    <div id="modal-container"></div>
+
+    <!-- Footer -->
+    <footer class="border-t border-bordercolor/50 px-6 py-4 text-center text-xs text-slate-500">
+        &copy; 2026 XTS Enterprise Multi-Tenant Gateway &bull; Symphony XTS Broker Integration &bull; Isolated Container Topology
+    </footer>
+
+    <!-- Global Utilities -->
+    <script>
+        function copyElementText(id, btn) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            navigator.clipboard.writeText(el.value || el.innerText).then(() => {
+                const orig = btn.innerHTML;
+                btn.innerHTML = '<span>✅ Copied!</span>';
+                btn.classList.add('!bg-green-600');
+                setTimeout(() => {
+                    btn.innerHTML = orig;
+                    btn.classList.remove('!bg-green-600');
+                }, 2000);
+            });
+        }
+
+        function copyRawText(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const orig = btn.innerHTML;
+                btn.innerHTML = '<span>✅ Copied!</span>';
+                setTimeout(() => {
+                    btn.innerHTML = orig;
+                }, 2000);
+            });
+        }
+
+        function closeModal() {
+            const mc = document.getElementById('modal-container');
+            if (mc) mc.innerHTML = '';
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+    </script>
+</body>
+</html>
