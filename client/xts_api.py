@@ -920,6 +920,10 @@ def place_order(action, symbol, quantity, tv_price, order_ref):
         else:
             return {"status": "error", "message": f"Instrument resolution failed for {symbol}"}
 
+    cfg_prod = str(getattr(config, "DEFAULT_PRODUCT_TYPE", getattr(config, "PRODUCT_TYPE", ""))).strip().upper()
+    if cfg_prod in ("NRML", "MIS", "CNC"):
+        prod_type = cfg_prod
+
     tv_sends_lots = getattr(config, "TV_SENDS_LOTS", True)
     execution_qty = (quantity * lot_size) if (tv_sends_lots and exch_seg not in ["NSECM", "BSECM"]) else quantity
 
