@@ -447,6 +447,36 @@ def refresh_master_cache(force=False):
     finally:
         REFRESH_LOCK.release()
 
+def get_instrument_by_id(target_id: int):
+    with CACHE_LOCK:
+        for root, contract_list in FUT_MASTER.items():
+            for c in contract_list:
+                if c[1] == target_id:
+                    return {
+                        "name": root,
+                        "expiry": c[0],
+                        "inst_id": c[1],
+                        "exch_seg": c[2],
+                        "desc": c[3],
+                        "tick_size": c[4],
+                        "lot_size": c[5],
+                        "freeze_qty": c[6],
+                    }
+        for root, contract_list in CASH_MASTER.items():
+            for c in contract_list:
+                if c[1] == target_id:
+                    return {
+                        "name": root,
+                        "expiry": c[0],
+                        "inst_id": c[1],
+                        "exch_seg": c[2],
+                        "desc": c[3],
+                        "tick_size": c[4],
+                        "lot_size": c[5],
+                        "freeze_qty": c[6],
+                    }
+    return None
+
 def cache_is_healthy():
     with CACHE_LOCK:
         IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
@@ -547,6 +577,7 @@ def get_dynamic_contract_info(symbol):
         return _resolve_front_month(symbol, target_name, is_future_intent=True, depth=depth)
 
     clean_sym = PREFIX_STRIPPER.sub('', symbol.upper().strip())
+    clean_sym = re.sub(r'[\s\-_]+', '', clean_sym)
     clean_sym = re.sub(r'FUT$', '', clean_sym, flags=re.IGNORECASE)
 
     with CACHE_LOCK:
@@ -798,7 +829,7 @@ def check_order_status_by_ref(order_ref):
     if not token:
         return "NETWORK_ERROR"
     safe_url = get_safe_base_url()
-    url = f"{safe_url}/reports/orders"
+    url = f"{safe_url}/orders"
     headers = {"authorization": token}
     try:
         response = api_session.get(url, headers=headers, timeout=5)
@@ -848,7 +879,7 @@ def _monitor_and_clean_partial_fills(order_ref, client_id, token):
     time.sleep(timeout_sec)
     
     safe_url = get_safe_base_url()
-    url = f"{safe_url}/reports/orders"
+    url = f"{safe_url}/orders"
     headers = {"authorization": token}
     try:
         resp = api_session.get(url, headers=headers, timeout=5)
@@ -1182,7 +1213,7 @@ def panic_square_off_all():
 
     # 1. Cancel all open pending orders
     try:
-        ord_url = f"{safe_url}/reports/orders"
+        ord_url = f"{safe_url}/orders"
         o_resp = api_session.get(ord_url, headers=headers, timeout=5)
         orders = o_resp.json().get("result", [])
         for ord_item in orders:
@@ -1200,6 +1231,13 @@ def panic_square_off_all():
     try:
         pos_url = f"{safe_url}/portfolio/positions?dayOrNet=DayWise"
         resp = api_session.get(pos_url, headers=headers, timeout=5)
+        if resp.status_code in (400, 401, 403):
+            clear_tokens()
+            token = get_interactive_token(force_refresh=True)
+            if token:
+                headers = {"authorization": token, "Content-Type": "application/json"}
+                resp = api_session.get(pos_url, headers=headers, timeout=5)
+
         positions = resp.json().get("result", {}).get("positionList", [])
 
         for p in positions:
@@ -1214,12 +1252,22 @@ def panic_square_off_all():
             action = "SELL" if qty > 0 else "BUY"
             square_qty = abs(qty)
 
-            # Dynamic tick size & freeze quantity lookup
-            _, _, _, inst_tick, _, inst_freeze, _ = get_dynamic_contract_info(sym)
-            tick_size = inst_tick or 0.05
-            freeze_limit = inst_freeze or getattr(config, "DEFAULT_FREEZE_QTY_IF_UNKNOWN", 100000)
+            # Direct instrument master lookup by instrument ID
+            inst_meta = get_instrument_by_id(inst_id)
+            if inst_meta:
+                tick_size = inst_meta["tick_size"]
+                freeze_limit = inst_meta["freeze_qty"]
+                exch_seg = inst_meta["exch_seg"]
+            else:
+                clean_lookup = re.sub(r'[\s\-]+', '', sym)
+                _, _, _, inst_tick, _, inst_freeze, _ = get_dynamic_contract_info(clean_lookup)
+                tick_size = inst_tick or 0.05
+                freeze_limit = inst_freeze or getattr(config, "DEFAULT_FREEZE_QTY_IF_UNKNOWN", 100000)
 
-            live_price = get_live_price(inst_id, exch_seg) or float(p.get("BuyAveragePrice", 100))
+            live_price = get_live_price(inst_id, exch_seg)
+            if not live_price or live_price == "TOKEN_EXPIRED":
+                live_price = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 100))
+
             buffer = max(live_price * 0.01, tick_size * 10)
             raw_limit = (live_price + buffer) if action == "BUY" else (live_price - buffer)
             exec_price = apply_tick_size(raw_limit, tick_size, action)
