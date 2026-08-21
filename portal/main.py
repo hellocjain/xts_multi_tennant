@@ -223,22 +223,40 @@ async def logout(request: Request):
 # =====================================================================
 
 @app.get("/admin/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, user: dict = Depends(require_auth)):
+async def dashboard(
+    request: Request,
+    active_filter: str = "all",
+    view_mode: str = "cards",
+    q: str = "",
+    user: dict = Depends(require_auth)
+):
     data = await telemetry_service.aggregate_all_telemetry()
     return templates.TemplateResponse(request=request, name="dashboard.html", context={
         "summary": data["summary"],
         "clients": data["clients"],
+        "active_filter": active_filter,
+        "view_mode": view_mode,
+        "search_query": q,
         "current_user": user,
         "domain": DOMAIN_NAME,
         "server_info": get_server_info()
     })
 
 @app.get("/admin/dashboard-partial", response_class=HTMLResponse)
-async def dashboard_partial(request: Request, user: dict = Depends(require_auth)):
+async def dashboard_partial(
+    request: Request,
+    active_filter: str = "all",
+    view_mode: str = "cards",
+    q: str = "",
+    user: dict = Depends(require_auth)
+):
     data = await telemetry_service.aggregate_all_telemetry()
     return templates.TemplateResponse(request=request, name="dashboard_partial.html", context={
         "summary": data["summary"],
         "clients": data["clients"],
+        "active_filter": active_filter,
+        "view_mode": view_mode,
+        "search_query": q,
         "current_user": user,
         "domain": DOMAIN_NAME,
         "server_info": get_server_info()

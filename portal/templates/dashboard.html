@@ -84,10 +84,15 @@
         </div>
     </div>
 
-    <!-- Live Telemetry Stream Target (Auto-refreshed via HTMX every 3s) -->
+    <!-- Hidden Inputs for HTMX Auto-Refresh Query Persistence -->
+    <input type="hidden" id="filterStateInput" name="active_filter" value="{{ active_filter|default('all') }}">
+    <input type="hidden" id="viewModeInput" name="view_mode" value="{{ view_mode|default('cards') }}">
+
+    <!-- Live Telemetry Stream Target (Auto-refreshed via HTMX every 3s with active state) -->
     <div id="dashboardStreamContainer"
          hx-get="/admin/dashboard-partial"
          hx-trigger="every 3s"
+         hx-include="#clientSearchInput, #filterStateInput, #viewModeInput"
          hx-swap="innerHTML">
         {% include "dashboard_partial.html" %}
     </div>
@@ -127,14 +132,21 @@
 <script>
     // Persistent Global Dashboard State
     const savedViewMode = (function() {
-        try { return localStorage.getItem('dashboard_view_mode') || 'cards'; } catch(e) { return 'cards'; }
+        try { return localStorage.getItem('dashboard_view_mode') || '{{ view_mode|default("cards") }}'; } catch(e) { return 'cards'; }
     })();
 
     window.DashboardState = {
-        activeFilter: 'all',
+        activeFilter: '{{ active_filter|default("all") }}',
         searchQuery: '',
         viewMode: savedViewMode
     };
+
+    function syncHiddenInputs() {
+        const inpFilter = document.getElementById('filterStateInput');
+        if (inpFilter) inpFilter.value = window.DashboardState.activeFilter;
+        const inpView = document.getElementById('viewModeInput');
+        if (inpView) inpView.value = window.DashboardState.viewMode;
+    }
 
     function updateActiveFilterButtonUI() {
         const filter = window.DashboardState.activeFilter;
@@ -151,6 +163,7 @@
 
     function setClientFilter(filter) {
         window.DashboardState.activeFilter = filter;
+        syncHiddenInputs();
         updateActiveFilterButtonUI();
         applyFilters();
     }
@@ -162,6 +175,7 @@
 
     function setViewMode(mode) {
         window.DashboardState.viewMode = mode;
+        syncHiddenInputs();
         try { localStorage.setItem('dashboard_view_mode', mode); } catch(e) {}
         applyViewMode();
     }

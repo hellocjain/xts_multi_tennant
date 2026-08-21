@@ -84,11 +84,17 @@
 </div>
 
 <!-- CARDS VIEW CONTAINER -->
-<div id="cardsViewContainer" class="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-2">
+<div id="cardsViewContainer" class="{% if view_mode == 'denseTable' %}hidden {% endif %}grid grid-cols-1 lg:grid-cols-2 gap-5 mt-2">
     {% for c in clients %}
+    {% set is_match = true %}
+    {% if active_filter == 'paper' and not c.paper_mode %}{% set is_match = false %}{% endif %}
+    {% if active_filter == 'live' and c.paper_mode %}{% set is_match = false %}{% endif %}
+    {% if active_filter == 'profit' and (c.net_mtm or 0) <= 0 %}{% set is_match = false %}{% endif %}
+    {% if active_filter == 'loss' and (c.net_mtm or 0) >= 0 %}{% set is_match = false %}{% endif %}
     <div class="client-card bg-cardbg border border-bordercolor rounded-2xl p-5 space-y-4 hover:border-slate-700 transition shadow-lg flex flex-col justify-between"
          data-name="{{ c.name|lower }}" data-id="{{ c.id|lower }}" data-client-id="{{ c.client_id|lower }}"
-         data-paper="{{ '1' if c.paper_mode else '0' }}" data-net-mtm="{{ c.net_mtm }}">
+         data-paper="{{ '1' if c.paper_mode else '0' }}" data-net-mtm="{{ c.net_mtm }}"
+         style="{% if not is_match %}display: none;{% endif %}">
         
         <!-- Top Row: Identity & Status Badges -->
         <div class="flex items-start justify-between gap-3 border-b border-bordercolor/60 pb-3.5">
@@ -272,7 +278,7 @@
 </div>
 
 <!-- DENSE TABLE VIEW CONTAINER (Hidden by default, toggled via View Switcher) -->
-<div id="denseTableViewContainer" class="hidden bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl mt-2">
+<div id="denseTableViewContainer" class="{% if view_mode != 'denseTable' %}hidden {% endif %}bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl mt-2">
     <div class="overflow-x-auto">
         <table class="w-full text-left text-xs font-mono">
             <thead class="bg-slate-950 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
@@ -290,9 +296,15 @@
             </thead>
             <tbody class="divide-y divide-bordercolor/60">
                 {% for c in clients %}
+                {% set is_match = true %}
+                {% if active_filter == 'paper' and not c.paper_mode %}{% set is_match = false %}{% endif %}
+                {% if active_filter == 'live' and c.paper_mode %}{% set is_match = false %}{% endif %}
+                {% if active_filter == 'profit' and (c.net_mtm or 0) <= 0 %}{% set is_match = false %}{% endif %}
+                {% if active_filter == 'loss' and (c.net_mtm or 0) >= 0 %}{% set is_match = false %}{% endif %}
                 <tr class="client-table-row hover:bg-slate-800/40 transition"
                     data-name="{{ c.name|lower }}" data-id="{{ c.id|lower }}" data-client-id="{{ c.client_id|lower }}"
-                    data-paper="{{ '1' if c.paper_mode else '0' }}" data-net-mtm="{{ c.net_mtm }}">
+                    data-paper="{{ '1' if c.paper_mode else '0' }}" data-net-mtm="{{ c.net_mtm }}"
+                    style="{% if not is_match %}display: none;{% endif %}">
                     <td class="px-4 py-3">
                         {% if c.status == 'HEALTHY' %}
                         <span class="inline-flex items-center text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
