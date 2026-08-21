@@ -1315,13 +1315,25 @@ def panic_square_off_all():
                     "orderUniqueIdentifier": order_ref,
                     "clientID": client_id,
                 }
-                res = api_session.post(order_url, headers=headers, json=payload, timeout=5).json()
-                if res.get('type') == 'error' and any(kw in str(res).lower() for kw in ('token', 'session', 'auth')):
-                    clear_tokens()
-                    token = get_interactive_token(force_refresh=True)
-                    if token:
-                        headers = {"authorization": token, "Content-Type": "application/json"}
-                        res = api_session.post(order_url, headers=headers, json=payload, timeout=5).json()
+                try:
+                    resp_post = api_session.post(order_url, headers=headers, json=payload, timeout=8)
+                    try:
+                        res = resp_post.json()
+                    except Exception:
+                        res = {"type": "error", "description": f"HTTP {resp_post.status_code}: {resp_post.text[:100]}"}
+
+                    if res.get('type') == 'error' and any(kw in str(res).lower() for kw in ('token', 'session', 'auth')):
+                        clear_tokens()
+                        token = get_interactive_token(force_refresh=True)
+                        if token:
+                            headers = {"authorization": token, "Content-Type": "application/json"}
+                            resp_post = api_session.post(order_url, headers=headers, json=payload, timeout=8)
+                            try:
+                                res = resp_post.json()
+                            except Exception:
+                                res = {"type": "error", "description": f"HTTP {resp_post.status_code}: {resp_post.text[:100]}"}
+                except Exception as post_err:
+                    res = {"type": "error", "description": f"Dispatch failed: {post_err}"}
 
                 results.append({"symbol": sym, "action": action, "qty": chunk_qty, "result": res})
                 logger.critical(f"🚨 PANIC SQUARE OFF EXECUTED: {action} {chunk_qty} of {sym} -> {res}")

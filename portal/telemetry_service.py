@@ -272,7 +272,14 @@ def aggregate_all_signals(search: str = "", client_filter: str = "", status_filt
                     qty = payload.get("quantity", 0)
                     price = payload.get("price", 0.0)
                     status = r["status"] or "unknown"
-                    order_ref = result.get("order_ref", "") if isinstance(result, dict) else ""
+                    
+                    order_ref = (
+                        payload.get("order_ref")
+                        or (result.get("_audit", {}).get("order_ref") if isinstance(result, dict) and isinstance(result.get("_audit"), dict) else None)
+                        or (result.get("result", {}).get("OrderUniqueIdentifier") if isinstance(result, dict) and isinstance(result.get("result"), dict) else None)
+                        or (result.get("order_ref") if isinstance(result, dict) else None)
+                        or ""
+                    )
                     err_msg = result.get("error", "") if isinstance(result, dict) else ""
 
                     # Filter by status
