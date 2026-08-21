@@ -5,57 +5,71 @@
 {% block content %}
 <div class="space-y-6">
     <!-- Header -->
-    <div class="bg-cardbg border border-bordercolor p-6 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+    <div class="bg-cardbg border border-bordercolor p-6 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
         <div>
-            <h1 class="text-2xl font-bold text-slate-100 flex items-center gap-2">
-                <span>📜</span> Global Order Audit Stream
-            </h1>
-            <p class="text-xs text-slate-400 mt-1">
+            <div class="flex items-center space-x-2.5">
+                <div class="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                    <i data-lucide="scroll-text" class="w-4 h-4"></i>
+                </div>
+                <h1 class="text-xl font-bold text-slate-100">Global Order Audit Stream</h1>
+            </div>
+            <p class="text-xs text-slate-400 mt-1 pl-10.5">
                 Unified real-time audit feed of every TradingView webhook alert and broker execution across all accounts today.
             </p>
         </div>
         <div class="flex items-center space-x-2">
-            <span class="bg-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded-lg border border-bordercolor font-mono">
-                Live Signals: <strong class="text-brand-400">{{ signals|length }}</strong>
+            <span class="bg-slate-950 text-slate-300 text-xs px-3.5 py-1.5 rounded-xl border border-bordercolor font-mono flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span>Active Stream: <strong class="text-emerald-400">{{ signals|length }}</strong></span>
             </span>
         </div>
     </div>
 
     <!-- Filters Bar -->
-    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4">
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-lg">
         <form method="GET" action="/admin/orders" class="flex flex-wrap items-center gap-3 w-full">
             <!-- Search -->
-            <div class="relative flex-1 min-w-[200px]">
+            <div class="relative flex-1 min-w-[220px]">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500 pointer-events-none">
+                    <i data-lucide="search" class="w-4 h-4"></i>
+                </span>
                 <input type="text" name="search" value="{{ search }}" placeholder="Search symbol (e.g. CRUDEOIL), order ref, or client..." 
-                       class="w-full bg-slate-900 border border-bordercolor rounded-lg px-3.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500 font-mono">
+                       class="w-full bg-slate-950 border border-bordercolor rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500 font-mono">
             </div>
 
             <!-- Client Filter -->
-            <select name="client_id" class="bg-slate-900 border border-bordercolor rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-500">
-                <option value="">All Clients</option>
-                {% for t in tenants %}
-                <option value="{{ t.id }}" {{ 'selected' if selected_client == t.id else '' }}>{{ t.name }} ({{ t.id }})</option>
-                {% endfor %}
-            </select>
+            <div class="relative min-w-[180px]">
+                <select name="client_id" class="w-full bg-slate-950 border border-bordercolor rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-500">
+                    <option value="">All Client Accounts</option>
+                    {% for t in tenants %}
+                    <option value="{{ t.id }}" {{ 'selected' if selected_client == t.id else '' }}>{{ t.name }} ({{ t.id }})</option>
+                    {% endfor %}
+                </select>
+            </div>
 
             <!-- Status Filter -->
-            <select name="status" class="bg-slate-900 border border-bordercolor rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-500">
-                <option value="">All Statuses</option>
-                <option value="done" {{ 'selected' if selected_status == 'done' else '' }}>Done (Live Filled)</option>
-                <option value="paper_done" {{ 'selected' if selected_status == 'paper_done' else '' }}>Paper Done</option>
-                <option value="duplicate_suppressed" {{ 'selected' if selected_status == 'duplicate_suppressed' else '' }}>Duplicate Suppressed</option>
-                <option value="failed" {{ 'selected' if selected_status == 'failed' else '' }}>Failed</option>
-            </select>
+            <div class="relative min-w-[160px]">
+                <select name="status" class="w-full bg-slate-950 border border-bordercolor rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-500">
+                    <option value="">All Statuses</option>
+                    <option value="done" {{ 'selected' if selected_status == 'done' else '' }}>Done (Live Filled)</option>
+                    <option value="paper_done" {{ 'selected' if selected_status == 'paper_done' else '' }}>Paper Done</option>
+                    <option value="duplicate_suppressed" {{ 'selected' if selected_status == 'duplicate_suppressed' else '' }}>Duplicate Suppressed</option>
+                    <option value="failed" {{ 'selected' if selected_status == 'failed' else '' }}>Failed</option>
+                </select>
+            </div>
 
-            <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs px-4 py-2 rounded-lg transition shadow-md shadow-brand-600/20">
-                Filter
+            <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs px-4 py-2 rounded-xl transition shadow-md shadow-brand-600/20 flex items-center gap-1.5">
+                <i data-lucide="filter" class="w-3.5 h-3.5"></i>
+                <span>Filter</span>
             </button>
-            <a href="/admin/orders" class="text-xs text-slate-400 hover:text-slate-200 px-2 py-2">Reset</a>
+            <a href="/admin/orders" class="text-xs text-slate-400 hover:text-slate-200 px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl transition border border-bordercolor">
+                Reset
+            </a>
         </form>
     </div>
 
     <!-- Orders Stream Table -->
-    <div class="bg-cardbg border border-bordercolor rounded-xl overflow-hidden shadow-xl">
+    <div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
         <div class="overflow-x-auto" id="ordersTableContainer"
              hx-get="/admin/orders-partial?search={{ search }}&client_id={{ selected_client }}&status={{ selected_status }}"
              hx-trigger="every 4s" hx-swap="innerHTML">

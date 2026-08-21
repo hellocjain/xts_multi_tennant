@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}XTS Multi-Tenant Enterprise Gateway{% endblock %}</title>
+    <title>{% block title %}XTS Multi-Tenant Enterprise Terminal{% endblock %}</title>
+    
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -12,103 +13,244 @@
             theme: {
                 extend: {
                     colors: {
+                        obsidian: '#090d16',
+                        cardbg: '#0f172a',
+                        panelbg: '#131d33',
+                        bordercolor: '#1e293b',
+                        borderaccent: '#334155',
                         brand: {
-                            50: '#f0fdf4',
-                            500: '#22c55e',
-                            600: '#16a34a',
-                            700: '#15803d',
+                            50: '#ecfdf5',
+                            100: '#d1fae5',
+                            500: '#10b981',
+                            600: '#059669',
+                            700: '#047857',
                         },
-                        darkbg: '#0f172a',
-                        cardbg: '#1e293b',
-                        bordercolor: '#334155',
+                        profit: {
+                            50: '#ecfdf5',
+                            400: '#34d399',
+                            500: '#10b981',
+                            600: '#059669',
+                        },
+                        loss: {
+                            50: '#fff1f2',
+                            400: '#fb7185',
+                            500: '#f43f5e',
+                            600: '#e11d48',
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+                        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
                     }
                 }
             }
         }
     </script>
-    <!-- HTMX for reactive real-time dashboard updates -->
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- HTMX for reactive real-time telemetry updates -->
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        
+        /* Custom sleek scrollbars */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #090d16; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #334155; }
+        
+        .tab-btn.active {
+            color: #10b981;
+            border-bottom-color: #10b981;
+            background: rgba(16, 185, 129, 0.05);
+        }
     </style>
 </head>
-<body class="bg-darkbg text-slate-100 min-h-screen flex flex-col">
+<body class="bg-obsidian text-slate-100 min-h-screen flex flex-col antialiased selection:bg-brand-500 selection:text-black">
 
     <!-- Top Navigation Bar -->
-    <nav class="bg-cardbg border-b border-bordercolor px-6 py-3 flex items-center justify-between sticky top-0 z-50">
-        <div class="flex items-center space-x-4">
-            <a href="/admin/dashboard" class="flex items-center space-x-2">
-                <span class="text-2xl">⚡</span>
-                <span class="font-bold text-xl tracking-tight text-brand-500">XTS Multi-Tenant</span>
-                <span class="bg-brand-700/30 text-brand-500 text-xs px-2 py-0.5 rounded font-mono border border-brand-500/20">v10.0-PRO</span>
+    <nav class="bg-cardbg/90 backdrop-blur-md border-b border-bordercolor px-5 py-2.5 flex items-center justify-between sticky top-0 z-50">
+        <div class="flex items-center space-x-5">
+            <a href="/admin/dashboard" class="flex items-center space-x-2.5 group">
+                <div class="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 group-hover:scale-105 transition shadow-sm shadow-brand-500/20">
+                    <i data-lucide="zap" class="w-4 h-4 text-brand-400"></i>
+                </div>
+                <div class="flex flex-col">
+                    <span class="font-bold text-base tracking-tight text-slate-100 flex items-center gap-1.5">
+                        XTS Multi-Tenant
+                        <span class="bg-brand-500/20 text-brand-400 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold border border-brand-500/30">PRO</span>
+                    </span>
+                    <span class="text-[10px] text-slate-400 font-mono">Symphony Algo Gateway</span>
+                </div>
             </a>
+
             {% if current_user %}
-            <div class="hidden md:flex space-x-2 pl-6">
-                <a href="/admin/dashboard" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">🎛️ Profiles</a>
-                <a href="/admin/orders" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">📜 Orders & Signals</a>
-                <a href="/admin/clients/add" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">+ Add Client</a>
-                <a href="/admin/settings" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">⚙️ Settings</a>
-                <a href="/admin/audit-logs" class="px-3 py-1.5 rounded-md text-sm font-medium hover:bg-slate-700 transition">🔒 Audit</a>
+            <div class="hidden md:flex items-center space-x-1 pl-4 border-l border-bordercolor">
+                <a href="/admin/dashboard" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 transition">
+                    <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span>Profiles</span>
+                </a>
+                <a href="/admin/orders" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 transition">
+                    <i data-lucide="activity" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span>Orders &amp; Signals</span>
+                </a>
+                <a href="/admin/clients/add" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 transition">
+                    <i data-lucide="user-plus" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span>Add Client</span>
+                </a>
+                <a href="/admin/settings" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 transition">
+                    <i data-lucide="sliders" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span>Settings</span>
+                </a>
+                <a href="/admin/audit-logs" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 transition">
+                    <i data-lucide="shield-check" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span>Audit Trail</span>
+                </a>
             </div>
             {% endif %}
         </div>
 
         <div class="flex items-center space-x-3">
+            <!-- Server Telemetry Strip -->
             {% if server_info %}
-            <div class="hidden lg:flex items-center space-x-2 text-[11px] bg-slate-900/90 border border-bordercolor px-2.5 py-1 rounded-lg font-mono text-slate-300">
-                <span class="text-brand-400 font-semibold">🌐 {{ server_info.server_ip }}</span>
-                <span class="text-slate-600">|</span>
-                <span class="text-amber-400">🕒 IST</span>
-                <span class="text-slate-600">|</span>
-                <span class="text-blue-400">💾 Swap Active</span>
+            <div class="hidden lg:flex items-center space-x-2 text-[11px] bg-obsidian border border-bordercolor px-3 py-1 rounded-lg font-mono text-slate-300">
+                <span class="flex items-center space-x-1 text-emerald-400">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-0.5"></span>
+                    <span>{{ server_info.server_ip }}</span>
+                </span>
+                <span class="text-slate-700">|</span>
+                <span class="text-amber-400" id="live-ist-clock">--:--:-- IST</span>
             </div>
             {% endif %}
+
             {% if current_user %}
-            <span class="text-xs text-slate-400 font-mono">Admin: <strong class="text-slate-200">{{ current_user.username }}</strong></span>
-            <a href="/admin/logout" class="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 text-xs font-semibold px-3 py-1.5 rounded-md transition">Logout</a>
+            <div class="flex items-center space-x-2 bg-slate-900 border border-bordercolor pl-2.5 pr-1.5 py-1 rounded-lg">
+                <div class="flex items-center space-x-1.5 text-xs text-slate-300">
+                    <i data-lucide="user" class="w-3.5 h-3.5 text-brand-400"></i>
+                    <span class="font-medium font-mono text-slate-200">{{ current_user.username }}</span>
+                </div>
+                <a href="/admin/logout" title="Sign out" class="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold px-2 py-0.5 rounded transition flex items-center space-x-1">
+                    <i data-lucide="log-out" class="w-3 h-3"></i>
+                    <span>Exit</span>
+                </a>
+            </div>
             {% endif %}
         </div>
     </nav>
 
     <!-- Main Content Area -->
-    <main class="flex-1 p-6 max-w-7xl mx-auto w-full">
+    <main class="flex-1 p-5 md:p-6 max-w-7xl mx-auto w-full">
         {% block content %}{% endblock %}
     </main>
 
-    <!-- Modal Container for dynamic HTMX modals -->
+    <!-- Modal Container for dynamic HTMX modals & popups -->
     <div id="modal-container"></div>
 
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
     <!-- Footer -->
-    <footer class="border-t border-bordercolor/50 px-6 py-4 text-center text-xs text-slate-500">
-        &copy; 2026 XTS Enterprise Multi-Tenant Gateway &bull; Symphony XTS Broker Integration &bull; Isolated Container Topology
+    <footer class="border-t border-bordercolor/60 px-6 py-3.5 text-center text-xs text-slate-500 flex flex-col md:flex-row items-center justify-between gap-2 bg-obsidian">
+        <div class="flex items-center space-x-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span>XTS Enterprise Multi-Tenant Engine &bull; Isolated Container Topology</span>
+        </div>
+        <div class="font-mono text-[11px] text-slate-600">
+            MCX &bull; NSE &bull; BSE &bull; Symphony XTS API
+        </div>
     </footer>
 
-    <!-- Global Utilities -->
+    <!-- Global Utilities & Toast Engine -->
     <script>
-        function copyElementText(id, btn) {
-            const el = document.getElementById(id);
-            if (!el) return;
-            navigator.clipboard.writeText(el.value || el.innerText).then(() => {
-                const orig = btn.innerHTML;
-                btn.innerHTML = '<span>✅ Copied!</span>';
-                btn.classList.add('!bg-green-600');
-                setTimeout(() => {
-                    btn.innerHTML = orig;
-                    btn.classList.remove('!bg-green-600');
-                }, 2000);
+        // Live IST Clock
+        function updateISTClock() {
+            const clockEl = document.getElementById('live-ist-clock');
+            if (!clockEl) return;
+            const now = new Date();
+            const options = { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            clockEl.innerText = now.toLocaleTimeString('en-GB', options) + ' IST';
+        }
+        setInterval(updateISTClock, 1000);
+        updateISTClock();
+
+        // Toast Notification System
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+
+            const toast = document.createElement('div');
+            toast.className = `pointer-events-auto flex items-center space-x-2 px-4 py-2.5 rounded-xl border text-xs font-medium shadow-2xl backdrop-blur-md transition-all duration-200 transform translate-y-2 opacity-0 ` +
+                (type === 'success' ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-300' :
+                 type === 'error' ? 'bg-rose-950/90 border-rose-500/40 text-rose-300' :
+                 'bg-slate-900/90 border-slate-700 text-slate-200');
+
+            const iconName = type === 'success' ? 'check-circle' : type === 'error' ? 'alert-triangle' : 'info';
+            toast.innerHTML = `<i data-lucide="${iconName}" class="w-4 h-4 shrink-0"></i><span>${message}</span>`;
+            container.appendChild(toast);
+            lucide.createIcons({ root: toast });
+
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
             });
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 250);
+            }, 3000);
+        }
+
+        // Clipboard Copy Helper with Visual Feedback
+        function copyElementText(elementId, btn) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const textToCopy = el.value || el.innerText || '';
+            copyRawText(textToCopy, btn);
         }
 
         function copyRawText(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const orig = btn.innerHTML;
-                btn.innerHTML = '<span>✅ Copied!</span>';
-                setTimeout(() => {
-                    btn.innerHTML = orig;
-                }, 2000);
-            });
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => handleCopySuccess(btn)).catch(() => fallbackCopy(text, btn));
+            } else {
+                fallbackCopy(text, btn);
+            }
         }
 
+        function fallbackCopy(text, btn) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.opacity = "0";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                handleCopySuccess(btn);
+            } catch (err) {
+                showToast("Failed to copy", "error");
+            }
+            document.body.removeChild(textArea);
+        }
+
+        function handleCopySuccess(btn) {
+            showToast("Copied to clipboard!", "success");
+            if (btn) {
+                const origHtml = btn.innerHTML;
+                btn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i><span>Copied!</span>`;
+                btn.classList.add('!bg-emerald-600', '!text-white');
+                lucide.createIcons({ root: btn });
+                setTimeout(() => {
+                    btn.innerHTML = origHtml;
+                    btn.classList.remove('!bg-emerald-600', '!text-white');
+                    lucide.createIcons({ root: btn });
+                }, 2000);
+            }
+        }
+
+        // Modal Helpers
         function closeModal() {
             const mc = document.getElementById('modal-container');
             if (mc) mc.innerHTML = '';
@@ -117,6 +259,13 @@
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') closeModal();
         });
+
+        // Initialize Lucide Icons on initial load and post-HTMX swap
+        document.addEventListener('DOMContentLoaded', () => lucide.createIcons());
+        if (typeof htmx !== 'undefined') {
+            htmx.on('htmx:afterSwap', () => lucide.createIcons());
+            htmx.on('htmx:load', () => lucide.createIcons());
+        }
     </script>
 </body>
 </html>

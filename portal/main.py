@@ -413,6 +413,7 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
     with closing(database.get_db_connection()) as conn:
         t_row = conn.execute("SELECT id, name, status FROM tenants WHERE id=?", (tenant_id,)).fetchone()
         c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+        r_row = conn.execute("SELECT * FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
         if not t_row:
             raise HTTPException(status_code=404, detail="Client not found")
 
@@ -434,6 +435,7 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
 
     return templates.TemplateResponse(request=request, name="client_detail.html", context={
         "client": tel_data,
+        "risk": dict(r_row) if r_row else {},
         "logs": logs,
         "domain": DOMAIN_NAME,
         "webhook_url": wb_data["webhook_url"],

@@ -210,8 +210,8 @@ async def aggregate_all_telemetry() -> dict:
                 error=str(res)
             )
         client_data.append(res)
-        total_unrealized += res.get("unrealized_mtm", 0.0)
-        total_realized += res.get("realized_pnl", 0.0)
+        total_unrealized += float(res.get("unrealized_mtm") or 0.0)
+        total_realized += float(res.get("realized_pnl") or 0.0)
         if res.get("status") in ("HEALTHY", "DEGRADED"):
             active_count += 1
         if res.get("healthy"):

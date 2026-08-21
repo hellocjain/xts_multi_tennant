@@ -30,6 +30,15 @@ app = portal_main.app
 @pytest.fixture(autouse=True)
 def init_test_db():
     database.init_portal_db()
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("DELETE FROM admin_sessions")
+            conn.execute("DELETE FROM admin_users")
+            pwd_hash = security.hash_password("AdminPass123!")
+            conn.execute("""
+                INSERT INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at)
+                VALUES ('admin_init', 'admin', ?, 0, ?)
+            """, (pwd_hash, 1600000000.0))
     yield
 
 def test_vault_encryption():

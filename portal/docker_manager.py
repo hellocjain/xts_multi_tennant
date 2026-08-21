@@ -45,13 +45,11 @@ def write_client_config(tenant_id: str):
     """Retrieves encrypted credentials and risk parameters, writing them to tenant's mounted volume."""
     with closing(get_db_connection()) as conn:
         cred_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if not cred_row:
+            raise ValueError(f"Missing credentials for tenant {tenant_id}")
+
         risk_row = conn.execute("SELECT * FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
-
-        if not cred_row or not risk_row:
-            raise ValueError(f"Missing credentials or risk configuration for tenant {tenant_id}")
-
         creds = security.decrypt_credentials(cred_row["encrypted_payload"])
-        
         risk_dict = dict(risk_row) if risk_row else {}
         
         config_payload = {

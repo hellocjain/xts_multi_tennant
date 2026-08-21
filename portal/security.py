@@ -5,11 +5,14 @@ import json
 import time
 import secrets
 import hashlib
+import logging
 import pyotp
 import qrcode
 from cryptography.fernet import Fernet
 from contextlib import closing
 from database import get_db_connection
+
+logger = logging.getLogger(__name__)
 
 def get_fernet():
     key = os.environ.get("PORTAL_MASTER_KEY", "").strip()
@@ -48,10 +51,23 @@ def get_totp_uri(secret: str, username: str) -> str:
     return totp.provisioning_uri(name=username, issuer_name="XTS Multi-Tenant Portal")
 
 def generate_qr_base64(uri: str) -> str:
-    img = qrcode.make(uri)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode('utf-8')
+    try:
+        img = qrcode.make(uri)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode('utf-8')
+    except Exception as e:
+        logger.warning(f"PIL QR generation failed ({e}), falling back to SVG generation")
+        try:
+            import qrcode.image.svg
+            factory = qrcode.image.svg.SvgImage
+            img = qrcode.make(uri, image_factory=factory)
+            buf = io.BytesIO()
+            img.save(buf)
+            return base64.b64encode(buf.getvalue()).decode('utf-8')
+        except Exception as ex:
+            logger.error(f"Fallback QR generation failed: {ex}")
+            return ""
 
 def verify_totp(secret: str, code: str) -> bool:
     if not secret or not code:

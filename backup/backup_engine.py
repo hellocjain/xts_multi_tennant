@@ -21,7 +21,18 @@ def get_client_data_root():
     return os.environ.get("CLIENT_DATA_ROOT", "/opt/xts_multi/data")
 
 def get_backup_dest_dir():
-    return os.environ.get("BACKUP_DEST_DIR", "/opt/xts_multi/backups")
+    if "BACKUP_DEST_DIR" in os.environ:
+        return os.environ["BACKUP_DEST_DIR"]
+    if os.path.exists("/opt/xts_multi"):
+        try:
+            d = "/opt/xts_multi/backups"
+            os.makedirs(d, exist_ok=True)
+            return d
+        except Exception:
+            pass
+    fallback = os.path.join(get_portal_dir(), "backups")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
 
 def derive_backup_key(passphrase: str) -> bytes:
     salt = b"XTS_BACKUP_SALT_V1"

@@ -4,41 +4,56 @@
 
 {% block content %}
 <div class="flex items-center justify-center min-h-[80vh]">
-    <div class="bg-cardbg border border-bordercolor w-full max-w-xl p-8 rounded-xl shadow-2xl">
-        <div class="text-center mb-6">
-            <span class="text-4xl">🔐</span>
-            <h1 class="text-2xl font-bold mt-2">Mandatory 2FA Enrollment</h1>
-            <p class="text-xs text-slate-400 mt-1">Scan QR code using Google Authenticator, 1Password, or Authy</p>
+    <div class="bg-cardbg border border-bordercolor w-full max-w-xl p-8 rounded-2xl shadow-2xl space-y-6">
+        <div class="text-center space-y-2">
+            <div class="w-12 h-12 rounded-2xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 mx-auto">
+                <i data-lucide="shield-alert" class="w-6 h-6"></i>
+            </div>
+            <h1 class="text-xl font-bold text-slate-100">Mandatory 2FA Enrollment</h1>
+            <p class="text-xs text-slate-400">Scan QR code using Google Authenticator, 1Password, or Authy</p>
         </div>
 
         {% if error %}
-        <div class="bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3 rounded-lg mb-6">
-            {{ error }}
+        <div class="bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3.5 rounded-xl flex items-center gap-2">
+            <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
+            <span>{{ error }}</span>
         </div>
         {% endif %}
 
-        <div class="flex flex-col md:flex-row items-center gap-6 bg-slate-900/60 p-4 rounded-xl border border-bordercolor mb-6">
-            <div class="bg-white p-2 rounded-lg shrink-0">
-                <img src="data:image/png;base64,{{ qr_code_base64 }}" alt="2FA QR Code" class="w-40 h-40">
+        <div class="flex flex-col md:flex-row items-center gap-6 bg-slate-950/80 p-5 rounded-2xl border border-bordercolor">
+            <div class="bg-white p-2 rounded-xl shrink-0 shadow-lg">
+                <img src="data:image/png;base64,{{ qr_code_base64 }}" onerror="this.src='data:image/svg+xml;base64,{{ qr_code_base64 }}'" alt="2FA QR Code" class="w-36 h-36">
             </div>
-            <div class="space-y-2 text-xs">
-                <p class="text-slate-300 font-medium">Manual Setup Key:</p>
-                <p class="font-mono bg-slate-950 px-3 py-2 rounded text-brand-400 select-all break-all border border-bordercolor">{{ totp_secret }}</p>
-                <p class="text-slate-400">Account: <span class="text-slate-200">{{ username }}</span></p>
+            <div class="space-y-2.5 text-xs flex-1 w-full">
+                <p class="text-slate-300 font-semibold flex items-center gap-1.5">
+                    <i data-lucide="key" class="w-3.5 h-3.5 text-brand-400"></i>
+                    <span>Manual Setup Key:</span>
+                </p>
+                <div class="relative">
+                    <p id="setup-totp-key" class="font-mono bg-slate-900 px-3.5 py-2.5 rounded-xl text-emerald-400 select-all break-all border border-bordercolor text-[11px]">{{ totp_secret }}</p>
+                    <button onclick="copyElementText('setup-totp-key', this)" class="absolute top-1.5 right-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] px-2 py-1 rounded border border-bordercolor transition flex items-center gap-1">
+                        <i data-lucide="copy" class="w-3 h-3"></i> Copy
+                    </button>
+                </div>
+                <p class="text-slate-400 text-[11px]">Enrolling Account: <span class="text-slate-200 font-mono font-semibold">{{ username }}</span></p>
             </div>
         </div>
 
         <!-- 10 Single-Use Backup Recovery Codes -->
-        <div class="mb-6 bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl">
-            <h3 class="text-sm font-semibold text-amber-400 flex items-center gap-2">
-                <span>⚠️</span> Emergency One-Time Backup Recovery Codes
+        <div class="bg-amber-500/10 border border-amber-500/30 p-5 rounded-2xl space-y-2.5">
+            <h3 class="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                <span>Emergency One-Time Backup Recovery Codes</span>
             </h3>
-            <p class="text-xs text-slate-400 mt-1 mb-3">
-                Save these 10 single-use codes in your offline password manager. If you lose your phone, any code will let you log in.
+            <p class="text-[11px] text-slate-300">
+                Save these 10 single-use codes in your offline password manager. If you lose your phone, any code will grant emergency recovery login.
             </p>
-            <div class="grid grid-cols-2 gap-2 font-mono text-xs text-slate-200 bg-slate-950 p-3 rounded-lg border border-bordercolor select-all">
+            <div class="grid grid-cols-2 gap-2 font-mono text-xs text-slate-200 bg-slate-950 p-3.5 rounded-xl border border-bordercolor select-all">
                 {% for code in recovery_codes %}
-                <div>{{ loop.index }}. <span class="text-amber-300">{{ code }}</span></div>
+                <div class="flex items-center space-x-1.5">
+                    <span class="text-slate-500 text-[10px]">{{ loop.index }}.</span>
+                    <span class="text-amber-300 font-semibold">{{ code }}</span>
+                </div>
                 {% endfor %}
             </div>
         </div>
@@ -48,15 +63,16 @@
             <input type="hidden" name="recovery_codes_str" value="{{ recovery_codes_str }}">
 
             <div>
-                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                    Enter 6-Digit Code from Authenticator to Confirm
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                    Enter 6-Digit Verification Code
                 </label>
                 <input type="text" name="confirmation_code" required autofocus placeholder="123456"
-                    class="w-full bg-slate-900 border border-bordercolor rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-brand-500 font-mono text-center tracking-widest text-lg">
+                    class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-lg focus:outline-none focus:border-brand-500 font-mono text-center tracking-widest text-emerald-400 font-bold">
             </div>
 
-            <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-lg transition duration-150 shadow-lg shadow-brand-600/20 text-sm">
-                Confirm & Enable 2FA &rarr;
+            <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition duration-150 shadow-lg shadow-brand-600/30 text-xs flex items-center justify-center gap-2">
+                <i data-lucide="check-circle" class="w-4 h-4"></i>
+                <span>Confirm &amp; Enable 2FA Protection</span>
             </button>
         </form>
     </div>
