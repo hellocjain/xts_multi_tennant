@@ -161,13 +161,14 @@ async def setup_2fa_page(request: Request, user: dict = Depends(require_auth)):
     uri = security.get_totp_uri(secret, user["username"])
     qr_b64 = security.generate_qr_base64(uri)
     recovery_codes = security.generate_recovery_codes(10)
+    recovery_codes_str = ",".join(recovery_codes)
 
     return templates.TemplateResponse(request=request, name="setup_2fa.html", context={
         "username": user["username"],
         "totp_secret": secret,
         "qr_code_base64": qr_b64,
         "recovery_codes": recovery_codes,
-        "recovery_codes_json": json.dumps(recovery_codes),
+        "recovery_codes_str": recovery_codes_str,
         "current_user": user,
         "error": None
     })
@@ -176,23 +177,26 @@ async def setup_2fa_page(request: Request, user: dict = Depends(require_auth)):
 async def confirm_2fa_action(
     request: Request,
     totp_secret: str = Form(...),
-    recovery_codes_json: str = Form(...),
+    recovery_codes_str: str = Form(""),
     confirmation_code: str = Form(...),
     user: dict = Depends(require_auth)
 ):
+    codes_list = [c.strip() for c in recovery_codes_str.split(",") if c.strip()]
+    if not codes_list:
+        codes_list = security.generate_recovery_codes(10)
+
     if not security.verify_totp(totp_secret, confirmation_code):
         return templates.TemplateResponse(request=request, name="setup_2fa.html", context={
             "username": user["username"],
             "totp_secret": totp_secret,
             "qr_code_base64": security.generate_qr_base64(security.get_totp_uri(totp_secret, user["username"])),
-            "recovery_codes": json.loads(recovery_codes_json),
-            "recovery_codes_json": recovery_codes_json,
+            "recovery_codes": codes_list,
+            "recovery_codes_str": ",".join(codes_list),
             "current_user": user,
             "error": "Confirmation code was invalid. Please try again."
         })
 
-    recovery_codes = json.loads(recovery_codes_json)
-    hashed_codes = security.hash_recovery_codes(recovery_codes)
+    hashed_codes = security.hash_recovery_codes(codes_list)
     encrypted_secret = security.encrypt_credentials({"secret": totp_secret})
 
     with closing(database.get_db_connection()) as conn:
@@ -655,7 +659,7 @@ async def settings_page(request: Request, user: dict = Depends(require_auth)):
     latest_backup = "No backups created yet"
     backup_count = 0
     if os.path.exists(backup_dir):
-        files = sorted([f for f in os.listdir(backup_dir) if f.endswith(".enc") or f.endswith(".tar.gz")], reverse=True)
+        files = sorted([f for f in os.listdir(backup_dir) if f.endswith(".enc") or f.endswith(".tar.gz") or f.endswith(".gpg")], reverse=True)
         backup_count = len(files)
         if files:
             latest_backup = files[0]

@@ -101,9 +101,7 @@
         </div>
 
         <form method="POST" action="/admin/settings/rotate-master-key" class="space-y-3"
-              onsubmit="return confirm('⚠️ Rotate Master Encryption Key?
-
-All stored broker API keys and secrets in the database will be decrypted and re-encrypted with this new key.');">
+              onsubmit="return confirm('⚠️ Rotate Master Encryption Key? All stored broker API keys and secrets in the database will be decrypted and re-encrypted with this new key.');">
             <div>
                 <label class="block text-xs font-semibold text-slate-300 mb-1">New Fernet 32-Byte Base64 Master Key</label>
                 <input type="text" name="new_master_key" required placeholder="Enter new base64 Fernet key..."

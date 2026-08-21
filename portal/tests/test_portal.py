@@ -111,7 +111,7 @@ def test_portal_flow():
 
         res_confirm = client.post("/admin/2fa-confirm", data={
             "totp_secret": secret,
-            "recovery_codes_json": json.dumps(rec_codes),
+            "recovery_codes_str": ",".join(rec_codes),
             "confirmation_code": current_code
         }, cookies={"admin_session": cookie}, follow_redirects=False)
         assert res_confirm.status_code == 303

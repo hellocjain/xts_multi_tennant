@@ -45,7 +45,7 @@
 
         <form method="POST" action="/admin/2fa-confirm" class="space-y-4">
             <input type="hidden" name="totp_secret" value="{{ totp_secret }}">
-            <input type="hidden" name="recovery_codes_json" value="{{ recovery_codes_json }}">
+            <input type="hidden" name="recovery_codes_str" value="{{ recovery_codes_str }}">
 
             <div>
                 <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
