@@ -69,8 +69,8 @@ if [ -z "$ADMIN_PASS" ]; then
     echo "🔑 Generated Admin Password: $ADMIN_PASS"
 fi
 
-# Generate 256-bit Cryptographic Root Master Key
-MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+# Generate 256-bit Cryptographic Root Master Key (Fernet compatible 32-byte base64)
+MASTER_KEY=$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
 BACKUP_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
 
 # Write Portal Environment
