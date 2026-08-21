@@ -1034,6 +1034,13 @@ def get_margin_telemetry():
     for endpoint in [f"{safe_url}/user/limits?dayOrNet=DayWise&clientID={client_id}", f"{safe_url}/user/balance"]:
         try:
             resp = api_session.get(endpoint, headers=headers, timeout=4)
+            if resp.status_code in (400, 401, 403):
+                clear_tokens()
+                token = get_interactive_token(force_refresh=True)
+                if token:
+                    headers = {"authorization": token}
+                    resp = api_session.get(endpoint, headers=headers, timeout=4)
+
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('type') == 'success':
@@ -1084,6 +1091,13 @@ def get_positions_telemetry():
 
     try:
         resp = api_session.get(url, headers=headers, timeout=5)
+        if resp.status_code in (400, 401, 403):
+            clear_tokens()
+            token = get_interactive_token(force_refresh=True)
+            if token:
+                headers = {"authorization": token}
+                resp = api_session.get(url, headers=headers, timeout=5)
+
         if resp.status_code != 200:
             return {"error": f"HTTP {resp.status_code}", "positions": []}
 

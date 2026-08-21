@@ -108,7 +108,7 @@
                 {% for pos in c.positions[:3] %}
                 <div class="bg-slate-900 border border-bordercolor rounded-lg px-2.5 py-1 text-xs font-mono flex items-center space-x-2">
                     <span class="font-bold text-slate-200">{{ pos.symbol }}</span>
-                    <span class="{% if pos.side == 'BUY' %}text-green-400{% else %}text-red-400{% endif %} font-semibold text-[11px]">{{ pos.quantity }} {{ pos.side }}</span>
+                    <span class="{% if pos.side == 'BUY' or pos.side == 'LONG' %}text-green-400{% else %}text-red-400{% endif %} font-semibold text-[11px]">{{ pos.quantity }} {{ pos.side }}</span>
                     <span class="{% if pos.unrealized_mtm >= 0 %}text-green-400{% else %}text-red-400{% endif %} font-bold text-[11px]">
                         {% if pos.unrealized_mtm >= 0 %}+{% endif %}₹{{ pos.unrealized_mtm|inr }}
                     </span>
