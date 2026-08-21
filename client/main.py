@@ -315,6 +315,7 @@ async def panic(request: Request):
     result = await anyio.to_thread.run_sync(xts_api.panic_square_off_all)
     return result
 
+@app.post("/")
 @app.post("/webhook")
 async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     client_ip = request.client.host or "unknown"

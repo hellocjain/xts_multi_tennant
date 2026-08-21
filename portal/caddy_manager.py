@@ -18,7 +18,7 @@ ADMIN_ALLOWED_IPS = os.environ.get("ADMIN_ALLOWED_IPS", "127.0.0.1 172.28.0.0/24
 
 class UnixHTTPConnection(http.client.HTTPConnection):
     def __init__(self, socket_path):
-        super().__init__("localhost")
+        super().__init__("127.0.0.1")
         self.socket_path = socket_path
 
     def connect(self):
@@ -33,7 +33,8 @@ def generate_caddyfile_content() -> str:
     for t in active_tenants:
         t_id = t["id"]
         client_routes.append(f"""
-    handle_path /webhook/{t_id}* {{
+    handle /webhook/{t_id}* {{
+        rewrite * /webhook
         reverse_proxy xts_client_{t_id}:8000 {{
             header_up X-Forwarded-For {{remote_host}}
             transport http {{
@@ -88,7 +89,7 @@ def generate_caddyfile_content() -> str:
         @client_route {{
             path_regexp internal ^/internal-client-proxy/([^/]+)(/.*)?$
         }}
-        reverse_proxy @client_route {{re.internal.1}}:8000 {{
+        reverse_proxy @client_route xts_client_{{re.internal.1}}:8000 {{
             rewrite {{re.internal.2}}
             transport http {{
                 response_header_timeout 3s
@@ -126,7 +127,7 @@ def sync_caddy_config() -> bool:
         # If Unix socket exists, fire atomic reload
         if os.path.exists(caddy_admin_socket):
             conn = UnixHTTPConnection(caddy_admin_socket)
-            headers = {"Content-Type": "text/caddyfile"}
+            headers = {"Content-Type": "text/caddyfile", "Host": "127.0.0.1"}
             conn.request("POST", "/load", body=content.encode('utf-8'), headers=headers)
             resp = conn.getresponse()
             if resp.status in (200, 202):

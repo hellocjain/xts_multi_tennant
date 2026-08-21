@@ -58,7 +58,7 @@ async def main():
     print('-' * 85)
     for c in res['clients']:
         mode = 'PAPER' if c.get('paper_mode') else 'LIVE'
-        print(f'{c[\"id\"]::<16} {c[\"status\"]::<10} {mode::<6} {c[\"positions_count\"]::<10} ₹{c[\"net_mtm\"]:,.2f}')
+        print(f'{c[\"id\"]: <16} {c[\"status\"]: <10} {mode: <6} {c[\"positions_count\"]: <10} ₹{c[\"net_mtm\"]:,.2f}')
     print('=====================================================================================\n')
 asyncio.run(main())
 "

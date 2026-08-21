@@ -79,8 +79,8 @@ def test_multi_tenant_lifecycle_and_isolation():
     assert caddy_manager.sync_caddy_config() is True
     with open(os.environ["CADDY_CONFIG_PATH"]) as f:
         caddy_txt = f.read()
-        assert "handle_path /webhook/c01_alpha*" in caddy_txt
-        assert "handle_path /webhook/c02_beta*" in caddy_txt
+        assert "handle /webhook/c01_alpha*" in caddy_txt
+        assert "handle /webhook/c02_beta*" in caddy_txt
         assert "reverse_proxy xts_client_c01_alpha:8000" in caddy_txt
 
 def test_backup_and_disaster_recovery_drill():
