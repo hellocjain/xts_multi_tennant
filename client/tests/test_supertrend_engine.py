@@ -235,3 +235,66 @@ def test_supertrend_internal_api_endpoints():
     tel_json = res_tel.json()
     assert "supertrend" in tel_json
     assert tel_json["supertrend"]["symbol"] == "SILVER100"
+
+def test_custom_timeframe_parsing():
+    from supertrend_engine import parse_timeframe_seconds
+    assert parse_timeframe_seconds("1m") == 60
+    assert parse_timeframe_seconds("3m") == 180
+    assert parse_timeframe_seconds("5m") == 300
+    assert parse_timeframe_seconds("15m") == 900
+    assert parse_timeframe_seconds("20m") == 1200
+    assert parse_timeframe_seconds("25m") == 1500
+    assert parse_timeframe_seconds("30m") == 1800
+    assert parse_timeframe_seconds("45m") == 2700
+    assert parse_timeframe_seconds("1h") == 3600
+    assert parse_timeframe_seconds("2h") == 7200
+    assert parse_timeframe_seconds(20) == 1200
+    assert parse_timeframe_seconds("25") == 1500
+
+def test_symbol_validation_and_market_readiness_endpoints(monkeypatch):
+    client = TestClient(app)
+
+    # 1. Valid TradingView format symbol
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823,
+        "exch_seg": "MCXFO",
+        "prod_type": "NRML",
+        "lot_size": 1.0,
+        "tick_size": 1,
+        "freeze_qty": 6000,
+        "expiry": datetime.date(2026, 8, 31),
+        "expiry_str": "31-Aug-2026",
+        "days_to_expiry": 20,
+        "desc": "SILVER 31AUG2026",
+        "name": "SILVER"
+    })
+    
+    res_valid = client.get("/internal/validate-symbol?symbol=SILVER1001!")
+    assert res_valid.status_code == 200
+    d_valid = res_valid.json()
+    assert d_valid["valid"] is True
+    assert d_valid["inst_id"] == 574823
+    assert d_valid["exch_seg"] == "MCXFO"
+    assert d_valid["desc"] == "SILVER 31AUG2026"
+
+    # 2. Invalid symbol
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: None)
+    res_invalid = client.get("/internal/validate-symbol?symbol=INVALID_XYZ")
+    assert res_invalid.status_code == 200
+    d_invalid = res_invalid.json()
+    assert d_invalid["valid"] is False
+
+    # 3. Market readiness check
+    monkeypatch.setattr(xts_api, "check_live_market_readiness", lambda sym: {
+        "interactive_auth": {"status": "OK", "client_id": "ABK01"},
+        "market_data_auth": {"status": "OK"},
+        "master_cache": {"status": "OK", "total_contracts": 18898},
+        "live_feed": {"status": "OK", "last_close": 2463.0},
+        "market_hours": {"status": "OPEN"},
+        "all_ready": True
+    })
+    res_readiness = client.get("/internal/market-readiness?symbol=SILVER1001!")
+    assert res_readiness.status_code == 200
+    d_read = res_readiness.json()
+    assert d_read["all_ready"] is True
+    assert d_read["interactive_auth"]["status"] == "OK"

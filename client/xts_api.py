@@ -769,17 +769,124 @@ def get_dynamic_contract_info(symbol):
 def resolve_contract(symbol: str) -> dict | None:
     """Helper returning a structured dictionary for resolved contract."""
     res = get_dynamic_contract_info(symbol)
-    if not res:
+    if not res or res[0] is None:
         return None
-    inst_id, exch_seg, prod_type, lot_size, tick_size, name, expiry = res
+    inst_id, exch_seg, prod_type, tick_size, lot_size, freeze_qty, expiry = res
+    info = get_instrument_by_id(inst_id) or {}
+    
+    today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date()
+    days_left = (expiry - today).days if expiry and expiry != NO_EXPIRY else None
+
     return {
         "inst_id": inst_id,
         "exch_seg": exch_seg,
         "prod_type": prod_type,
-        "lot_size": lot_size,
         "tick_size": tick_size,
-        "name": name,
-        "expiry": expiry
+        "lot_size": lot_size,
+        "freeze_qty": freeze_qty,
+        "expiry": expiry if expiry != NO_EXPIRY else None,
+        "expiry_str": expiry.strftime("%d-%b-%Y") if expiry and expiry != NO_EXPIRY else "No Expiry (Cash)",
+        "days_to_expiry": days_left,
+        "desc": info.get("desc", symbol),
+        "name": info.get("name", symbol)
+    }
+
+def check_live_market_readiness(symbol: str = "") -> dict:
+    """
+    Performs comprehensive 4-point live market readiness diagnostics.
+    """
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_ist = datetime.datetime.now(IST)
+    current_time_str = now_ist.strftime("%H:%M:%S IST")
+
+    # 1. Interactive Session Check
+    int_token = get_interactive_token()
+    int_ok = bool(int_token and int_token != "AUTH_FAILED")
+    interactive_report = {
+        "status": "OK" if int_ok else "FAILED",
+        "client_id": getattr(config, "CLIENT_ID", "UNKNOWN"),
+        "error": None if int_ok else get_last_auth_error() or "Interactive API authentication failed"
+    }
+
+    # 2. Market Data Session Check
+    md_token, md_base_url = get_marketdata_token()
+    md_ok = bool(md_token)
+    market_data_report = {
+        "status": "OK" if md_ok else "FAILED",
+        "error": None if md_ok else "Market Data API login failed (check MD_API_KEY/MD_API_SECRET)"
+    }
+
+    # 3. Master Contract Cache Check
+    with CACHE_LOCK:
+        fut_count = sum(len(v) for v in FUT_MASTER.values())
+        cash_count = sum(len(v) for v in CASH_MASTER.values())
+    cache_ok = fut_count > 0 and cash_count > 0
+    cache_report = {
+        "status": "OK" if cache_ok else "DEGRADED",
+        "futures_count": fut_count,
+        "cash_count": cash_count,
+        "total_contracts": fut_count + cash_count
+    }
+
+    # 4. Live Feed & Symbol Resolution Handshake
+    feed_report = {
+        "status": "NOT_CONFIGURED",
+        "symbol": symbol or "",
+        "resolved_desc": None,
+        "inst_id": None,
+        "candles_count": 0,
+        "last_close": 0.0,
+        "error": None
+    }
+
+    seg = "MCXFO"
+    if symbol:
+        contract = resolve_contract(symbol)
+        if contract and contract.get("inst_id"):
+            seg = contract.get("exch_seg") or "MCXFO"
+            inst_id = contract.get("inst_id")
+            feed_report["resolved_desc"] = contract.get("desc")
+            feed_report["inst_id"] = inst_id
+            feed_report["exch_seg"] = seg
+            
+            candles = fetch_ohlc_candles(seg, inst_id, 300, 2)
+            if candles:
+                feed_report["status"] = "OK"
+                feed_report["candles_count"] = len(candles)
+                feed_report["last_close"] = candles[-1].get("close", 0.0)
+            else:
+                feed_report["status"] = "NO_DATA"
+                feed_report["error"] = "No recent OHLC candles returned by broker for this instrument."
+        else:
+            feed_report["status"] = "INVALID_SYMBOL"
+            feed_report["error"] = f"Symbol '{symbol}' cannot be resolved in master cache."
+
+    # Market Hours Evaluation (IST)
+    cur_hm = (now_ist.hour, now_ist.minute)
+    is_weekday = now_ist.weekday() < 5
+    if "MCX" in seg:
+        is_open = is_weekday and ((9, 0) <= cur_hm <= (23, 30))
+        hours_desc = "09:00 - 23:30 IST (Mon-Fri)"
+    else:
+        is_open = is_weekday and ((9, 15) <= cur_hm <= (15, 30))
+        hours_desc = "09:15 - 15:30 IST (Mon-Fri)"
+
+    market_hours_report = {
+        "status": "OPEN" if is_open else "CLOSED",
+        "current_ist": current_time_str,
+        "trading_hours": hours_desc,
+        "is_weekday": is_weekday
+    }
+
+    all_ready = int_ok and md_ok and cache_ok
+
+    return {
+        "interactive_auth": interactive_report,
+        "market_data_auth": market_data_report,
+        "master_cache": cache_report,
+        "live_feed": feed_report,
+        "market_hours": market_hours_report,
+        "all_ready": all_ready
     }
 
 def get_live_price(instrument_id, exch_seg):

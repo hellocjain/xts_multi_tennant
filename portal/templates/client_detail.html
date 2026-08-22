@@ -910,6 +910,56 @@
 
     <!-- TAB 6: SuperTrend Auto-Trading Strategy -->
     <div id="client-tab-supertrend" class="tab-pane hidden space-y-5">
+        
+        <!-- Live Market Readiness Diagnostic Panel (Auto-refreshed via HTMX every 10s) -->
+        <div id="st-readiness-container"
+             hx-get="/admin/clients/{{ client.id }}/supertrend/readiness-partial"
+             hx-trigger="load, every 10s"
+             hx-swap="innerHTML">
+            <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 text-center text-xs text-slate-400 font-mono flex items-center justify-center gap-2">
+                <i data-lucide="loader-2" class="w-4 h-4 animate-spin text-brand-400"></i>
+                <span>Evaluating Live Market Readiness Diagnostics...</span>
+            </div>
+        </div>
+
+        <!-- Strategy Active Status & Symbol Callout Banner -->
+        {% if supertrend.is_enabled and supertrend.is_configured %}
+        <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex items-center justify-between shadow-lg">
+            <div class="flex items-center space-x-3.5">
+                <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                    <i data-lucide="play" class="w-5 h-5 fill-current"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span class="text-sm font-bold text-slate-100 font-mono">AUTONOMOUS STRATEGY ACTIVE</span>
+                        <span class="text-xs bg-emerald-500/20 text-emerald-300 font-mono px-2.5 py-0.5 rounded-md border border-emerald-500/30 font-bold">{{ supertrend.symbol }} ({{ supertrend.timeframe }})</span>
+                    </div>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5">Running on <strong>{{ supertrend.exchange_segment }}</strong> &bull; Next Candle Polling in <strong class="text-emerald-400">{{ client.supertrend.next_poll_seconds|default(0) if client and client.supertrend else 0 }}s</strong></p>
+                </div>
+            </div>
+            <div class="text-right font-mono text-xs space-y-0.5 border-l border-emerald-500/20 pl-4">
+                <div class="text-slate-400">Trend: <strong class="{% if client.supertrend and client.supertrend.current_trend == 'BULLISH' %}text-emerald-400{% elif client.supertrend and client.supertrend.current_trend == 'BEARISH' %}text-rose-400{% else %}text-slate-300{% endif %}">{{ client.supertrend.current_trend|default('INITIALIZING') if client and client.supertrend else 'INITIALIZING' }}</strong></div>
+                <div class="text-slate-400">Position: <strong class="text-slate-200">{{ client.supertrend.strategy_position|default('FLAT') if client and client.supertrend else 'FLAT' }} ({{ client.supertrend.current_broker_quantity|default(0) if client and client.supertrend else 0 }} Qty)</strong></div>
+            </div>
+        </div>
+        {% else %}
+        <div class="bg-slate-900/60 border border-bordercolor rounded-2xl p-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3 text-slate-400">
+                <div class="w-10 h-10 rounded-xl bg-slate-800 border border-bordercolor flex items-center justify-center text-slate-500">
+                    <i data-lucide="power-off" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="text-sm font-bold text-slate-300 font-mono">STRATEGY CURRENTLY INACTIVE</div>
+                    <p class="text-xs text-slate-500">Configure parameters and enable the toggle below to activate live auto-trading</p>
+                </div>
+            </div>
+            <div class="text-xs font-mono text-slate-500">
+                Status: <span class="bg-slate-800 text-slate-400 px-2.5 py-1 rounded-md border border-bordercolor">DISABLED</span>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Telemetry Summary Cards Grid -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
@@ -1008,12 +1058,20 @@
 
                 <!-- Parameters Grid -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-                    <!-- Symbol -->
-                    <div class="space-y-1.5">
+                    <!-- Symbol with Live Validation -->
+                    <div class="space-y-1.5 md:col-span-1">
                         <label class="text-xs font-semibold text-slate-300">Trading Symbol / Root <span class="text-rose-400">*</span></label>
-                        <input type="text" name="symbol" value="{{ supertrend.symbol|default('') }}" placeholder="e.g. CRUDEOIL, SILVER100, RELIANCE" required
+                        <input type="text" id="st-symbol-input" name="symbol" value="{{ supertrend.symbol|default('') }}" 
+                            placeholder="e.g. SILVER1001!, CRUDEOIL1!, RELIANCE, NIFTY1!" required
+                            hx-get="/admin/clients/{{ client.id }}/supertrend/validate-symbol"
+                            hx-trigger="load, keyup changed delay:300ms, change"
+                            hx-target="#st-symbol-validation-result"
+                            hx-include="[name='symbol']"
                             class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                        <p class="text-[10px] text-slate-400">Must match loaded contract symbol or root in master cache.</p>
+                        <p class="text-[10px] text-slate-400">Accepts TradingView symbols (<code>SILVER1001!</code>, <code>CRUDEOIL1!</code>) or standard roots.</p>
+                        <div id="st-symbol-validation-result" class="pt-1">
+                            <!-- Dynamic HTMX Validation Container -->
+                        </div>
                     </div>
 
                     <!-- Exchange Segment -->
@@ -1028,18 +1086,34 @@
                         </select>
                     </div>
 
-                    <!-- Timeframe -->
+                    <!-- Timeframe (Presets + Custom Minutes) -->
                     <div class="space-y-1.5">
                         <label class="text-xs font-semibold text-slate-300">Candle Timeframe</label>
-                        <select name="timeframe"
-                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                            <option value="1m" {% if supertrend.timeframe == '1m' %}selected{% endif %}>1 Minute (60s)</option>
-                            <option value="3m" {% if supertrend.timeframe == '3m' %}selected{% endif %}>3 Minutes (180s)</option>
-                            <option value="5m" {% if supertrend.timeframe == '5m' or not supertrend.timeframe %}selected{% endif %}>5 Minutes (300s - Default)</option>
-                            <option value="15m" {% if supertrend.timeframe == '15m' %}selected{% endif %}>15 Minutes (900s)</option>
-                            <option value="30m" {% if supertrend.timeframe == '30m' %}selected{% endif %}>30 Minutes (1800s)</option>
-                            <option value="1h" {% if supertrend.timeframe == '1h' %}selected{% endif %}>1 Hour (3600s)</option>
-                        </select>
+                        <div class="space-y-2">
+                            {% set cur_tf = supertrend.timeframe|default('5m') %}
+                            <select id="st-timeframe-select" name="timeframe_select" onchange="toggleCustomTimeframe(this.value)"
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                                <option value="1m" {% if cur_tf == '1m' %}selected{% endif %}>1 Minute (60s)</option>
+                                <option value="3m" {% if cur_tf == '3m' %}selected{% endif %}>3 Minutes (180s)</option>
+                                <option value="5m" {% if cur_tf == '5m' or not cur_tf %}selected{% endif %}>5 Minutes (300s - Standard)</option>
+                                <option value="15m" {% if cur_tf == '15m' %}selected{% endif %}>15 Minutes (900s)</option>
+                                <option value="20m" {% if cur_tf == '20m' %}selected{% endif %}>20 Minutes (1200s)</option>
+                                <option value="25m" {% if cur_tf == '25m' %}selected{% endif %}>25 Minutes (1500s)</option>
+                                <option value="30m" {% if cur_tf == '30m' %}selected{% endif %}>30 Minutes (1800s)</option>
+                                <option value="45m" {% if cur_tf == '45m' %}selected{% endif %}>45 Minutes (2700s)</option>
+                                <option value="1h" {% if cur_tf == '1h' %}selected{% endif %}>1 Hour (3600s)</option>
+                                <option value="2h" {% if cur_tf == '2h' %}selected{% endif %}>2 Hours (7200s)</option>
+                                <option value="custom" {% if cur_tf not in ['1m','3m','5m','15m','20m','25m','30m','45m','1h','2h'] %}selected{% endif %}>Custom Minutes...</option>
+                            </select>
+                            
+                            <div id="st-custom-timeframe-wrap" class="{% if cur_tf in ['1m','3m','5m','15m','20m','25m','30m','45m','1h','2h'] %}hidden{% endif %} flex items-center gap-2">
+                                <input type="number" id="st-custom-minutes-input" name="custom_minutes" min="1" max="1440" 
+                                    value="{{ cur_tf|replace('m', '') if (cur_tf not in ['1m','3m','5m','15m','20m','25m','30m','45m','1h','2h'] and 'm' in cur_tf) else '' }}" 
+                                    placeholder="e.g. 20, 25, 75"
+                                    class="w-full bg-slate-900 border border-brand-500/50 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                                <span class="text-xs text-slate-400 font-mono">minutes</span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Quantity -->
@@ -1378,6 +1452,19 @@
     }
     function closeClientDeleteModal() {
         document.getElementById('client-delete-modal').classList.add('hidden');
+    }
+
+    // SuperTrend Custom Timeframe Toggle
+    function toggleCustomTimeframe(val) {
+        const wrap = document.getElementById('st-custom-timeframe-wrap');
+        const input = document.getElementById('st-custom-minutes-input');
+        if (!wrap) return;
+        if (val === 'custom') {
+            wrap.classList.remove('hidden');
+            if (input) input.focus();
+        } else {
+            wrap.classList.add('hidden');
+        }
     }
 </script>
 {% endblock %}

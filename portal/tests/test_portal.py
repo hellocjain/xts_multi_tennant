@@ -568,16 +568,52 @@ def test_portal_supertrend_config_and_validation_guard(monkeypatch):
 
         # 3. Verify client detail view renders 6th tab
         async def mock_fetch_tel(*a, **k):
-            return {
-                "id": "st_tenant", "name": "ST Test", "status": "ACTIVE", "positions": [], "all_positions": [],
-                "holdings": {"holdings_count": 0, "holdings": []}, "broker_orders": [], "broker_trades": [],
-                "supertrend": {"status": "RUNNING", "current_trend": "BULLISH", "atr": 15.2}
-            }
+            return telemetry_service.build_client_telemetry_dict(
+                tenant_id="st_tenant",
+                name="ST Test",
+                status="HEALTHY",
+                healthy=True,
+                supertrend={"status": "RUNNING", "current_trend": "BULLISH", "atr": 15.2, "symbol": "CRUDEOIL", "timeframe": "5m", "is_enabled": True}
+            )
         monkeypatch.setattr(telemetry_service, "fetch_single_client_telemetry", mock_fetch_tel)
         res_detail = client.get("/admin/clients/st_tenant", cookies={"admin_session": cookie})
         assert res_detail.status_code == 200
         assert "SuperTrend Strategy" in res_detail.text
         assert "client-tab-supertrend" in res_detail.text
+        assert "st-readiness-container" in res_detail.text
+
+        # 4. Verify HTMX Symbol Validation Endpoint
+        res_val = client.get("/admin/clients/st_tenant/supertrend/validate-symbol?symbol=SILVER1001!", cookies={"admin_session": cookie})
+        assert res_val.status_code == 200
+
+        # 5. Verify HTMX Live Readiness Diagnostic Partial
+        res_readiness = client.get("/admin/clients/st_tenant/supertrend/readiness-partial", cookies={"admin_session": cookie})
+        assert res_readiness.status_code == 200
+        assert "Live Market Readiness Check" in res_readiness.text
+
+        # 6. Save custom timeframe (e.g. 25m)
+        res_custom_tf = client.post("/admin/clients/st_tenant/supertrend/config", data={
+            "is_enabled": "true",
+            "symbol": "SILVER1001!",
+            "exchange_segment": "MCXFO",
+            "timeframe_select": "custom",
+            "custom_minutes": "25",
+            "quantity": 1,
+            "product_type": "NRML",
+            "atr_period": 10,
+            "multiplier": 3.0
+        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_custom_tf.status_code == 303
+
+        with closing(database.get_db_connection()) as conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE tenant_id='st_tenant'").fetchone()
+            assert row["timeframe"] == "25m"
+            assert row["symbol"] == "SILVER1001!"
+
+        # 7. Verify Dashboard displays SuperTrend Active Chip
+        res_dash = client.get("/admin/dashboard", cookies={"admin_session": cookie})
+        assert res_dash.status_code == 200
+        assert "ST:" in res_dash.text
 
 
 

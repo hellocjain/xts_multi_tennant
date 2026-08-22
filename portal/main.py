@@ -722,6 +722,121 @@ async def delete_client(tenant_id: str, user: dict = Depends(require_auth)):
         return RedirectResponse(url="/admin/dashboard?warn=Client+deleted+but+Caddy+ingress+reload+failed.", status_code=303)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
+@app.get("/admin/clients/{tenant_id}/supertrend/validate-symbol")
+async def validate_supertrend_symbol(
+    tenant_id: str,
+    symbol: str = "",
+    user: dict = Depends(require_auth)
+):
+    """HTMX endpoint validating a symbol against client container's contract master."""
+    clean_sym = symbol.strip().upper()
+    if not clean_sym:
+        return HTMLResponse('<div class="text-[11px] text-slate-500 font-mono italic">Type a symbol (e.g. SILVER1001!, CRUDEOIL1!, RELIANCE) to validate.</div>')
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/validate-symbol?symbol={clean_sym}"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/validate-symbol?symbol={clean_sym}"
+    url_local = f"http://127.0.0.1:{port}/internal/validate-symbol?symbol={clean_sym}"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    val_res = None
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.get(target_url, headers=headers, timeout=2.0)
+                if resp.status_code == 200:
+                    val_res = resp.json()
+                    break
+            except Exception:
+                pass
+
+    if not val_res:
+        return HTMLResponse('<div class="bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] font-mono p-2.5 rounded-xl">⚠️ Client container unreachable for validation.</div>')
+
+    if val_res.get("valid"):
+        desc = val_res.get("desc") or clean_sym
+        inst_id = val_res.get("inst_id")
+        exch_seg = val_res.get("exch_seg")
+        lot_size = val_res.get("lot_size")
+        expiry = val_res.get("expiry")
+        days_to_exp = val_res.get("days_to_expiry")
+        exp_text = f"{expiry} ({days_to_exp}d left)" if (days_to_exp is not None and days_to_exp >= 0) else (expiry or "No Expiry")
+        
+        return HTMLResponse(f"""
+        <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono p-3 rounded-xl space-y-1">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-1.5 font-bold text-emerald-400 text-xs">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>✅ VALID CONTRACT: {desc}</span>
+                </div>
+                <span class="text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-300">ID: {inst_id}</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-300 text-[11px] pt-0.5">
+                <span>Segment: <strong class="text-slate-100">{exch_seg}</strong></span>
+                <span>Lot Size: <strong class="text-slate-100">{lot_size}</strong></span>
+                <span>Expiry: <strong class="text-slate-100">{exp_text}</strong></span>
+            </div>
+        </div>
+        """)
+    else:
+        err = val_res.get("error") or f"Symbol '{clean_sym}' not found in contract master file."
+        return HTMLResponse(f"""
+        <div class="bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] font-mono p-3 rounded-xl space-y-1">
+            <div class="flex items-center gap-1.5 font-bold text-rose-400 text-xs">
+                <span>❌ INVALID SYMBOL: {clean_sym}</span>
+            </div>
+            <p class="text-slate-300 text-[11px]">{err}</p>
+            <p class="text-slate-400 text-[10px]">Supports standard and continuous TradingView formats (e.g. <code>SILVER1001!</code>, <code>CRUDEOIL1!</code>, <code>RELIANCE</code>, <code>NIFTY1!</code>).</p>
+        </div>
+        """)
+
+@app.get("/admin/clients/{tenant_id}/supertrend/readiness-partial")
+async def get_supertrend_readiness_partial(
+    tenant_id: str,
+    request: Request,
+    user: dict = Depends(require_auth)
+):
+    """HTMX endpoint returning live market readiness diagnostics card."""
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/market-readiness"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/market-readiness"
+    url_local = f"http://127.0.0.1:{port}/internal/market-readiness"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    diag = None
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.get(target_url, headers=headers, timeout=2.5)
+                if resp.status_code == 200:
+                    diag = resp.json()
+                    break
+            except Exception:
+                pass
+
+    if not diag:
+        diag = {
+            "interactive_auth": {"status": "FAILED", "error": "Client container unreachable"},
+            "market_data_auth": {"status": "FAILED", "error": "Client container unreachable"},
+            "master_cache": {"status": "FAILED", "total_contracts": 0},
+            "live_feed": {"status": "FAILED", "error": "Client container unreachable"},
+            "market_hours": {"status": "UNKNOWN", "trading_hours": ""},
+            "all_ready": False
+        }
+
+    return templates.TemplateResponse(request=request, name="supertrend_readiness_partial.html", context={
+        "diag": diag,
+        "tenant_id": tenant_id
+    })
+
 @app.post("/admin/clients/{tenant_id}/supertrend/config")
 async def save_supertrend_config(
     tenant_id: str,
@@ -730,6 +845,8 @@ async def save_supertrend_config(
     symbol: str = Form(""),
     exchange_segment: str = Form(""),
     timeframe: str = Form("5m"),
+    timeframe_select: str = Form("5m"),
+    custom_minutes: str = Form(""),
     quantity: int = Form(1),
     product_type: str = Form("NRML"),
     atr_period: int = Form(10),
@@ -738,11 +855,18 @@ async def save_supertrend_config(
 ):
     clean_sym = symbol.strip().upper()
     clean_seg = exchange_segment.strip().upper()
-    clean_tf = timeframe.strip().lower()
     clean_prod = product_type.strip().upper()
     clean_qty = max(1, quantity)
     clean_atr = max(2, atr_period)
     clean_mult = max(0.1, multiplier)
+
+    # Process custom or preset timeframe
+    if timeframe_select == "custom" and custom_minutes.strip().isdigit():
+        clean_tf = f"{int(custom_minutes.strip())}m"
+    elif timeframe.strip():
+        clean_tf = timeframe.strip().lower()
+    else:
+        clean_tf = timeframe_select.strip().lower() or "5m"
 
     is_conf = bool(clean_sym and clean_seg and clean_qty > 0)
     

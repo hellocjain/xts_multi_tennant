@@ -523,6 +523,50 @@ async def get_supertrend_status(request: Request):
 
     return supertrend_engine.get_telemetry()
 
+@app.get("/internal/validate-symbol")
+async def validate_symbol_endpoint(request: Request, symbol: str = ""):
+    """Validates and resolves a trading symbol or TradingView continuous contract against contract master."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    sym = symbol.strip()
+    if not sym:
+        return {"valid": False, "error": "Symbol cannot be empty"}
+
+    contract = xts_api.resolve_contract(sym)
+    if not contract or not contract.get("inst_id"):
+        return {"valid": False, "symbol": sym, "error": f"Symbol '{sym}' not found in contract master file"}
+
+    return {
+        "valid": True,
+        "symbol": sym,
+        "inst_id": contract.get("inst_id"),
+        "exch_seg": contract.get("exch_seg"),
+        "prod_type": contract.get("prod_type"),
+        "lot_size": contract.get("lot_size"),
+        "tick_size": contract.get("tick_size"),
+        "freeze_qty": contract.get("freeze_qty"),
+        "expiry": contract.get("expiry_str"),
+        "days_to_expiry": contract.get("days_to_expiry"),
+        "desc": contract.get("desc"),
+        "name": contract.get("name")
+    }
+
+@app.get("/internal/market-readiness")
+async def get_market_readiness(request: Request, symbol: str = ""):
+    """Executes live 4-point market readiness diagnostics."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    sym = symbol.strip() or supertrend_engine.symbol
+    return xts_api.check_live_market_readiness(sym)
+
 @app.post("/internal/pause")
 async def pause_trading(request: Request):
     internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()

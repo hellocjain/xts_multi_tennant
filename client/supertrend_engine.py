@@ -18,6 +18,7 @@ import logging
 import asyncio
 import uuid
 import math
+import re
 from typing import List, Dict, Optional, Any, Callable
 
 logger = logging.getLogger("supertrend_engine")
@@ -27,9 +28,50 @@ TIMEFRAME_SECONDS_MAP = {
     "3m": 180,
     "5m": 300,
     "15m": 900,
+    "20m": 1200,
+    "25m": 1500,
     "30m": 1800,
+    "45m": 2700,
     "1h": 3600,
+    "2h": 7200,
+    "4h": 14400,
+    "1d": 86400,
 }
+
+def parse_timeframe_seconds(tf_str: Any) -> int:
+    """
+    Parses timeframe strings into seconds. Supports standard presets and arbitrary custom intervals.
+    Examples:
+      '1m' -> 60, '3m' -> 180, '5m' -> 300, '15m' -> 900, '20m' -> 1200, '25m' -> 1500,
+      '30m' -> 1800, '45m' -> 2700, '1h' -> 3600, '2h' -> 7200, '4h' -> 14400, '1d' -> 86400,
+      '20' -> 1200, 25 -> 1500 (integers treated as minutes)
+    """
+    if not tf_str:
+        return 300
+    if isinstance(tf_str, (int, float)):
+        val = int(tf_str)
+        return val * 60 if val < 1000 else val
+
+    s = str(tf_str).strip().lower()
+    if s in TIMEFRAME_SECONDS_MAP:
+        return TIMEFRAME_SECONDS_MAP[s]
+
+    m_h = re.match(r'^(\d+)\s*h(?:our|ours|r)?$', s)
+    if m_h:
+        return max(60, int(m_h.group(1)) * 3600)
+    m_m = re.match(r'^(\d+)\s*m(?:in|inute|inutes)?$', s)
+    if m_m:
+        return max(60, int(m_m.group(1)) * 60)
+    m_s = re.match(r'^(\d+)\s*s(?:ec|econd|econds)?$', s)
+    if m_s:
+        return max(60, int(m_s.group(1)))
+    m_d = re.match(r'^(\d+)\s*d(?:ay|ays)?$', s)
+    if m_d:
+        return max(60, int(m_d.group(1)) * 86400)
+    if s.isdigit():
+        val = int(s)
+        return val * 60 if val < 1000 else val
+    return 300
 
 def calculate_supertrend(
     candles: List[Dict[str, Any]],
@@ -227,6 +269,7 @@ class SuperTrendEngine:
             "symbol": self.symbol,
             "exchange_segment": self.exchange_segment,
             "timeframe": self.timeframe,
+            "timeframe_seconds": parse_timeframe_seconds(self.timeframe),
             "quantity": self.quantity,
             "product_type": self.product_type,
             "atr_period": self.atr_period,
@@ -256,7 +299,7 @@ class SuperTrendEngine:
             logger.info("SuperTrend: Trading is PAUSED at container level. Skipping evaluation.")
             return
 
-        tf_seconds = TIMEFRAME_SECONDS_MAP.get(self.timeframe, 300)
+        tf_seconds = parse_timeframe_seconds(self.timeframe)
 
         # 1. Resolve Instrument in loaded Master Cache
         inst = xts_api_module.resolve_contract(self.symbol)
@@ -472,7 +515,7 @@ class SuperTrendEngine:
         while self._running:
             try:
                 if self.is_enabled and self.is_configured:
-                    tf_seconds = TIMEFRAME_SECONDS_MAP.get(self.timeframe, 300)
+                    tf_seconds = parse_timeframe_seconds(self.timeframe)
                     now_ts = int(time.time())
                     
                     # Calculate seconds remaining until current candle close

@@ -39,8 +39,8 @@
     </div>
 
     <!-- 3. Total Margin Utilization -->
-    {% set total_avail = clients|map(attribute='available_margin')|reject('none')|sum|default(0.0) %}
-    {% set total_used = clients|map(attribute='margin_used')|reject('none')|sum|default(0.0) %}
+    {% set total_avail = clients|map(attribute='available_margin', default=0.0)|reject('none')|sum|default(0.0) %}
+    {% set total_used = clients|map(attribute='margin_used', default=0.0)|reject('none')|sum|default(0.0) %}
     {% set total_val = (total_avail or 0.0) + (total_used or 0.0) %}
     {% set agg_margin_pct = ((total_used / total_val) * 100)|round(1) if total_val > 0 else 0.0 %}
     <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden">
@@ -64,8 +64,8 @@
     </div>
 
     <!-- 4. Total Daily Turnover -->
-    {% set total_notional = clients|map(attribute='notional_today')|reject('none')|sum|default(0.0) %}
-    {% set total_open_positions = clients|map(attribute='positions_count')|reject('none')|sum|default(0) %}
+    {% set total_notional = clients|map(attribute='notional_today', default=0.0)|reject('none')|sum|default(0.0) %}
+    {% set total_open_positions = clients|map(attribute='positions_count', default=0)|reject('none')|sum|default(0) %}
     <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden">
         <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Turnover &amp; Exposure</span>
@@ -120,8 +120,15 @@
                 </div>
             </div>
 
-            <!-- Engine Health Status -->
-            <div>
+            <!-- Engine Health & SuperTrend Status -->
+            <div class="flex items-center space-x-1.5">
+                {% if c.supertrend and c.supertrend.is_enabled %}
+                <span class="inline-flex items-center text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/30 font-mono" title="SuperTrend Auto-Trading Active">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1"></span>
+                    ST: {{ c.supertrend.symbol }} ({{ c.supertrend.timeframe }})
+                </span>
+                {% endif %}
+
                 {% if c.status == 'HEALTHY' %}
                 <span class="inline-flex items-center text-xs font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/30 font-mono">
                     <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-400 rounded-full animate-ping"></span> Ready
@@ -327,7 +334,14 @@
                     </td>
                     <td class="px-5 py-3 font-bold text-slate-100">
                         <a href="/admin/clients/{{ c.id }}" class="hover:text-brand-400 transition">{{ c.name }}</a>
-                        <div class="text-[10px] text-slate-500 font-normal">{{ c.id }}</div>
+                        <div class="text-[10px] text-slate-500 font-normal flex items-center gap-1.5 mt-0.5">
+                            <span>{{ c.id }}</span>
+                            {% if c.supertrend and c.supertrend.is_enabled %}
+                            <span class="inline-flex items-center text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/30 font-mono">
+                                <span class="w-1 h-1 rounded-full bg-emerald-400 mr-1"></span> ST: {{ c.supertrend.symbol }} ({{ c.supertrend.timeframe }})
+                            </span>
+                            {% endif %}
+                        </div>
                     </td>
                     <td class="px-4 py-3 font-semibold text-emerald-400">
                         {{ c.client_id }}

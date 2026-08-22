@@ -1,0 +1,153 @@
+<!-- Live Market Readiness Diagnostic Panel -->
+<div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-lg space-y-4">
+    <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+        <div class="flex items-center space-x-2.5">
+            <div class="w-8 h-8 rounded-xl bg-brand-500/10 flex items-center justify-center text-brand-400">
+                <i data-lucide="shield-check" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <h4 class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <span>Live Market Readiness Check</span>
+                    {% if diag.all_ready %}
+                    <span class="inline-flex items-center text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1"></span>
+                        READY FOR LIVE TRADING
+                    </span>
+                    {% else %}
+                    <span class="inline-flex items-center text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">
+                        <i data-lucide="alert-triangle" class="w-3 h-3 mr-1"></i> ATTENTION NEEDED
+                    </span>
+                    {% endif %}
+                </h4>
+                <p class="text-[11px] text-slate-400 font-mono">Automated 4-point verification against AC Agarwal broker gateways</p>
+            </div>
+        </div>
+        <div class="text-right text-xs font-mono">
+            <div class="text-slate-300 font-semibold flex items-center justify-end gap-1.5">
+                {% if diag.market_hours and diag.market_hours.status == "OPEN" %}
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span class="text-emerald-400 font-bold">MARKET OPEN</span>
+                {% else %}
+                <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                <span class="text-slate-400">MARKET CLOSED</span>
+                {% endif %}
+            </div>
+            <div class="text-[10px] text-slate-500">{{ diag.market_hours.trading_hours|default("09:00 - 23:30 IST") }}</div>
+        </div>
+    </div>
+
+    <!-- 4 Diagnostic Health Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <!-- 1. Interactive Trading Gateway -->
+        <div class="bg-slate-950/80 border {% if diag.interactive_auth.status == "OK" %}border-emerald-500/30{% else %}border-rose-500/30{% endif %} rounded-xl p-3 space-y-1">
+            <div class="flex items-center justify-between">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Interactive API</span>
+                {% if diag.interactive_auth.status == "OK" %}
+                <span class="text-[10px] font-bold text-emerald-400 flex items-center gap-1 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> AUTH OK
+                </span>
+                {% else %}
+                <span class="text-[10px] font-bold text-rose-400 flex items-center gap-1 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> FAILED
+                </span>
+                {% endif %}
+            </div>
+            <div class="text-xs font-bold text-slate-200 font-mono truncate">
+                Client ID: {{ diag.interactive_auth.client_id|default("UNKNOWN") }}
+            </div>
+            <p class="text-[10px] text-slate-400">
+                {% if diag.interactive_auth.status == "OK" %}
+                Authenticated &amp; Order-Ready
+                {% else %}
+                <span class="text-rose-400 truncate">{{ diag.interactive_auth.error|default("Auth Failed") }}</span>
+                {% endif %}
+            </p>
+        </div>
+
+        <!-- 2. Market Data REST Gateway -->
+        <div class="bg-slate-950/80 border {% if diag.market_data_auth.status == "OK" %}border-emerald-500/30{% else %}border-rose-500/30{% endif %} rounded-xl p-3 space-y-1">
+            <div class="flex items-center justify-between">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Market Data Feed</span>
+                {% if diag.market_data_auth.status == "OK" %}
+                <span class="text-[10px] font-bold text-emerald-400 flex items-center gap-1 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> CONNECTED
+                </span>
+                {% else %}
+                <span class="text-[10px] font-bold text-rose-400 flex items-center gap-1 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> FAILED
+                </span>
+                {% endif %}
+            </div>
+            <div class="text-xs font-bold text-slate-200 font-mono">
+                Port 3000 REST
+            </div>
+            <p class="text-[10px] text-slate-400">
+                {% if diag.market_data_auth.status == "OK" %}
+                Token Valid &bull; Ready
+                {% else %}
+                <span class="text-rose-400">MD Login Failed</span>
+                {% endif %}
+            </p>
+        </div>
+
+        <!-- 3. Contract Master File Cache -->
+        <div class="bg-slate-950/80 border {% if diag.master_cache.status == "OK" %}border-emerald-500/30{% else %}border-amber-500/30{% endif %} rounded-xl p-3 space-y-1">
+            <div class="flex items-center justify-between">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Contract Master</span>
+                {% if diag.master_cache.status == "OK" %}
+                <span class="text-[10px] font-bold text-emerald-400 flex items-center gap-1 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> SYNCED
+                </span>
+                {% else %}
+                <span class="text-[10px] font-bold text-amber-400 flex items-center gap-1 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> DEGRADED
+                </span>
+                {% endif %}
+            </div>
+            <div class="text-xs font-bold text-slate-200 font-mono">
+                {{ diag.master_cache.futures_count|default(0) }} F&amp;O / {{ diag.master_cache.cash_count|default(0) }} Eq
+            </div>
+            <p class="text-[10px] text-slate-400">
+                Total: {{ diag.master_cache.total_contracts|default(0) }} Instruments
+            </p>
+        </div>
+
+        <!-- 4. Target Instrument Live Feed Reception -->
+        <div class="bg-slate-950/80 border {% if diag.live_feed.status == "OK" %}border-emerald-500/30{% elif diag.live_feed.status == "NOT_CONFIGURED" %}border-bordercolor{% else %}border-amber-500/30{% endif %} rounded-xl p-3 space-y-1">
+            <div class="flex items-center justify-between">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Live Candle Handshake</span>
+                {% if diag.live_feed.status == "OK" %}
+                <span class="text-[10px] font-bold text-emerald-400 flex items-center gap-1 font-mono">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> RECEIVING
+                </span>
+                {% elif diag.live_feed.status == "NOT_CONFIGURED" %}
+                <span class="text-[10px] text-slate-500 font-mono">NO SYMBOL</span>
+                {% else %}
+                <span class="text-[10px] font-bold text-amber-400 flex items-center gap-1 font-mono">
+                    {{ diag.live_feed.status }}
+                </span>
+                {% endif %}
+            </div>
+            <div class="text-xs font-bold text-slate-200 font-mono truncate">
+                {% if diag.live_feed.resolved_desc %}
+                {{ diag.live_feed.resolved_desc }}
+                {% elif diag.live_feed.symbol %}
+                {{ diag.live_feed.symbol }}
+                {% else %}
+                None Configured
+                {% endif %}
+            </div>
+            <p class="text-[10px] text-slate-400 truncate">
+                {% if diag.live_feed.status == "OK" %}
+                Last Close: ₹{{ diag.live_feed.last_close|default(0.0) }} ({{ diag.live_feed.candles_count }} bars)
+                {% elif diag.live_feed.status == "NO_DATA" %}
+                <span class="text-amber-400">No candle data (Market off-hours)</span>
+                {% elif diag.live_feed.error %}
+                <span class="text-rose-400">{{ diag.live_feed.error }}</span>
+                {% else %}
+                Configure symbol to test feed
+                {% endif %}
+            </p>
+        </div>
+    </div>
+</div>
