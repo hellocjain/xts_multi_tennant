@@ -57,6 +57,37 @@ LAST_REFRESH_ATTEMPT = 0
 REFRESH_COOLDOWN_SECONDS = 15
 MIN_SANE_INSTRUMENT_COUNT = 500
 
+class TokenBucketRateLimiter:
+    """Thread-safe Token Bucket Rate Limiter enforcing max 8 req/sec for order-mutating endpoints."""
+    def __init__(self, rate: float = 8.0, capacity: float = 8.0):
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_update = time.time()
+        self.lock = threading.Lock()
+
+    def acquire(self, timeout: float = 5.0) -> bool:
+        start_time = time.time()
+        while True:
+            with self.lock:
+                now = time.time()
+                elapsed = now - self.last_update
+                self.last_update = now
+                self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+                
+                if self.tokens >= 1.0:
+                    self.tokens -= 1.0
+                    return True
+                
+                required_wait = (1.0 - self.tokens) / self.rate
+
+            if (time.time() - start_time) + required_wait > timeout:
+                return False
+
+            time.sleep(max(0.01, min(required_wait, 0.1)))
+
+ORDER_RATE_LIMITER = TokenBucketRateLimiter(rate=8.0, capacity=8.0)
+
 SEGMENT_MAP = {
     "NSECM": 1, "NSEFO": 2, "NSECD": 3, "BSECM": 11, "BSEFO": 12, "BSECD": 13, "MCXFO": 51, "NCDEX": 21,
     "NSE": 1, "BSE": 11, "MCX": 51, "NCD": 21,
@@ -939,9 +970,10 @@ def _monitor_and_clean_partial_fills(order_ref, client_id, token):
                     if ref_tag and str(ref_tag) == str(order_ref):
                         status = ord.get('OrderStatus')
                         app_order_id = ord.get('AppOrderID')
-                        if status in ("PartiallyFilled", "Open", "New") and app_order_id:
+                        if status in ("PartiallyFilled", "Open", "New", "PendingNew", "Replaced") and app_order_id:
                             logger.warning(f"PARTIAL FILL GUARD: Cancelling unfilled remainder for AppOrderID {app_order_id} (Status: {status})")
                             cancel_url = f"{safe_url}/orders?appOrderID={app_order_id}&clientID={client_id}"
+                            ORDER_RATE_LIMITER.acquire(timeout=5.0)
                             api_session.delete(cancel_url, json={"appOrderID": app_order_id, "clientID": client_id}, headers=headers, timeout=5)
                             return
     except Exception as e:
@@ -1063,6 +1095,7 @@ def place_order(action, symbol, quantity, tv_price, order_ref):
 
     try:
         logger.info(f"Routing MARKETABLE LIMIT {action} Order -> Exec Qty: {execution_qty} (ID: {instrument_id}) | Limit Px: {execution_price} (LTP: {base_price})")
+        ORDER_RATE_LIMITER.acquire(timeout=5.0)
         response = api_session.post(url, headers=headers, json=payload, timeout=8)
         data = response.json()
 
@@ -1515,8 +1548,9 @@ def panic_square_off_all():
             if isinstance(ord_item, dict):
                 st = ord_item.get("OrderStatus")
                 app_id = ord_item.get("AppOrderID")
-                if st in ("Open", "New", "Pending", "PartiallyFilled") and app_id:
+                if st in ("Open", "New", "Pending", "PartiallyFilled", "PendingNew", "Replaced") and app_id:
                     cancel_url = f"{safe_url}/orders?appOrderID={app_id}&clientID={client_id}"
+                    ORDER_RATE_LIMITER.acquire(timeout=3.0)
                     api_session.delete(cancel_url, json={"appOrderID": app_id, "clientID": client_id}, headers=headers, timeout=4)
                     logger.critical(f"🚨 CANCELLED OPEN ORDER: AppOrderID {app_id}")
     except Exception as e:
@@ -1592,6 +1626,7 @@ def panic_square_off_all():
                     "clientID": client_id,
                 }
                 try:
+                    ORDER_RATE_LIMITER.acquire(timeout=3.0)
                     resp_post = api_session.post(order_url, headers=headers, json=payload, timeout=8)
                     try:
                         res = resp_post.json()

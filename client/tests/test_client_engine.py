@@ -287,3 +287,16 @@ def test_proactive_token_renewal(monkeypatch):
     assert token == "new_fresh_token_456"
     assert xts_api.INTERACTIVE_TOKEN == "new_fresh_token_456"
     assert time.time() - xts_api.INTERACTIVE_TOKEN_ACQUIRED_AT < 5
+
+def test_token_bucket_rate_limiter():
+    limiter = xts_api.TokenBucketRateLimiter(rate=8.0, capacity=8.0)
+    # Acquire 8 tokens immediately from capacity
+    for _ in range(8):
+        assert limiter.acquire(timeout=0.05) is True
+    
+    # 9th immediate acquire should fail or wait
+    assert limiter.acquire(timeout=0.01) is False
+    
+    # After 150ms (>= 1 token generated at 8/sec = 125ms), acquire should succeed
+    time.sleep(0.15)
+    assert limiter.acquire(timeout=0.05) is True
