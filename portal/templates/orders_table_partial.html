@@ -49,9 +49,16 @@
                     DUP SUPPRESSED
                 </span>
                 {% else %}
-                <span class="bg-rose-500/10 text-rose-400 text-xs font-semibold px-2 py-0.5 rounded border border-rose-500/30">
-                    {{ s.status|upper }}
-                </span>
+                <div class="flex flex-col space-y-1">
+                    <span class="bg-rose-500/10 text-rose-400 text-xs font-semibold px-2 py-0.5 rounded border border-rose-500/30 w-max">
+                        {{ s.status|upper }}
+                    </span>
+                    {% if s.error_message %}
+                    <span class="text-[10px] text-rose-400/80 font-mono truncate max-w-xs" title="{{ s.error_message }}">
+                        {{ s.error_message }}
+                    </span>
+                    {% endif %}
+                </div>
                 {% endif %}
             </td>
             <td class="px-5 py-3.5 text-slate-400 truncate max-w-xs text-[11px]" title="{{ s.order_ref }}">

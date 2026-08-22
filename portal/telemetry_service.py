@@ -309,7 +309,22 @@ def aggregate_all_signals(search: str = "", client_filter: str = "", status_filt
                         or (result.get("order_ref") if isinstance(result, dict) else None)
                         or ""
                     )
-                    err_msg = result.get("error", "") if isinstance(result, dict) else ""
+                    err_msg = ""
+                    if isinstance(result, dict):
+                        err_msg = str(
+                            result.get("description")
+                            or result.get("error")
+                            or result.get("message")
+                            or (result.get("result", {}).get("description") if isinstance(result.get("result"), dict) else None)
+                            or (result.get("result", {}).get("RejectReason") if isinstance(result.get("result"), dict) else None)
+                            or (result.get("result", {}).get("OrderRejectReason") if isinstance(result.get("result"), dict) else None)
+                            or ""
+                        )
+                        err_code = str(result.get("code") or "")
+                        if err_code and err_code not in err_msg and err_msg:
+                            err_msg = f"[{err_code}] {err_msg}"
+                        elif err_code and not err_msg:
+                            err_msg = f"Error: {err_code}"
 
                     # Filter by status
                     if status_filter and status != status_filter:

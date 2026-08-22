@@ -244,3 +244,40 @@ def test_portal_flow():
         assert res_rot.status_code == 303
         assert "msg=Master+key+rotated" in res_rot.headers["Location"]
 
+def test_telemetry_broker_reject_reason_extraction(tmp_path, monkeypatch):
+    import telemetry_service
+    import sqlite3
+    
+    # Create temporary tenant signals.db
+    tenant_dir = tmp_path / "clients" / "test_tenant"
+    tenant_dir.mkdir(parents=True)
+    db_path = tenant_dir / "signals.db"
+    
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("""
+            CREATE TABLE signals (
+                id TEXT PRIMARY KEY,
+                status TEXT,
+                payload TEXT,
+                result TEXT,
+                received_at REAL,
+                updated_at REAL
+            )
+        """)
+        
+        # Insert a signal with broker description and code
+        payload = json.dumps({"action": "BUY", "symbol": "CRUDEOIL", "quantity": 1, "price": 6500.0, "order_ref": "TV_123"})
+        result = json.dumps({"type": "error", "code": "e-order-0008", "description": "Tick size invalid for exchange segment"})
+        conn.execute("INSERT INTO signals VALUES ('sig_1', 'failed', ?, ?, 1700000000.0, 1700000001.0)", (payload, result))
+    
+    monkeypatch.setattr(docker_manager, "get_client_data_root", lambda: str(tmp_path / "clients"))
+    
+    with database.get_db_connection() as pconn:
+        with pconn:
+            pconn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('test_tenant', 'Test Tenant', 'ACTIVE', 0, 0)")
+    
+    signals = telemetry_service.aggregate_all_signals()
+    assert len(signals) >= 1
+    target = next(s for s in signals if s["id"] == "sig_1")
+    assert "[e-order-0008] Tick size invalid for exchange segment" in target["error_message"]
+
