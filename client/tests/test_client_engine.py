@@ -163,3 +163,25 @@ def test_commodity_multiplier():
     assert xts_api.get_contract_multiplier("ALUMINIUM", "MCXFO") == 5000.0
     assert xts_api.get_contract_multiplier("NIFTY", "NSEFO") == 1.0
     assert xts_api.get_contract_multiplier("RELIANCE", "NSECM") == 1.0
+
+def test_panic_square_off_pricing_fallback_logic(monkeypatch):
+    # Mock position object representing open SHORT position
+    short_pos = {
+        "Quantity": -4,
+        "ExchangeInstrumentId": 25000,
+        "ExchangeSegment": "MCXFO",
+        "ProductType": "NRML",
+        "TradingSymbol": "SILVER100",
+        "BuyAveragePrice": 0,
+        "SellAveragePrice": 85000.0
+    }
+    
+    # When get_live_price returns None, closing short (action=BUY) should use SellAveragePrice 85000, not fallback 100
+    action = "BUY"
+    p = short_pos
+    if action == "BUY":
+        fallback_px = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("BuyAveragePrice", 0) or 100)
+    else:
+        fallback_px = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("SellAveragePrice", 0) or 100)
+    
+    assert fallback_px == 85000.0

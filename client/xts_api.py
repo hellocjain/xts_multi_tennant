@@ -1521,7 +1521,10 @@ def panic_square_off_all():
 
             live_price = get_live_price(inst_id, exch_seg)
             if not live_price or live_price == "TOKEN_EXPIRED":
-                live_price = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 100))
+                if action == "BUY": # Closing a short position
+                    live_price = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("BuyAveragePrice", 0) or 100)
+                else: # Closing a long position
+                    live_price = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("SellAveragePrice", 0) or 100)
 
             buffer = max(live_price * 0.01, tick_size * 10)
             raw_limit = (live_price + buffer) if action == "BUY" else (live_price - buffer)
