@@ -293,3 +293,27 @@ def test_caddy_sync_failure_propagation(monkeypatch):
     res_fail = caddy_manager.sync_caddy_config()
     assert res_fail is False
 
+def test_thread_safe_port_allocation():
+    import concurrent.futures
+    import docker_manager
+
+    # Clean local ports
+    with docker_manager.PORT_LOCK:
+        docker_manager.LOCAL_PORTS.clear()
+
+    def allocate(t_id):
+        return docker_manager.get_tenant_port(t_id)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(allocate, f"tenant_{i}"): f"tenant_{i}" for i in range(10)}
+        ports = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    # All 10 allocated ports must be unique
+    assert len(ports) == 10
+    assert len(set(ports)) == 10
+    
+    # Recycle one and verify it can be reallocated
+    docker_manager.remove_client_container("tenant_0")
+    with docker_manager.PORT_LOCK:
+        assert "tenant_0" not in docker_manager.LOCAL_PORTS
+

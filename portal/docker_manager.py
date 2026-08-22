@@ -4,6 +4,8 @@ import json
 import logging
 import subprocess
 import time
+import socket
+import threading
 from contextlib import closing
 from database import get_db_connection, get_portal_data_dir
 import security
@@ -31,6 +33,7 @@ INGRESS_NETWORK = os.environ.get("INGRESS_NETWORK", "xts_ingress_net")
 LOCAL_PROCESSES = {}
 LOCAL_PORTS = {}
 BASE_LOCAL_PORT = 8001
+PORT_LOCK = threading.Lock()
 
 def get_docker_client():
     try:
@@ -83,15 +86,21 @@ def write_client_config(tenant_id: str):
     os.chmod(config_file, 0o600)
     logger.info(f"Wrote config.json for tenant {tenant_id}")
 
+def _is_port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.1)
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
 def get_tenant_port(tenant_id: str) -> int:
-    if tenant_id in LOCAL_PORTS:
-        return LOCAL_PORTS[tenant_id]
-    used = set(LOCAL_PORTS.values())
-    p = BASE_LOCAL_PORT
-    while p in used:
-        p += 1
-    LOCAL_PORTS[tenant_id] = p
-    return p
+    with PORT_LOCK:
+        if tenant_id in LOCAL_PORTS:
+            return LOCAL_PORTS[tenant_id]
+        used = set(LOCAL_PORTS.values())
+        p = BASE_LOCAL_PORT
+        while p in used or _is_port_in_use(p):
+            p += 1
+        LOCAL_PORTS[tenant_id] = p
+        return p
 
 def provision_client_container(tenant_id: str) -> dict:
     write_client_config(tenant_id)
@@ -214,6 +223,9 @@ def stop_client_container(tenant_id: str) -> dict:
 
 def remove_client_container(tenant_id: str) -> dict:
     stop_client_container(tenant_id)
+    with PORT_LOCK:
+        LOCAL_PORTS.pop(tenant_id, None)
+        LOCAL_PROCESSES.pop(tenant_id, None)
     client = get_docker_client()
     if client:
         container_name = f"xts_client_{tenant_id}"
