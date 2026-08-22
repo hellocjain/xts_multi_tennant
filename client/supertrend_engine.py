@@ -397,7 +397,7 @@ class SingleSuperTrendRunner:
             exch_seg,
             inst_id,
             tf_seconds,
-            50
+            150
         )
         fetch_ms = int((time.time() - t_start) * 1000)
 

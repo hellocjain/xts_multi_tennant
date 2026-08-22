@@ -1636,8 +1636,12 @@
         if (!modal || !strategy) return;
         document.getElementById('st-modal-title').innerText = `Edit Strategy: ${strategy.symbol}`;
         document.getElementById('st-modal-strat-id').value = strategy.id || '';
-        document.getElementById('modal-st-symbol-input').value = strategy.symbol || '';
-        document.getElementById('modal-st-symbol-validation').innerHTML = '';
+        const symInput = document.getElementById('modal-st-symbol-input');
+        if (symInput) {
+            symInput.value = strategy.symbol || '';
+            symInput.readOnly = true;
+        }
+        document.getElementById('modal-st-symbol-validation').innerHTML = '<span class="text-[10px] text-brand-400 font-mono">Editing existing contract runner</span>';
         document.getElementById('modal-st-exchange-seg').value = strategy.exchange_segment || 'MCXFO';
         document.getElementById('modal-st-qty').value = strategy.quantity || 1;
         document.getElementById('modal-st-prod-type').value = strategy.product_type || 'NRML';

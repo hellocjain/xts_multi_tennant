@@ -1074,9 +1074,9 @@ async def save_supertrend_config(
     is_enabled: bool = Form(False),
     symbol: str = Form(""),
     exchange_segment: str = Form(""),
-    timeframe: str = Form("5m"),
-    timeframe_select: str = Form("5m"),
-    custom_minutes: str = Form(""),
+    timeframe: Optional[str] = Form(None),
+    timeframe_select: Optional[str] = Form(None),
+    custom_minutes: Optional[str] = Form(None),
     quantity: int = Form(1),
     product_type: str = Form("NRML"),
     atr_period: int = Form(10),
@@ -1092,12 +1092,14 @@ async def save_supertrend_config(
     clean_mult = max(0.1, multiplier)
     clean_mode = "PAPER" if execution_mode.strip().upper() == "PAPER" else "LIVE"
 
-    if timeframe_select == "custom" and custom_minutes.strip().isdigit():
+    # Robust timeframe resolution
+    clean_tf = "5m"
+    if timeframe_select == "custom" and custom_minutes and custom_minutes.strip().isdigit():
         clean_tf = f"{int(custom_minutes.strip())}m"
-    elif timeframe.strip():
+    elif timeframe_select and timeframe_select.strip() and timeframe_select.strip() != "custom":
+        clean_tf = timeframe_select.strip().lower()
+    elif timeframe and timeframe.strip() and timeframe.strip() != "custom":
         clean_tf = timeframe.strip().lower()
-    else:
-        clean_tf = timeframe_select.strip().lower() or "5m"
 
     is_conf = bool(clean_sym and clean_seg and clean_qty > 0)
     
@@ -1184,7 +1186,16 @@ async def get_supertrend_chart_data(
         strat_rows = conn.execute("SELECT symbol, timeframe FROM tenant_supertrend_strategies WHERE tenant_id=?", (tenant_id,)).fetchall()
 
     cfg_sym = symbol or (strat_rows[0]["symbol"] if strat_rows else (st_row["symbol"] if st_row and st_row["symbol"] else ""))
-    cfg_tf = timeframe or (strat_rows[0]["timeframe"] if strat_rows else (st_row["timeframe"] if st_row and st_row["timeframe"] else "5m"))
+    
+    # Auto-match timeframe for the specific target symbol if timeframe param omitted
+    matched_tf = None
+    if cfg_sym and strat_rows:
+        for r in strat_rows:
+            if r["symbol"].upper() == cfg_sym.upper():
+                matched_tf = r["timeframe"]
+                break
+
+    cfg_tf = timeframe or matched_tf or (strat_rows[0]["timeframe"] if strat_rows else (st_row["timeframe"] if st_row and st_row["timeframe"] else "5m"))
 
     port = docker_manager.get_tenant_port(tenant_id)
     url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/candles"
