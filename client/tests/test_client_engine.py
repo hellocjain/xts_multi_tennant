@@ -300,3 +300,19 @@ def test_token_bucket_rate_limiter():
     # After 150ms (>= 1 token generated at 8/sec = 125ms), acquire should succeed
     time.sleep(0.15)
     assert limiter.acquire(timeout=0.05) is True
+
+def test_panic_fail_closed_authentication(monkeypatch):
+    with TestClient(app) as client:
+        # 1. Unset secret -> must return 401
+        monkeypatch.setattr(config, "WEBHOOK_SECRET", "")
+        res = client.post("/panic", json={"secret": "AnySecret"})
+        assert res.status_code == 401
+
+        # 2. Wrong secret -> must return 401
+        monkeypatch.setattr(config, "WEBHOOK_SECRET", "ConfiguredSecret")
+        res = client.post("/panic", json={"secret": "WrongSecret"})
+        assert res.status_code == 401
+
+        # 3. Correct secret -> must succeed
+        res = client.post("/panic", json={"secret": "ConfiguredSecret"})
+        assert res.status_code == 200

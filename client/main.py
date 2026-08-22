@@ -353,9 +353,10 @@ async def panic(request: Request):
     except Exception:
         data = {}
     incoming_secret = str(data.get("secret", "")).strip()
-    expected_secret = getattr(config, "WEBHOOK_SECRET", "")
+    expected_secret = getattr(config, "WEBHOOK_SECRET", "").strip()
     
-    if expected_secret and not hmac.compare_digest(incoming_secret, expected_secret):
+    if not expected_secret or not hmac.compare_digest(incoming_secret, expected_secret):
+        logger.error("REJECTED: Unauthorized /panic request or WEBHOOK_SECRET is unconfigured.")
         return JSONResponse(status_code=401, content={"status": "error", "message": "Unauthorized"})
     
     sig_id = f"panic_{str(uuid.uuid4())[:8]}"
