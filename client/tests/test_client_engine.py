@@ -185,3 +185,23 @@ def test_panic_square_off_pricing_fallback_logic(monkeypatch):
         fallback_px = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("SellAveragePrice", 0) or 100)
     
     assert fallback_px == 85000.0
+
+def test_order_status_classification():
+    # Test numeric status code mapping
+    assert xts_api.XTS_STATUS_CODE_MAP[48] == "New"
+    assert xts_api.XTS_STATUS_CODE_MAP[49] == "PartiallyFilled"
+    assert xts_api.XTS_STATUS_CODE_MAP[50] == "Filled"
+    assert xts_api.XTS_STATUS_CODE_MAP[52] == "Cancelled"
+    assert xts_api.XTS_STATUS_CODE_MAP[53] == "Replaced"
+    assert xts_api.XTS_STATUS_CODE_MAP[54] == "PendingCancel"
+    assert xts_api.XTS_STATUS_CODE_MAP[56] == "Rejected"
+    assert xts_api.XTS_STATUS_CODE_MAP[65] == "PendingNew"
+    assert xts_api.XTS_STATUS_CODE_MAP[69] == "PendingReplace"
+
+    non_terminal = {
+        "OPEN", "NEW", "FILLED", "PARTIALLYFILLED", "PENDING", "PENDINGNEW",
+        "REPLACED", "PENDINGREPLACE", "PENDINGCANCEL", "SUCCESS", "COMPLETE", "EXECUTED"
+    }
+    # Verify that Replaced, PendingNew, PendingReplace are all treated as non-terminal (not re-executed)
+    for st in ["Replaced", "PendingNew", "PendingReplace", "PartiallyFilled", "New", "Filled"]:
+        assert st.upper().replace("_", "").replace(" ", "") in non_terminal

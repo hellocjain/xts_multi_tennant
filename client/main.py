@@ -210,12 +210,21 @@ async def lifespan(app: FastAPI):
                     logger.warning(f"RECOVERY: Checking broker order book for {sig_id} (Ref: {order_ref})...")
                     
                     broker_status = xts_api.check_order_status_by_ref(order_ref)
+                    st_norm = str(broker_status).upper().replace("_", "").replace(" ", "")
+
+                    NON_TERMINAL_BROKER_STATUSES = {
+                        "OPEN", "NEW", "FILLED", "PARTIALLYFILLED", "PENDING", "PENDINGNEW",
+                        "REPLACED", "PENDINGREPLACE", "PENDINGCANCEL", "SUCCESS", "COMPLETE", "EXECUTED"
+                    }
+                    TERMINAL_FAILED_STATUSES = {
+                        "REJECTED", "CANCELLED", "CANCELED", "EXPIRED"
+                    }
                     
-                    if broker_status in ("Open", "New", "Filled", "PartiallyFilled", "Pending", "SUCCESS"):
+                    if st_norm in NON_TERMINAL_BROKER_STATUSES:
                         logger.warning(f"RECOVERY SAFEGUARD: Order {order_ref} exists on broker ({broker_status}). Not re-executing.")
                         db_update_status(sig_id, "done", {"status": "recovered_from_broker", "broker_status": broker_status})
                         continue
-                    elif broker_status in ("Rejected", "Cancelled", "Canceled", "Expired"):
+                    elif st_norm in TERMINAL_FAILED_STATUSES:
                         logger.warning(f"RECOVERY SAFEGUARD: Order {order_ref} hit terminal state ({broker_status}). Not re-executing.")
                         db_update_status(sig_id, "failed", {"status": "broker_terminal_state", "broker_status": broker_status})
                         continue

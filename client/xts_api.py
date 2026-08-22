@@ -832,6 +832,18 @@ def _log_paper_trade_to_file(action, symbol, execution_qty, instrument_id, exch_
     except Exception as e:
         logger.error(f"Failed to write paper trade log entry: {e}")
 
+XTS_STATUS_CODE_MAP = {
+    48: "New",
+    49: "PartiallyFilled",
+    50: "Filled",
+    52: "Cancelled",
+    53: "Replaced",
+    54: "PendingCancel",
+    56: "Rejected",
+    65: "PendingNew",
+    69: "PendingReplace",
+}
+
 def check_order_status_by_ref(order_ref):
     token = get_interactive_token()
     if not token:
@@ -847,7 +859,10 @@ def check_order_status_by_ref(order_ref):
                 for ord in data.get('result', []):
                     ref_tag = ord.get('OrderUniqueIdentifier') or ord.get('orderUniqueIdentifier')
                     if ref_tag and str(ref_tag) == str(order_ref):
-                        return ord.get('OrderStatus')
+                        raw_st = ord.get('OrderStatus')
+                        if isinstance(raw_st, int) or (isinstance(raw_st, str) and raw_st.isdigit()):
+                            return XTS_STATUS_CODE_MAP.get(int(raw_st), str(raw_st))
+                        return str(raw_st) if raw_st is not None else "UNKNOWN"
                 return "NOT_FOUND"
     except Exception as e:
         logger.error(f"Failed to check order status for {order_ref}: {e}")
