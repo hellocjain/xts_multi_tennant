@@ -23,6 +23,9 @@ def build_client_telemetry_dict(
     realized_pnl: float = 0.0,
     net_mtm: float = 0.0,
     positions: list = None,
+    all_positions: list = None,
+    closed_positions: list = None,
+    holdings: dict = None,
     available_margin: float = 0.0,
     margin_used: float = 0.0,
     total_collateral: float = 0.0,
@@ -38,6 +41,13 @@ def build_client_telemetry_dict(
     error: str = None
 ) -> dict:
     pos_list = positions or []
+    all_pos_list = all_positions or pos_list
+    closed_pos_list = closed_positions or [p for p in all_pos_list if p.get("quantity", 0) == 0]
+    holdings_dict = holdings or {
+        "invested_value": 0.0, "current_value": 0.0, "overall_pnl": 0.0,
+        "overall_pnl_pct": 0.0, "day_pnl": 0.0, "day_pnl_pct": 0.0,
+        "holdings_count": 0, "holdings": []
+    }
     return {
         "id": tenant_id or "",
         "name": name or tenant_id or "",
@@ -50,7 +60,11 @@ def build_client_telemetry_dict(
         "realized_pnl": float(realized_pnl or 0.0),
         "net_mtm": float(net_mtm or 0.0),
         "positions_count": len(pos_list),
+        "all_positions_count": len(all_pos_list),
         "positions": pos_list,
+        "all_positions": all_pos_list,
+        "closed_positions": closed_pos_list,
+        "holdings": holdings_dict,
         "available_margin": float(available_margin or 0.0),
         "margin_used": float(margin_used or 0.0),
         "total_collateral": float(total_collateral or 0.0),
@@ -159,6 +173,10 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
     tot_val = float(margin.get("total_account_value", 0.0))
     margin_pct = min(100.0, round((margin_used / tot_val) * 100, 1)) if tot_val > 0 else 0.0
 
+    holdings = data.get("holdings", {})
+    all_pos = pos.get("all_positions", pos.get("positions", []))
+    closed_pos = pos.get("closed_positions", [p for p in all_pos if p.get("quantity", 0) == 0])
+
     return build_client_telemetry_dict(
         tenant_id=t_id,
         name=t_name,
@@ -171,6 +189,9 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
         realized_pnl=float(pos.get("realized_pnl", 0.0)),
         net_mtm=float(pos.get("net_mtm", 0.0)),
         positions=pos.get("positions", []),
+        all_positions=all_pos,
+        closed_positions=closed_pos,
+        holdings=holdings,
         available_margin=avail_margin,
         margin_used=margin_used,
         total_collateral=collateral,

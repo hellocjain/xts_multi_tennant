@@ -294,6 +294,7 @@ async def telemetry():
     """Consolidated telemetry endpoint for Admin Portal polling."""
     health_data = await health()
     pos_data = await anyio.to_thread.run_sync(xts_api.get_positions_telemetry)
+    holdings_data = await anyio.to_thread.run_sync(xts_api.get_holdings_telemetry)
     margin_data = await anyio.to_thread.run_sync(xts_api.get_margin_telemetry)
     recent_signals = await anyio.to_thread.run_sync(db_fetch_recent, 50)
     broker_orders = await anyio.to_thread.run_sync(xts_api.get_broker_orders)
@@ -302,6 +303,7 @@ async def telemetry():
     return {
         "health": health_data,
         "positions": pos_data,
+        "holdings": holdings_data,
         "margin": margin_data,
         "recent_signals": recent_signals,
         "broker_orders": broker_orders,

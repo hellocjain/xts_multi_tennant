@@ -449,6 +449,19 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
     async with httpx.AsyncClient() as client:
         tel_data = await telemetry_service.fetch_single_client_telemetry(client, t_dict)
 
+    if tel_data:
+        tel_data.setdefault("holdings", {
+            "invested_value": 0.0, "current_value": 0.0, "overall_pnl": 0.0,
+            "overall_pnl_pct": 0.0, "day_pnl": 0.0, "day_pnl_pct": 0.0,
+            "holdings_count": 0, "holdings": []
+        })
+        tel_data.setdefault("all_positions", tel_data.get("positions", []))
+        tel_data.setdefault("closed_positions", [])
+        tel_data.setdefault("broker_orders", [])
+        tel_data.setdefault("broker_trades", [])
+        tel_data.setdefault("positions_count", len(tel_data.get("positions", [])))
+        tel_data.setdefault("all_positions_count", len(tel_data.get("all_positions", [])))
+
     logs = docker_manager.get_container_logs(tenant_id, tail=100)
 
     return templates.TemplateResponse(request=request, name="client_detail.html", context={

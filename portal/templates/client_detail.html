@@ -123,7 +123,15 @@
     <div class="border-b border-bordercolor flex items-center space-x-1 overflow-x-auto select-none">
         <button onclick="switchClientTab('positions')" id="tab-nav-positions" class="tab-btn active px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
             <i data-lucide="layers" class="w-4 h-4"></i>
-            <span>Live Positions ({{ client.positions_count }})</span>
+            <span>Positions ({{ client.positions_count }})</span>
+        </button>
+        <button onclick="switchClientTab('holdings')" id="tab-nav-holdings" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
+            <i data-lucide="briefcase" class="w-4 h-4"></i>
+            <span>Demat Holdings ({{ client.holdings.holdings_count|default(0) if client.holdings else 0 }})</span>
+        </button>
+        <button onclick="switchClientTab('orders')" id="tab-nav-orders" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
+            <i data-lucide="history" class="w-4 h-4"></i>
+            <span>Orders &amp; Trades ({{ (client.broker_orders|length) if client.broker_orders else 0 }})</span>
         </button>
         <button onclick="switchClientTab('webhook')" id="tab-nav-webhook" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
             <i data-lucide="webhook" class="w-4 h-4"></i>
@@ -132,10 +140,6 @@
         <button onclick="switchClientTab('risk')" id="tab-nav-risk" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
             <i data-lucide="shield" class="w-4 h-4"></i>
             <span>Risk &amp; RMS Margin</span>
-        </button>
-        <button onclick="switchClientTab('orders')" id="tab-nav-orders" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
-            <i data-lucide="history" class="w-4 h-4"></i>
-            <span>Signal Audit History ({{ client.recent_signals|length }})</span>
         </button>
         <button onclick="switchClientTab('logs')" id="tab-nav-logs" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
             <i data-lucide="terminal" class="w-4 h-4"></i>
@@ -173,17 +177,31 @@
             </div>
         </div>
 
-        <!-- Positions Table -->
+        <!-- Positions Table with Segmented View Switcher -->
         <div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
-            <div class="px-5 py-4 border-b border-bordercolor flex items-center justify-between">
+            <div class="px-5 py-4 border-b border-bordercolor flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div class="flex items-center space-x-2">
                     <i data-lucide="layers" class="w-4 h-4 text-brand-400"></i>
-                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Active Contract Holdings</h3>
+                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Contract Positions</h3>
                 </div>
-                <span class="text-xs font-mono text-slate-400">Real-time LTP stream</span>
+                
+                <!-- Sub-Filter Switcher -->
+                <div class="flex items-center bg-slate-950 border border-bordercolor p-1 rounded-xl gap-1">
+                    <button id="pos-view-open-btn" onclick="switchPositionsView('open')" 
+                            class="py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5">
+                        <i data-lucide="activity" class="w-3.5 h-3.5"></i>
+                        <span>Active Open ({{ client.positions_count }})</span>
+                    </button>
+                    <button id="pos-view-all-btn" onclick="switchPositionsView('all')" 
+                            class="py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
+                        <i data-lucide="list" class="w-3.5 h-3.5"></i>
+                        <span>All Day Scrips ({{ client.all_positions_count }})</span>
+                    </button>
+                </div>
             </div>
 
-            <div class="overflow-x-auto">
+            <!-- View 1: Active Open Positions Table -->
+            <div id="pos-table-open-wrapper" class="overflow-x-auto">
                 <table class="w-full text-left text-xs font-mono">
                     <thead class="bg-slate-950 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
                         <tr>
@@ -241,7 +259,177 @@
                                 <div class="flex flex-col items-center justify-center space-y-2">
                                     <i data-lucide="inbox" class="w-8 h-8 text-slate-600"></i>
                                     <span class="text-sm font-medium">No open positions currently held for this account.</span>
-                                    <span class="text-xs text-slate-600">Orders placed via TradingView webhook will show up here live.</span>
+                                    <span class="text-xs text-slate-600">Active market positions holding margin will appear here live.</span>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- View 2: All Day Positions Table (Including Closed Scrips) -->
+            <div id="pos-table-all-wrapper" class="overflow-x-auto hidden">
+                <table class="w-full text-left text-xs font-mono">
+                    <thead class="bg-slate-950 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
+                        <tr>
+                            <th class="px-5 py-3">Symbol</th>
+                            <th class="px-4 py-3">Segment</th>
+                            <th class="px-4 py-3">Status</th>
+                            <th class="px-4 py-3 text-right">Net Qty</th>
+                            <th class="px-4 py-3 text-right">Buy Avg</th>
+                            <th class="px-4 py-3 text-right">Sell Avg</th>
+                            <th class="px-4 py-3 text-right">Live LTP</th>
+                            <th class="px-5 py-3 text-right">Unrealized MTM</th>
+                            <th class="px-5 py-3 text-right">Realized P&amp;L</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-bordercolor/60">
+                        {% for pos in client.all_positions %}
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="px-5 py-3.5 font-bold text-slate-100">
+                                {{ pos.symbol }}
+                            </td>
+                            <td class="px-4 py-3.5 text-slate-400">
+                                <span class="bg-slate-900 border border-bordercolor px-2 py-0.5 rounded">{{ pos.segment }}</span>
+                            </td>
+                            <td class="px-4 py-3.5 font-bold">
+                                {% if pos.quantity == 0 %}
+                                <span class="text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-bordercolor">CLOSED / FLAT</span>
+                                {% elif pos.side == 'LONG' %}
+                                <span class="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">LONG</span>
+                                {% elif pos.side == 'SHORT' %}
+                                <span class="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">SHORT</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3.5 text-right font-semibold text-slate-200">
+                                {{ pos.quantity }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right text-slate-300">
+                                ₹{{ pos.buy_avg|inr }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right text-slate-300">
+                                ₹{{ pos.sell_avg|inr }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right font-bold text-slate-100">
+                                ₹{{ pos.ltp|inr }}
+                            </td>
+                            <td class="px-5 py-3.5 text-right font-bold {% if (pos.unrealized_mtm or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                                {% if (pos.unrealized_mtm or 0) >= 0 %}+{% endif %}₹{{ pos.unrealized_mtm|inr }}
+                            </td>
+                            <td class="px-5 py-3.5 text-right font-semibold {% if (pos.realized_pnl or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                                {% if (pos.realized_pnl or 0) >= 0 %}+{% endif %}₹{{ pos.realized_pnl|inr }}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="9" class="px-6 py-12 text-center text-slate-500">
+                                <div class="flex flex-col items-center justify-center space-y-2">
+                                    <i data-lucide="inbox" class="w-8 h-8 text-slate-600"></i>
+                                    <span class="text-sm font-medium">No traded positions recorded for today.</span>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB 2: Demat CNC Equity Holdings -->
+    <div id="client-tab-holdings" class="tab-pane hidden space-y-5">
+        <!-- Holdings Summary Metrics Grid (Matching Broker App Image 6) -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Invested Value</span>
+                <div class="text-xl font-bold font-mono text-slate-100">₹{{ client.holdings.invested_value|default(0.0)|inr }}</div>
+            </div>
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Current Value</span>
+                <div class="text-xl font-bold font-mono text-slate-100">₹{{ client.holdings.current_value|default(0.0)|inr }}</div>
+            </div>
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Overall P&amp;L</span>
+                <div class="text-xl font-bold font-mono {% if (client.holdings.overall_pnl or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                    {% if (client.holdings.overall_pnl or 0) >= 0 %}+{% endif %}₹{{ client.holdings.overall_pnl|default(0.0)|inr }}
+                    <span class="text-xs font-normal">({{ client.holdings.overall_pnl_pct|default(0.0) }}%)</span>
+                </div>
+            </div>
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Day's P&amp;L</span>
+                <div class="text-xl font-bold font-mono {% if (client.holdings.day_pnl or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                    {% if (client.holdings.day_pnl or 0) >= 0 %}+{% endif %}₹{{ client.holdings.day_pnl|default(0.0)|inr }}
+                    <span class="text-xs font-normal">({{ client.holdings.day_pnl_pct|default(0.0) }}%)</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Demat Holdings Table -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
+            <div class="px-5 py-4 border-b border-bordercolor flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="briefcase" class="w-4 h-4 text-brand-400"></i>
+                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Demat Delivery Stock Portfolio</h3>
+                </div>
+                <span class="text-xs font-mono text-slate-400">{{ client.holdings.holdings_count|default(0) }} Stocks Held</span>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs font-mono">
+                    <thead class="bg-slate-950 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
+                        <tr>
+                            <th class="px-5 py-3">Symbol</th>
+                            <th class="px-4 py-3">ISIN</th>
+                            <th class="px-3 py-3">Seg</th>
+                            <th class="px-4 py-3 text-right">Quantity</th>
+                            <th class="px-4 py-3 text-right">Buy Avg</th>
+                            <th class="px-4 py-3 text-right">Live LTP</th>
+                            <th class="px-4 py-3 text-right">Invested</th>
+                            <th class="px-4 py-3 text-right">Current</th>
+                            <th class="px-5 py-3 text-right">P&amp;L</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-bordercolor/60">
+                        {% for h in client.holdings.holdings %}
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="px-5 py-3.5 font-bold text-slate-100">
+                                {{ h.symbol }}
+                            </td>
+                            <td class="px-4 py-3.5 text-slate-400">
+                                {{ h.isin }}
+                            </td>
+                            <td class="px-3 py-3.5 text-slate-400">
+                                <span class="bg-slate-900 border border-bordercolor px-2 py-0.5 rounded">{{ h.segment }}</span>
+                            </td>
+                            <td class="px-4 py-3.5 text-right font-semibold text-slate-200">
+                                {{ h.quantity }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right text-slate-300">
+                                ₹{{ h.buy_avg|inr }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right font-bold text-slate-100">
+                                ₹{{ h.ltp|inr }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right text-slate-300">
+                                ₹{{ h.invested|inr }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right text-slate-100 font-semibold">
+                                ₹{{ h.current_value|inr }}
+                            </td>
+                            <td class="px-5 py-3.5 text-right font-bold {% if (h.pnl or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                                {% if (h.pnl or 0) >= 0 %}+{% endif %}₹{{ h.pnl|inr }} ({{ h.pnl_pct }}%)
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="9" class="px-6 py-16 text-center text-slate-500">
+                                <div class="flex flex-col items-center justify-center space-y-3">
+                                    <div class="w-12 h-12 rounded-full bg-slate-900 border border-bordercolor flex items-center justify-center text-slate-600">
+                                        <i data-lucide="layers-2" class="w-6 h-6"></i>
+                                    </div>
+                                    <span class="text-sm font-semibold text-slate-300">Data is not available</span>
+                                    <span class="text-xs text-slate-500 max-w-sm">No Demat CNC equity delivery holdings currently recorded for this account.</span>
                                 </div>
                             </td>
                         </tr>
@@ -484,18 +672,114 @@
         </div>
     </div>
 
-    <!-- TAB 4: Signal Audit History & Interactive Drawer -->
+    <!-- TAB 3: Orders, Trades & Signal Audit History -->
     <div id="client-tab-orders" class="tab-pane hidden space-y-4">
         <div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
-            <div class="px-5 py-4 border-b border-bordercolor flex items-center justify-between">
+            <div class="px-5 py-4 border-b border-bordercolor flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div class="flex items-center space-x-2">
                     <i data-lucide="history" class="w-4 h-4 text-brand-400"></i>
-                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">TradingView Alert Execution Stream</h3>
+                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Orders &amp; Execution Stream</h3>
                 </div>
-                <span class="text-xs font-mono text-slate-400">Click any row to inspect raw payload drawer</span>
+
+                <!-- Sub-Filter Switcher -->
+                <div class="flex items-center bg-slate-950 border border-bordercolor p-1 rounded-xl gap-1">
+                    <button id="orders-view-broker-btn" onclick="switchOrdersView('broker')" 
+                            class="py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5">
+                        <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+                        <span>Live Broker Order Book ({{ client.broker_orders|length }})</span>
+                    </button>
+                    <button id="orders-view-signals-btn" onclick="switchOrdersView('signals')" 
+                            class="py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
+                        <i data-lucide="webhook" class="w-3.5 h-3.5"></i>
+                        <span>TradingView Signals ({{ client.recent_signals|length }})</span>
+                    </button>
+                </div>
             </div>
 
-            <div class="overflow-x-auto">
+            <!-- View 1: Live Broker Order Book (Direct from XTS API) -->
+            <div id="orders-table-broker-wrapper" class="overflow-x-auto">
+                <table class="w-full text-left text-xs font-mono">
+                    <thead class="bg-slate-950 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
+                        <tr>
+                            <th class="px-5 py-3">Time</th>
+                            <th class="px-4 py-3">Action</th>
+                            <th class="px-4 py-3">Symbol</th>
+                            <th class="px-3 py-3 text-right">Qty</th>
+                            <th class="px-4 py-3 text-right">Price</th>
+                            <th class="px-4 py-3">Status</th>
+                            <th class="px-4 py-3">Seg/Product</th>
+                            <th class="px-4 py-3">Order ID</th>
+                            <th class="px-5 py-3">Notes / Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-bordercolor/60">
+                        {% for ord in client.broker_orders %}
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="px-5 py-3.5 text-slate-400 whitespace-nowrap">
+                                {{ ord.order_time }}
+                            </td>
+                            <td class="px-4 py-3.5 font-bold">
+                                {% if ord.action == 'BUY' %}
+                                <span class="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">BUY</span>
+                                {% else %}
+                                <span class="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">SELL</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3.5 font-bold text-slate-100">
+                                {{ ord.symbol }}
+                            </td>
+                            <td class="px-3 py-3.5 text-right font-semibold text-slate-200">
+                                {{ ord.traded_qty }}/{{ ord.order_qty }}
+                            </td>
+                            <td class="px-4 py-3.5 text-right font-bold text-slate-100">
+                                ₹{{ ord.price|inr }}
+                            </td>
+                            <td class="px-4 py-3.5 font-bold">
+                                {% if ord.status == 'FILLED' or ord.status == 'COMPLETE' %}
+                                <span class="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">FILLED</span>
+                                {% elif ord.status == 'REJECTED' %}
+                                <span class="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">REJECTED</span>
+                                {% elif ord.status in ('OPEN', 'NEW', 'PENDING') %}
+                                <span class="text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">OPEN</span>
+                                {% elif ord.status == 'CANCELLED' %}
+                                <span class="text-slate-400 bg-slate-800 px-2 py-0.5 rounded border border-bordercolor">CANCELLED</span>
+                                {% else %}
+                                <span class="text-slate-300 bg-slate-800 px-2 py-0.5 rounded">{{ ord.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3.5 text-slate-400">
+                                <span class="bg-slate-900 border border-bordercolor px-2 py-0.5 rounded text-[11px]">{{ ord.segment }} | {{ ord.product }}</span>
+                            </td>
+                            <td class="px-4 py-3.5 text-slate-400 font-mono text-[11px]">
+                                {{ ord.app_order_id }}
+                            </td>
+                            <td class="px-5 py-3.5 text-slate-400 max-w-xs truncate text-[11px]">
+                                {% if ord.reject_reason %}
+                                <span class="text-rose-400">{{ ord.reject_reason }}</span>
+                                {% elif ord.order_ref %}
+                                <span class="text-slate-500 font-mono">{{ ord.order_ref }}</span>
+                                {% else %}
+                                <span class="text-slate-600">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="9" class="px-6 py-12 text-center text-slate-500">
+                                <div class="flex flex-col items-center justify-center space-y-2">
+                                    <i data-lucide="book-open" class="w-8 h-8 text-slate-600"></i>
+                                    <span class="text-sm font-medium">Order is not available...</span>
+                                    <span class="text-xs text-slate-600">No broker orders recorded in order book today.</span>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- View 2: TradingView Webhook Signals Log -->
+            <div id="orders-table-signals-wrapper" class="overflow-x-auto hidden">
                 <table class="w-full text-left text-xs font-mono">
                     <thead class="bg-slate-950 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
                         <tr>
@@ -706,6 +990,7 @@
         }
 
         try { localStorage.setItem('client_detail_active_tab', tabName); } catch(e) {}
+        lucide.createIcons();
     }
 
     // Restore saved tab if available
@@ -717,6 +1002,47 @@
             }
         } catch(e) {}
     });
+
+    // Sub-View Switchers: Positions & Orders
+    function switchPositionsView(mode) {
+        const openBtn = document.getElementById('pos-view-open-btn');
+        const allBtn = document.getElementById('pos-view-all-btn');
+        const openTable = document.getElementById('pos-table-open-wrapper');
+        const allTable = document.getElementById('pos-table-all-wrapper');
+
+        if (mode === 'open') {
+            openBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5";
+            allBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5";
+            openTable.classList.remove('hidden');
+            allTable.classList.add('hidden');
+        } else {
+            allBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5";
+            openBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5";
+            allTable.classList.remove('hidden');
+            openTable.classList.add('hidden');
+        }
+        lucide.createIcons();
+    }
+
+    function switchOrdersView(mode) {
+        const brokerBtn = document.getElementById('orders-view-broker-btn');
+        const signalsBtn = document.getElementById('orders-view-signals-btn');
+        const brokerTable = document.getElementById('orders-table-broker-wrapper');
+        const signalsTable = document.getElementById('orders-table-signals-wrapper');
+
+        if (mode === 'broker') {
+            brokerBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5";
+            signalsBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5";
+            brokerTable.classList.remove('hidden');
+            signalsTable.classList.add('hidden');
+        } else {
+            signalsBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5";
+            brokerBtn.className = "py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5";
+            signalsTable.classList.remove('hidden');
+            brokerTable.classList.add('hidden');
+        }
+        lucide.createIcons();
+    }
 
     // Alert Payload Switcher
     function switchDetailAlertTab(tab) {

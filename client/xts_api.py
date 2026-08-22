@@ -1210,21 +1210,152 @@ def get_positions_telemetry():
             })
 
         active_positions = [p for p in pos_list if p["quantity"] != 0]
+        closed_positions = [p for p in pos_list if p["quantity"] == 0]
 
         return {
             "is_paper_trade": False,
             "positions_count": len(active_positions),
+            "all_positions_count": len(pos_list),
             "unrealized_mtm": round(total_unrealized, 2),
             "realized_pnl": round(total_realized, 2),
             "net_mtm": round(total_unrealized + total_realized, 2),
-            "positions": active_positions
+            "positions": active_positions,
+            "closed_positions": closed_positions,
+            "all_positions": pos_list
         }
     except Exception as e:
         logger.error(f"Error fetching position telemetry: {e}")
-        return {"error": str(e), "positions": []}
+        return {"error": str(e), "positions": [], "all_positions": []}
+
+def get_holdings_telemetry():
+    """Fetches Demat CNC Equity Holdings and computes real-time valuation and P&L."""
+    if getattr(config, "PAPER_TRADE_MODE", False):
+        return {
+            "invested_value": 0.0,
+            "current_value": 0.0,
+            "overall_pnl": 0.0,
+            "overall_pnl_pct": 0.0,
+            "day_pnl": 0.0,
+            "day_pnl_pct": 0.0,
+            "holdings_count": 0,
+            "holdings": []
+        }
+
+    token = get_interactive_token()
+    if not token:
+        return {
+            "invested_value": 0.0, "current_value": 0.0, "overall_pnl": 0.0,
+            "overall_pnl_pct": 0.0, "day_pnl": 0.0, "day_pnl_pct": 0.0,
+            "holdings_count": 0, "holdings": [], "error": "Auth failed"
+        }
+
+    safe_url = get_safe_base_url()
+    url = f"{safe_url}/portfolio/holdings"
+    headers = {"authorization": token}
+
+    try:
+        resp = api_session.get(url, headers=headers, timeout=5)
+        if resp.status_code in (400, 401, 403):
+            clear_tokens()
+            token = get_interactive_token(force_refresh=True)
+            if token:
+                headers = {"authorization": token}
+                resp = api_session.get(url, headers=headers, timeout=5)
+
+        if resp.status_code != 200:
+            return {
+                "invested_value": 0.0, "current_value": 0.0, "overall_pnl": 0.0,
+                "overall_pnl_pct": 0.0, "day_pnl": 0.0, "day_pnl_pct": 0.0,
+                "holdings_count": 0, "holdings": [], "error": f"HTTP {resp.status_code}"
+            }
+
+        data = resp.json()
+        result_obj = data.get("result", {})
+        rms_holdings = result_obj.get("RMSHoldings", {})
+        
+        raw_list = []
+        if isinstance(rms_holdings, list):
+            raw_list = rms_holdings
+        elif isinstance(rms_holdings, dict):
+            raw_list = rms_holdings.get("HoldingsList", rms_holdings.get("holdingList", [])) or []
+            if not raw_list and rms_holdings:
+                raw_list = [v for v in rms_holdings.values() if isinstance(v, dict)]
+
+        batch_pairs = []
+        for h in raw_list:
+            iid = int(h.get("ExchangeInstrumentId", 0) or h.get("InstrumentId", 0) or 0)
+            seg = h.get("ExchangeSegment", "NSECM")
+            if iid:
+                batch_pairs.append((iid, seg))
+        
+        live_prices_map = get_live_prices_batch(batch_pairs) if batch_pairs else {}
+
+        holdings_list = []
+        tot_invested = 0.0
+        tot_current = 0.0
+        tot_day_pnl = 0.0
+
+        for h in raw_list:
+            sym = h.get("TradingSymbol", "")
+            isin = h.get("ISIN", "")
+            qty = int(h.get("HoldingQuantity", 0) or h.get("Quantity", 0) or 0)
+            buy_avg = float(h.get("BuyAveragePrice", 0.0) or h.get("Price", 0.0) or 0.0)
+            inst_id = int(h.get("ExchangeInstrumentId", 0) or h.get("InstrumentId", 0) or 0)
+            seg = h.get("ExchangeSegment", "NSECM")
+            
+            ltp = live_prices_map.get(inst_id)
+            if not ltp:
+                ltp = float(h.get("LastTradedPrice", 0.0) or h.get("LTP", 0.0) or buy_avg)
+            
+            close_price = float(h.get("ClosePrice", 0.0) or h.get("PreviousClose", 0.0) or ltp)
+            
+            invested = buy_avg * qty
+            current_val = ltp * qty
+            pnl = current_val - invested
+            pnl_pct = round((pnl / invested * 100), 2) if invested > 0 else 0.0
+            day_pnl = (ltp - close_price) * qty
+            
+            tot_invested += invested
+            tot_current += current_val
+            tot_day_pnl += day_pnl
+
+            holdings_list.append({
+                "symbol": sym,
+                "isin": isin,
+                "quantity": qty,
+                "buy_avg": round(buy_avg, 2),
+                "ltp": round(ltp, 2),
+                "invested": round(invested, 2),
+                "current_value": round(current_val, 2),
+                "pnl": round(pnl, 2),
+                "pnl_pct": pnl_pct,
+                "segment": seg
+            })
+
+        overall_pnl = tot_current - tot_invested
+        overall_pct = round((overall_pnl / tot_invested * 100), 2) if tot_invested > 0 else 0.0
+        day_pnl_pct = round((tot_day_pnl / tot_invested * 100), 2) if tot_invested > 0 else 0.0
+
+        return {
+            "invested_value": round(tot_invested, 2),
+            "current_value": round(tot_current, 2),
+            "overall_pnl": round(overall_pnl, 2),
+            "overall_pnl_pct": overall_pct,
+            "day_pnl": round(tot_day_pnl, 2),
+            "day_pnl_pct": day_pnl_pct,
+            "holdings_count": len(holdings_list),
+            "holdings": holdings_list
+        }
+    except Exception as e:
+        logger.error(f"Error fetching holdings telemetry: {e}")
+        return {
+            "invested_value": 0.0, "current_value": 0.0, "overall_pnl": 0.0,
+            "overall_pnl_pct": 0.0, "day_pnl": 0.0, "day_pnl_pct": 0.0,
+            "holdings_count": 0, "holdings": [], "error": str(e)
+        }
 
 def get_broker_orders():
-    """Fetches real-time broker order book."""
+    """Fetches real-time broker order book normalized into standard format."""
     token = get_interactive_token()
     if not token:
         return []
@@ -1233,7 +1364,28 @@ def get_broker_orders():
     try:
         resp = api_session.get(f"{safe_url}/orders", headers=headers, timeout=5)
         if resp.status_code == 200:
-            return resp.json().get("result", []) or []
+            raw_orders = resp.json().get("result", []) or []
+            normalized = []
+            for o in raw_orders:
+                if not isinstance(o, dict):
+                    continue
+                raw_time = o.get("OrderGeneratedDateTime", "") or o.get("OrderUpdateDateTime", "")
+                normalized.append({
+                    "app_order_id": str(o.get("AppOrderID", o.get("OrderID", ""))),
+                    "order_time": raw_time,
+                    "action": str(o.get("OrderSide", o.get("OrderTransactionType", ""))).upper(),
+                    "symbol": str(o.get("TradingSymbol", "")),
+                    "order_qty": int(o.get("OrderQuantity", 0) or 0),
+                    "traded_qty": int(o.get("CumulativeQuantity", o.get("OrderDisclosedQuantity", o.get("LeavesQuantity", 0))) or 0),
+                    "price": float(o.get("OrderPrice", o.get("OrderAverageTradedPrice", o.get("LimitPrice", 0.0))) or 0.0),
+                    "status": str(o.get("OrderStatus", "UNKNOWN")).upper(),
+                    "segment": str(o.get("ExchangeSegment", "MCXFO")),
+                    "product": str(o.get("ProductType", "NRML")),
+                    "order_type": str(o.get("OrderType", "LIMIT")),
+                    "reject_reason": str(o.get("CancelRejectReason", "")),
+                    "order_ref": str(o.get("OrderUniqueIdentifier", ""))
+                })
+            return normalized
     except Exception as e:
         logger.error(f"Error fetching broker orders: {e}")
     return []
