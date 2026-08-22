@@ -75,6 +75,7 @@ def phase_1_auth_handshake():
     md_token, md_base_url = xts_api.get_marketdata_token()
     md_ok = bool(md_token)
     record_test("Market Data Gateway (Port 3000)", md_ok, f"MD URL: {md_base_url} | Token Present: {bool(md_token)}")
+    time.sleep(0.5)
 
 # =========================================================================
 # PHASE 2: CONTRACT MASTER & EXPIRY RESOLUTION
@@ -108,6 +109,7 @@ def phase_2_contract_resolution():
             logger.error(f"  -> FAILED to resolve {sym}")
 
     record_test("Continuous Contract Resolution", all_resolved, f"Resolved {len(test_symbols)} front-month contracts with complete exchange metadata")
+    time.sleep(0.5)
 
 # =========================================================================
 # PHASE 3: REAL-TIME OHLC CANDLESTICK INGESTION
@@ -128,6 +130,7 @@ def phase_3_ohlc_ingestion():
 
     timeframes = {"5m": 300, "15m": 900, "20m": 1200}
     for tf_name, tf_sec in timeframes.items():
+        time.sleep(0.3)
         candles = xts_api.fetch_ohlc_candles(seg, inst_id, tf_sec, 150)
         c_count = len(candles) if candles else 0
         is_ok = c_count > 0
@@ -233,6 +236,7 @@ def phase_7_position_reconciliation():
         record_test("Phase 7: Positions", False, "xts_api module not loaded")
         return
 
+    time.sleep(0.5)
     pos_tel = xts_api.get_positions_telemetry()
     positions = pos_tel.get("positions", []) or pos_tel.get("all_positions", [])
     record_test("NetWise Position Book Ingestion", True, f"Ingested {len(positions)} open broker positions | Realized P&L: ₹{pos_tel.get('realized_pnl', 0.0)} | Unrealized MTM: ₹{pos_tel.get('unrealized_pnl', 0.0)}")
@@ -258,6 +262,7 @@ def phase_9_panic_squareoff_drill():
         record_test("Phase 9: Panic Square-Off", False, "xts_api module not loaded")
         return
 
+    time.sleep(0.5)
     res = xts_api.panic_square_off_all()
     record_test("Emergency Panic Square-Off Protocol", bool(res), f"Status: {res.get('status', 'OK')} | Mode: {res.get('mode', 'SIMULATED')}")
 
@@ -276,6 +281,7 @@ def phase_10_tradingview_chart_generation():
         "is_enabled": True
     })
 
+    time.sleep(0.5)
     chart_data = asyncio.run(engine.get_chart_data_async(xts_api, timeframe_override="15m", symbol_override="NATURALGAS1!"))
     candles = chart_data.get("candlestick", [])
     st_line = chart_data.get("supertrend_line", [])
