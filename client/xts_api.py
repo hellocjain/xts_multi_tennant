@@ -54,7 +54,11 @@ LAST_REFRESH_ATTEMPT = 0
 REFRESH_COOLDOWN_SECONDS = 15
 MIN_SANE_INSTRUMENT_COUNT = 500
 
-SEGMENT_MAP = {"NSECM": 1, "NSEFO": 2, "NSECD": 3, "BSECM": 11, "BSEFO": 12, "BSECD": 13, "MCXFO": 51, "NCDEX": 21}
+SEGMENT_MAP = {
+    "NSECM": 1, "NSEFO": 2, "NSECD": 3, "BSECM": 11, "BSEFO": 12, "BSECD": 13, "MCXFO": 51, "NCDEX": 21,
+    "NSE": 1, "BSE": 11, "MCX": 51, "NCD": 21,
+    1: 1, 2: 2, 3: 3, 11: 11, 12: 12, 13: 13, 51: 51, 21: 21
+}
 
 PREFIX_STRIPPER = re.compile(r'^(MCXFO|MCX|NSECD|NSEFO|NSE|BSEFO|BSECD|BSE|NCDEX|MSEI|CDS):', re.IGNORECASE)
 SUFFIX_STRIPPER = re.compile(r'(\.NS|\.BO|[1-9]!|FUT)$', re.IGNORECASE)
@@ -1145,22 +1149,39 @@ def get_positions_telemetry():
         total_realized = 0.0
 
         # Batch query all live quotes in a single network request
-        batch_pairs = [(int(p.get("ExchangeInstrumentId", 0)), p.get("ExchangeSegment", "MCXFO")) for p in positions_raw]
-        live_prices_map = get_live_prices_batch(batch_pairs)
+        batch_pairs = []
+        for p in positions_raw:
+            iid = int(p.get("ExchangeInstrumentId") or p.get("ExchangeInstrumentID") or p.get("InstrumentId") or 0)
+            seg = p.get("ExchangeSegment", "MCXFO")
+            if iid > 0:
+                batch_pairs.append((iid, seg))
+
+        live_prices_map = get_live_prices_batch(batch_pairs) if batch_pairs else {}
 
         for p in positions_raw:
-            sym = p.get("TradingSymbol", "")
-            inst_id = int(p.get("ExchangeInstrumentId", 0))
-            exch_seg = p.get("ExchangeSegment", "MCXFO")
-            qty = int(p.get("Quantity", 0))
+            sym = str(p.get("TradingSymbol") or "")
+            inst_id = int(p.get("ExchangeInstrumentId") or p.get("ExchangeInstrumentID") or p.get("InstrumentId") or 0)
+            exch_seg = str(p.get("ExchangeSegment") or "MCXFO")
+            qty = int(p.get("Quantity", 0) or 0)
             mult = float(p.get("Multiplier", 1) or 1)
             
-            buy_avg = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0))
-            sell_avg = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0))
+            buy_avg = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0) or p.get("AveragePrice", 0) or 0)
+            sell_avg = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0) or 0)
             
+            open_buy_qty = int(p.get("OpenBuyQuantity", 0) or 0)
+            open_sell_qty = int(p.get("OpenSellQuantity", 0) or 0)
+            buy_amt = float(p.get("BuyAmount", 0) or p.get("ActualBuyAmount", 0) or 0)
+            sell_amt = float(p.get("SellAmount", 0) or p.get("ActualSellAmount", 0) or 0)
+
+            # Defensive carryforward price reconstruction if broker returns 0 buy average
+            if buy_avg == 0 and open_buy_qty > 0 and buy_amt > 0:
+                buy_avg = buy_amt / (open_buy_qty * mult) if mult > 0 else (buy_amt / open_buy_qty)
+            if sell_avg == 0 and open_sell_qty > 0 and sell_amt > 0:
+                sell_avg = sell_amt / (open_sell_qty * mult) if mult > 0 else (sell_amt / open_sell_qty)
+
             ltp = live_prices_map.get(inst_id)
-            if not ltp:
-                ltp = float(p.get("LastTradedPrice", 0) or buy_avg)
+            if not ltp or ltp <= 0:
+                ltp = float(p.get("LastTradedPrice", 0) or p.get("LTP", 0) or buy_avg or sell_avg)
 
             unrealized_pnl = 0.0
             side = "FLAT"
@@ -1172,16 +1193,11 @@ def get_positions_telemetry():
                 side = "SHORT"
                 unrealized_pnl = (sell_avg - ltp) * abs(qty) * mult
             
-            realized_raw = float(p.get("RealizedMTM", 0) or 0)
+            realized_raw = float(p.get("RealizedMTM", 0) or p.get("RealizedPNL", 0) or 0)
             if realized_raw != 0:
                 realized_pnl = realized_raw
             else:
                 net_amt = float(p.get("NetAmount", 0) or 0)
-                buy_amt = float(p.get("BuyAmount", 0) or p.get("ActualBuyAmount", 0) or 0)
-                sell_amt = float(p.get("SellAmount", 0) or p.get("ActualSellAmount", 0) or 0)
-                
-                open_buy_qty = int(p.get("OpenBuyQuantity", 0) or 0)
-                open_sell_qty = int(p.get("OpenSellQuantity", 0) or 0)
                 closed_qty = min(open_buy_qty, open_sell_qty)
 
                 if closed_qty > 0 and buy_avg > 0 and sell_avg > 0:
@@ -1202,9 +1218,9 @@ def get_positions_telemetry():
                 "segment": exch_seg,
                 "side": side,
                 "quantity": qty,
-                "buy_avg": buy_avg,
-                "sell_avg": sell_avg,
-                "ltp": ltp,
+                "buy_avg": round(buy_avg, 2),
+                "sell_avg": round(sell_avg, 2),
+                "ltp": round(ltp, 2),
                 "unrealized_mtm": round(unrealized_pnl, 2),
                 "realized_pnl": round(realized_pnl, 2),
             })
@@ -1271,21 +1287,26 @@ def get_holdings_telemetry():
 
         data = resp.json()
         result_obj = data.get("result", {})
-        rms_holdings = result_obj.get("RMSHoldings", {})
         
         raw_list = []
-        if isinstance(rms_holdings, list):
-            raw_list = rms_holdings
-        elif isinstance(rms_holdings, dict):
-            raw_list = rms_holdings.get("HoldingsList", rms_holdings.get("holdingList", [])) or []
-            if not raw_list and rms_holdings:
-                raw_list = [v for v in rms_holdings.values() if isinstance(v, dict)]
+        if isinstance(result_obj, list):
+            raw_list = result_obj
+        elif isinstance(result_obj, dict):
+            rms_holdings = result_obj.get("RMSHoldings", result_obj.get("Holdings", {}))
+            if isinstance(rms_holdings, list):
+                raw_list = rms_holdings
+            elif isinstance(rms_holdings, dict):
+                raw_list = rms_holdings.get("HoldingsList", rms_holdings.get("holdingList", rms_holdings.get("HoldingList", []))) or []
+                if not raw_list and rms_holdings:
+                    raw_list = [v for v in rms_holdings.values() if isinstance(v, dict)]
 
         batch_pairs = []
         for h in raw_list:
-            iid = int(h.get("ExchangeInstrumentId", 0) or h.get("InstrumentId", 0) or 0)
+            if not isinstance(h, dict):
+                continue
+            iid = int(h.get("ExchangeInstrumentId") or h.get("ExchangeInstrumentID") or h.get("InstrumentId") or 0)
             seg = h.get("ExchangeSegment", "NSECM")
-            if iid:
+            if iid > 0:
                 batch_pairs.append((iid, seg))
         
         live_prices_map = get_live_prices_batch(batch_pairs) if batch_pairs else {}
@@ -1296,15 +1317,17 @@ def get_holdings_telemetry():
         tot_day_pnl = 0.0
 
         for h in raw_list:
-            sym = h.get("TradingSymbol", "")
-            isin = h.get("ISIN", "")
+            if not isinstance(h, dict):
+                continue
+            sym = str(h.get("TradingSymbol") or "")
+            isin = str(h.get("ISIN") or "")
             qty = int(h.get("HoldingQuantity", 0) or h.get("Quantity", 0) or 0)
             buy_avg = float(h.get("BuyAveragePrice", 0.0) or h.get("Price", 0.0) or 0.0)
-            inst_id = int(h.get("ExchangeInstrumentId", 0) or h.get("InstrumentId", 0) or 0)
-            seg = h.get("ExchangeSegment", "NSECM")
+            inst_id = int(h.get("ExchangeInstrumentId") or h.get("ExchangeInstrumentID") or h.get("InstrumentId") or 0)
+            seg = str(h.get("ExchangeSegment") or "NSECM")
             
             ltp = live_prices_map.get(inst_id)
-            if not ltp:
+            if not ltp or ltp <= 0:
                 ltp = float(h.get("LastTradedPrice", 0.0) or h.get("LTP", 0.0) or buy_avg)
             
             close_price = float(h.get("ClosePrice", 0.0) or h.get("PreviousClose", 0.0) or ltp)
@@ -1369,7 +1392,9 @@ def get_broker_orders():
             for o in raw_orders:
                 if not isinstance(o, dict):
                     continue
-                raw_time = o.get("OrderGeneratedDateTime", "") or o.get("OrderUpdateDateTime", "")
+                raw_time = str(o.get("OrderGeneratedDateTime", "") or o.get("OrderUpdateDateTime", ""))
+                status_raw = str(o.get("OrderStatus", "UNKNOWN")).upper()
+                reject_reason = str(o.get("CancelRejectReason") or o.get("OrderRejectReason") or o.get("RejectReason") or o.get("Text") or "")
                 normalized.append({
                     "app_order_id": str(o.get("AppOrderID", o.get("OrderID", ""))),
                     "order_time": raw_time,
@@ -1378,11 +1403,11 @@ def get_broker_orders():
                     "order_qty": int(o.get("OrderQuantity", 0) or 0),
                     "traded_qty": int(o.get("CumulativeQuantity", o.get("OrderDisclosedQuantity", o.get("LeavesQuantity", 0))) or 0),
                     "price": float(o.get("OrderPrice", o.get("OrderAverageTradedPrice", o.get("LimitPrice", 0.0))) or 0.0),
-                    "status": str(o.get("OrderStatus", "UNKNOWN")).upper(),
+                    "status": status_raw,
                     "segment": str(o.get("ExchangeSegment", "MCXFO")),
                     "product": str(o.get("ProductType", "NRML")),
                     "order_type": str(o.get("OrderType", "LIMIT")),
-                    "reject_reason": str(o.get("CancelRejectReason", "")),
+                    "reject_reason": reject_reason,
                     "order_ref": str(o.get("OrderUniqueIdentifier", ""))
                 })
             return normalized
@@ -1401,12 +1426,26 @@ def get_broker_trades():
         try:
             resp = api_session.get(endpoint, headers=headers, timeout=5)
             if resp.status_code == 200:
-                data = resp.json()
-                trades = data.get("result", [])
-                if isinstance(trades, list):
-                    return trades
-        except Exception:
-            pass
+                raw_trades = resp.json().get("result", []) or []
+                if isinstance(raw_trades, list):
+                    normalized_trades = []
+                    for t in raw_trades:
+                        if not isinstance(t, dict):
+                            continue
+                        normalized_trades.append({
+                            "trade_id": str(t.get("TradeID", t.get("ExecutionID", ""))),
+                            "order_id": str(t.get("AppOrderID", t.get("OrderID", ""))),
+                            "trade_time": str(t.get("TradeGeneratedDateTime", t.get("TradeExecutionTime", ""))),
+                            "symbol": str(t.get("TradingSymbol", "")),
+                            "qty": int(t.get("TradedQuantity", t.get("Quantity", 0)) or 0),
+                            "price": float(t.get("TradePrice", t.get("Price", 0.0)) or 0.0),
+                            "action": str(t.get("OrderSide", t.get("OrderTransactionType", ""))).upper(),
+                            "segment": str(t.get("ExchangeSegment", "MCXFO")),
+                            "product": str(t.get("ProductType", "NRML"))
+                        })
+                    return normalized_trades
+        except Exception as e:
+            logger.error(f"Error fetching broker trades from {endpoint}: {e}")
     return []
 
 def panic_square_off_all():

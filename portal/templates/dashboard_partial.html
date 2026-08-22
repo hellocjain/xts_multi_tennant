@@ -217,8 +217,13 @@
                 {% endif %}
             </div>
             {% else %}
-            <div class="bg-slate-950/40 border border-dashed border-bordercolor/60 rounded-xl py-2 px-3 text-xs text-slate-500 font-mono">
-                No active open positions (Flat)
+            <div class="bg-slate-950/40 border border-dashed border-bordercolor/60 rounded-xl py-2 px-3 text-xs text-slate-500 font-mono flex items-center justify-between">
+                <span>No active open positions (Flat)</span>
+                {% if c.all_positions_count and c.all_positions_count > 0 %}
+                <span class="text-[11px] text-slate-400 font-sans bg-slate-900 px-2 py-0.5 rounded border border-bordercolor">
+                    {{ c.all_positions_count }} day scrip{{ 's' if c.all_positions_count > 1 else '' }} settled
+                </span>
+                {% endif %}
             </div>
             {% endif %}
         </div>
