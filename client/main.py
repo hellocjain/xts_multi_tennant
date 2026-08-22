@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import uuid
 import anyio
+import re
 
 import config
 import xts_api
@@ -260,9 +261,33 @@ app = FastAPI(title="XTS Client Execution Gateway", lifespan=lifespan)
 
 MAX_WEBHOOK_BODY_BYTES = getattr(config, "MAX_WEBHOOK_BODY_BYTES", 10_000)
 
-def is_duplicate_signal(action: str, symbol: str, quantity: int, price: float) -> bool:
+def generate_order_ref(data: dict, action: str, symbol: str, quantity: int, price: float, now: float) -> str:
+    # 1. Check if TradingView payload sent explicit order/alert id
+    explicit_id = str(data.get("order_id") or data.get("alert_id") or data.get("order_ref") or "").strip()
+    if explicit_id:
+        clean_id = re.sub(r'[^a-zA-Z0-9]', '', explicit_id)[:14]
+        if clean_id:
+            return f"TV_{clean_id}"
+
+    # 2. Check if TradingView payload sent bar time / timestamp
+    bar_time = str(data.get("time") or data.get("timenow") or data.get("bar_time") or data.get("timestamp") or "").strip()
+    if bar_time:
+        sig_raw = f"{action}_{symbol}_{quantity}_{price:.4f}_{bar_time}"
+    else:
+        # Use a 5-second bucket so webhook re-transmissions within dedup window yield identical ref
+        bucket = int(now // 5) * 5
+        sig_raw = f"{action}_{symbol}_{quantity}_{price:.4f}_{bucket}"
+
+    sig_hash_id = hashlib.md5(sig_raw.encode()).hexdigest()[:14]
+    return f"TVBot_{sig_hash_id}"
+
+def is_duplicate_signal(action: str, symbol: str, quantity: int, price: float, data: dict = None) -> bool:
     now = time.time()
-    sig_hash = hashlib.md5(f"{action}_{symbol}_{quantity}".encode()).hexdigest()
+    explicit_id = str(data.get("order_id") or data.get("alert_id") or data.get("order_ref") or "").strip() if data else ""
+    if explicit_id:
+        sig_hash = hashlib.md5(f"id_{explicit_id}".encode()).hexdigest()
+    else:
+        sig_hash = hashlib.md5(f"{action}_{symbol}_{quantity}_{price:.4f}".encode()).hexdigest()
     window = getattr(config, "DEDUP_WINDOW_SECONDS", 3.0)
 
     try:
@@ -441,13 +466,12 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     if price < 0:
         return JSONResponse(status_code=422, content={"status": "error", "message": "Price cannot be negative"})
 
-    is_dup = await anyio.to_thread.run_sync(is_duplicate_signal, action, symbol, quantity, price)
+    is_dup = await anyio.to_thread.run_sync(is_duplicate_signal, action, symbol, quantity, price, data)
     if is_dup:
         logger.warning(f"DEDUP SHIELD: Duplicate signal for {action} {symbol} suppressed.")
         return JSONResponse(status_code=200, content={"status": "warning", "message": "Duplicate signal suppressed"})
 
-    sig_hash_id = hashlib.md5(f"{action}_{symbol}_{quantity}_{price}_{int(now)}".encode()).hexdigest()[:14]
-    order_ref = f"TVBot_{sig_hash_id}"
+    order_ref = generate_order_ref(data, action, symbol, quantity, price, now)
     sig_id = str(uuid.uuid4())
 
     logger.info(f"Signal Approved -> Action: {action} | Symbol: {symbol} | TV Qty: {quantity} | TV Price: {price} | Ref: {order_ref}")

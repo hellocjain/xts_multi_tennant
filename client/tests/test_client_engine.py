@@ -31,6 +31,17 @@ db_init = client_main.db_init
 
 @pytest.fixture(autouse=True)
 def setup_db():
+    import datetime
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    today = datetime.datetime.now(IST).date()
+    xts_api.CACHE_DATE = today
+    xts_api.FUT_MASTER = {
+        "CRUDEOIL": [(today + datetime.timedelta(days=30), 25001, "MCXFO", "CRUDEOIL24AUGFUT", 1.0, 100, 10000)],
+        "GOLD": [(today + datetime.timedelta(days=30), 25002, "MCXFO", "GOLD24AUGFUT", 1.0, 100, 10000)],
+    }
+    xts_api.CASH_MASTER = {
+        "RELIANCE": [(datetime.date.max, 2885, "NSECM", "RELIANCE EQ", 0.05, 1, 100000)],
+    }
     db_init()
     yield
 
@@ -237,3 +248,20 @@ def test_broker_trades_endpoint(monkeypatch):
     assert len(trades) == 1
     assert trades[0]["trade_id"] == "TR_101"
     assert "/orders/trades" in queried_urls[0]
+
+def test_deterministic_order_ref():
+    # 1. Explicit order_id
+    payload_explicit = {"order_id": "ORD_789123", "action": "BUY", "symbol": "CRUDEOIL", "quantity": 1, "price": 6500.0}
+    ref1 = client_main.generate_order_ref(payload_explicit, "BUY", "CRUDEOIL", 1, 6500.0, 1700000000.0)
+    assert ref1 == "TV_ORD789123"
+
+    # 2. Bar time payload
+    payload_bar = {"time": "2026-08-22T08:00:00", "action": "BUY", "symbol": "CRUDEOIL", "quantity": 1, "price": 6500.0}
+    ref2_a = client_main.generate_order_ref(payload_bar, "BUY", "CRUDEOIL", 1, 6500.0, 1700000000.0)
+    ref2_b = client_main.generate_order_ref(payload_bar, "BUY", "CRUDEOIL", 1, 6500.0, 1700000002.5)
+    assert ref2_a == ref2_b # Same bar time produces identical order_ref across different seconds
+
+    # 3. Retries within 5s bucket produce identical ref
+    ref3_a = client_main.generate_order_ref({}, "SELL", "GOLD", 1, 75000.0, 1700000001.0)
+    ref3_b = client_main.generate_order_ref({}, "SELL", "GOLD", 1, 75000.0, 1700000003.0)
+    assert ref3_a == ref3_b
