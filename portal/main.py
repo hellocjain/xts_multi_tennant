@@ -421,9 +421,11 @@ async def add_client_action(
                   slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, now))
 
     docker_manager.provision_client_container(clean_id)
-    caddy_manager.sync_caddy_config()
+    caddy_ok = caddy_manager.sync_caddy_config()
 
     database.record_audit(user["username"], "PROVISION_CLIENT", {"name": name, "paper_mode": bool(paper_trade_mode)}, clean_id)
+    if not caddy_ok:
+        return RedirectResponse(url="/admin/dashboard?warn=Client+provisioned+but+Caddy+ingress+reload+failed.+Check+logs.", status_code=303)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
 @app.get("/admin/clients/{tenant_id}", response_class=HTMLResponse)
@@ -553,8 +555,10 @@ async def pause_client(tenant_id: str, user: dict = Depends(require_auth)):
         with conn:
             conn.execute("UPDATE tenants SET status='PAUSED', updated_at=? WHERE id=?", (time.time(), tenant_id))
     docker_manager.stop_client_container(tenant_id)
-    caddy_manager.sync_caddy_config()
+    caddy_ok = caddy_manager.sync_caddy_config()
     database.record_audit(user["username"], "PAUSE_CLIENT", {}, tenant_id)
+    if not caddy_ok:
+        return RedirectResponse(url="/admin/dashboard?warn=Client+paused+but+Caddy+ingress+reload+failed.", status_code=303)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
 @app.api_route("/admin/clients/{tenant_id}/resume", methods=["GET", "POST"])
@@ -563,8 +567,10 @@ async def resume_client(tenant_id: str, user: dict = Depends(require_auth)):
         with conn:
             conn.execute("UPDATE tenants SET status='ACTIVE', updated_at=? WHERE id=?", (time.time(), tenant_id))
     docker_manager.restart_client_container(tenant_id)
-    caddy_manager.sync_caddy_config()
+    caddy_ok = caddy_manager.sync_caddy_config()
     database.record_audit(user["username"], "RESUME_CLIENT", {}, tenant_id)
+    if not caddy_ok:
+        return RedirectResponse(url="/admin/dashboard?warn=Client+resumed+but+Caddy+ingress+reload+failed.", status_code=303)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
 @app.api_route("/admin/clients/{tenant_id}/restart", methods=["GET", "POST"])
@@ -579,8 +585,10 @@ async def delete_client(tenant_id: str, user: dict = Depends(require_auth)):
     with closing(database.get_db_connection()) as conn:
         with conn:
             conn.execute("DELETE FROM tenants WHERE id=?", (tenant_id,))
-    caddy_manager.sync_caddy_config()
+    caddy_ok = caddy_manager.sync_caddy_config()
     database.record_audit(user["username"], "DELETE_CLIENT", {}, tenant_id)
+    if not caddy_ok:
+        return RedirectResponse(url="/admin/dashboard?warn=Client+deleted+but+Caddy+ingress+reload+failed.", status_code=303)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
 # =====================================================================

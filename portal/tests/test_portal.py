@@ -281,3 +281,15 @@ def test_telemetry_broker_reject_reason_extraction(tmp_path, monkeypatch):
     target = next(s for s in signals if s["id"] == "sig_1")
     assert "[e-order-0008] Tick size invalid for exchange segment" in target["error_message"]
 
+def test_caddy_sync_failure_propagation(monkeypatch):
+    # If Caddy reload fails, sync_caddy_config returns False
+    monkeypatch.setattr(caddy_manager, "get_caddy_admin_socket", lambda: "/tmp/nonexistent_caddy.sock")
+    # In absence of socket and standalone mode, writes config and returns True
+    res = caddy_manager.sync_caddy_config()
+    assert res is True
+
+    # If write fails (e.g. permission error), returns False
+    monkeypatch.setattr(caddy_manager, "get_caddy_config_path", lambda: "/nonexistent_dir/caddy/Caddyfile")
+    res_fail = caddy_manager.sync_caddy_config()
+    assert res_fail is False
+
