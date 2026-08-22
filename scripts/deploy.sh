@@ -29,14 +29,16 @@ logger = logging.getLogger("deploy")
 with database.get_db_connection() as conn:
     tenants = [dict(r) for r in conn.execute("SELECT id, name, status FROM tenants WHERE status=\"ACTIVE\"").fetchall()]
 
-print(f"Found {len(tenants)} active tenants to sync.")
+print("Found " + str(len(tenants)) + " active tenants to sync.")
 for t in tenants:
     t_id = t["id"]
+    t_name = t["name"]
     res = docker_manager.provision_client_container(t_id)
-    print(f"  • Tenant {t_id} ({t[\"name\"]}): {res.get(\"status\")}")
+    res_st = str(res.get("status"))
+    print("  • Tenant " + t_id + " (" + t_name + "): " + res_st)
 
 caddy_ok = caddy_manager.sync_caddy_config()
-print(f"Caddy Ingress Sync: {caddy_ok}")
+print("Caddy Ingress Sync: " + str(caddy_ok))
 '
 
 echo "✅ [DEPLOY] Deployment completed successfully!"
