@@ -1197,6 +1197,18 @@ async def get_supertrend_chart_data(
 
     cfg_tf = timeframe or matched_tf or (strat_rows[0]["timeframe"] if strat_rows else (st_row["timeframe"] if st_row and st_row["timeframe"] else "5m"))
 
+    if not cfg_sym:
+        return {
+            "symbol": "",
+            "timeframe": cfg_tf or "5m",
+            "status": "UNCONFIGURED",
+            "candlestick": [],
+            "supertrend_line": [],
+            "upper_band": [],
+            "lower_band": [],
+            "markers": []
+        }
+
     port = docker_manager.get_tenant_port(tenant_id)
     url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/candles"
     url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/candles"
