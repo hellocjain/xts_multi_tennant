@@ -952,9 +952,16 @@ async def save_supertrend_config(
 async def get_supertrend_chart_data(
     tenant_id: str,
     timeframe: Optional[str] = None,
+    symbol: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
     """Proxies candlestick and SuperTrend series data for TradingView Lightweight Charts v4."""
+    with closing(database.get_db_connection()) as conn:
+        st_row = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE tenant_id=?", (tenant_id,)).fetchone()
+
+    cfg_sym = symbol or (st_row["symbol"] if st_row and st_row["symbol"] else "")
+    cfg_tf = timeframe or (st_row["timeframe"] if st_row and st_row["timeframe"] else "5m")
+
     port = docker_manager.get_tenant_port(tenant_id)
     url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/candles"
     url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/candles"
@@ -965,19 +972,23 @@ async def get_supertrend_chart_data(
     if internal_token:
         headers["X-Internal-Token"] = internal_token
 
-    params = {"timeframe": timeframe} if timeframe else {}
+    params = {}
+    if cfg_tf:
+        params["timeframe"] = cfg_tf
+    if cfg_sym:
+        params["symbol"] = cfg_sym
 
     async with httpx.AsyncClient() as client:
         for target_url in [url_local, url_caddy, url_docker]:
             try:
-                resp = await client.get(target_url, headers=headers, params=params, timeout=4.0)
+                resp = await client.get(target_url, headers=headers, params=params, timeout=6.0)
                 if resp.status_code == 200:
                     return resp.json()
             except Exception:
                 pass
 
     return {
-        "symbol": "",
+        "symbol": cfg_sym,
         "status": "UNAVAILABLE",
         "candlestick": [],
         "supertrend_line": [],

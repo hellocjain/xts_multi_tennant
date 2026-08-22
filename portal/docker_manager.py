@@ -80,6 +80,21 @@ def write_client_config(tenant_id: str):
             "DISCORD_WEBHOOK_URL": str(risk_dict.get("discord_webhook_url") or "").strip(),
         }
 
+        st_row = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if st_row:
+            st_dict = dict(st_row)
+            config_payload["SUPERTREND_CONFIG"] = {
+                "is_enabled": bool(st_dict.get("is_enabled")),
+                "symbol": str(st_dict.get("symbol") or "").strip(),
+                "exchange_segment": str(st_dict.get("exchange_segment") or "").strip(),
+                "timeframe": str(st_dict.get("timeframe") or "5m").strip(),
+                "quantity": int(st_dict.get("quantity") or 1),
+                "product_type": str(st_dict.get("product_type") or "NRML").strip(),
+                "atr_period": int(st_dict.get("atr_period") or 10),
+                "multiplier": float(st_dict.get("multiplier") or 3.0),
+                "execution_mode": str(st_dict.get("execution_mode") or "LIVE").strip(),
+            }
+
     tenant_dir = os.path.join(get_client_data_root(), tenant_id)
     os.makedirs(tenant_dir, exist_ok=True)
     config_file = os.path.join(tenant_dir, "config.json")

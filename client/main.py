@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager, closing
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, List, Dict, Any
 import logging
 import time
 import hashlib
@@ -342,6 +343,12 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=process_recovery, args=(unfinished,), daemon=True).start()
     
     db_prune_old()
+    
+    st_cfg = getattr(config, "SUPERTREND_CONFIG", None)
+    if st_cfg and isinstance(st_cfg, dict):
+        supertrend_engine.update_config(st_cfg)
+        logger.info(f"Loaded initial SuperTrend configuration for {st_cfg.get('symbol')} ({st_cfg.get('timeframe')})")
+
     logger.info(f"--- CLIENT READY [{getattr(config, 'CLIENT_ID', 'UNKNOWN')}]: SESSIONS ACTIVE ---")
     st_task = asyncio.create_task(supertrend_engine.run_loop(xts_api, sys.modules[__name__]))
     yield
@@ -524,7 +531,7 @@ async def get_supertrend_status(request: Request):
     return supertrend_engine.get_telemetry()
 
 @app.get("/internal/supertrend/candles")
-async def get_supertrend_candles(request: Request):
+async def get_supertrend_candles(request: Request, timeframe: Optional[str] = None, symbol: Optional[str] = None):
     """Returns candlestick and indicator series for TradingView Lightweight Charts."""
     internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
     if internal_auth_token:
@@ -532,7 +539,7 @@ async def get_supertrend_candles(request: Request):
         if not hmac.compare_digest(req_token, internal_auth_token):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
-    return supertrend_engine.get_chart_data()
+    return await supertrend_engine.get_chart_data_async(xts_api, timeframe_override=timeframe, symbol_override=symbol)
 
 @app.post("/internal/supertrend/evaluate-now")
 async def evaluate_supertrend_now(request: Request):

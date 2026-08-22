@@ -328,7 +328,7 @@ class SuperTrendEngine:
         }
 
     def get_chart_data(self) -> dict:
-        """Returns JSON payload formatted specifically for TradingView Lightweight Charts v4."""
+        """Returns JSON payload formatted specifically for TradingView Lightweight Charts v4 from cache."""
         candles_out = []
         st_line_out = []
         ub_line_out = []
@@ -372,6 +372,88 @@ class SuperTrendEngine:
             "markers": self.recent_trade_markers[-30:],
             "next_poll_seconds": self.next_poll_seconds
         }
+
+    async def get_chart_data_async(self, xts_api_module, timeframe_override: Optional[str] = None, symbol_override: Optional[str] = None) -> dict:
+        """
+        Returns JSON payload formatted for TradingView Lightweight Charts.
+        Fetches live historical OHLC candles on-demand so chart renders instantly on page load
+        and timeframe switches, even before first background poll cycle or when disabled.
+        """
+        target_sym = str(symbol_override or self.symbol).strip().upper()
+        target_tf = str(timeframe_override or self.timeframe).strip().lower()
+        tf_seconds = parse_timeframe_seconds(target_tf)
+
+        # If active timeframe matches and we already have cached candles for this symbol and no override was requested
+        if self.cached_candles and target_sym == self.symbol and target_tf == self.timeframe and not symbol_override and not timeframe_override:
+            return self.get_chart_data()
+
+        if target_sym and xts_api_module:
+            try:
+                inst = xts_api_module.resolve_contract(target_sym)
+                if inst and inst.get("inst_id"):
+                    inst_id = inst["inst_id"]
+                    exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
+                    raw_candles = await asyncio.to_thread(
+                        xts_api_module.fetch_ohlc_candles,
+                        exch_seg,
+                        inst_id,
+                        tf_seconds,
+                        150
+                    )
+                    if raw_candles:
+                        st_res = calculate_supertrend(raw_candles, self.atr_period, self.multiplier)
+                        if not st_res.get("error"):
+                            candles_series = st_res.get("candle_series", [])
+                            if target_tf == self.timeframe and target_sym == self.symbol:
+                                self.cached_candles = candles_series
+                                self.last_close = st_res["last_close"]
+                                self.last_atr = st_res["atr"]
+                                self.upper_band = st_res["upper_band"]
+                                self.lower_band = st_res["lower_band"]
+                                self.active_trend = st_res["trend_name"]
+
+                            candles_out = []
+                            st_line_out = []
+                            ub_line_out = []
+                            lb_line_out = []
+                            for c in candles_series:
+                                ts = c["time"]
+                                candles_out.append({
+                                    "time": ts,
+                                    "open": c["open"],
+                                    "high": c["high"],
+                                    "low": c["low"],
+                                    "close": c["close"],
+                                })
+                                if c.get("supertrend") and c["supertrend"] > 0:
+                                    color = "#10b981" if c.get("trend") == 1 else "#f43f5e"
+                                    st_line_out.append({"time": ts, "value": c["supertrend"], "color": color})
+                                if c.get("upper_band") and c["upper_band"] > 0:
+                                    ub_line_out.append({"time": ts, "value": c["upper_band"]})
+                                if c.get("lower_band") and c["lower_band"] > 0:
+                                    lb_line_out.append({"time": ts, "value": c["lower_band"]})
+
+                            return {
+                                "symbol": target_sym,
+                                "exchange_segment": exch_seg,
+                                "timeframe": target_tf,
+                                "timeframe_seconds": tf_seconds,
+                                "execution_mode": self.execution_mode,
+                                "status": self.status,
+                                "current_trend": st_res["trend_name"],
+                                "last_close": st_res["last_close"],
+                                "atr": st_res["atr"],
+                                "candlestick": candles_out,
+                                "supertrend_line": st_line_out,
+                                "upper_band": ub_line_out,
+                                "lower_band": lb_line_out,
+                                "markers": self.recent_trade_markers[-30:],
+                                "next_poll_seconds": self.next_poll_seconds
+                            }
+            except Exception as e:
+                logger.error(f"Error fetching on-demand chart data for {target_sym} ({target_tf}): {e}")
+
+        return self.get_chart_data()
 
     async def evaluate_cycle_diagnostic(self, xts_api_module) -> dict:
         """
@@ -418,12 +500,16 @@ class SuperTrendEngine:
         elif flip_dir == "BEARISH":
             proposed_action = "SELL"
 
+        last_candle = last_5[-1] if last_5 else None
+
         return {
             "status": "OK",
             "symbol": sym,
             "resolved_desc": inst.get("desc"),
             "inst_id": inst_id,
+            "instrument_id": inst_id,
             "exch_seg": exch_seg,
+            "exchange_segment": exch_seg,
             "timeframe": self.timeframe,
             "timeframe_seconds": tf_seconds,
             "execution_mode": self.execution_mode,
@@ -436,13 +522,18 @@ class SuperTrendEngine:
             "upper_band": st_res["upper_band"],
             "lower_band": st_res["lower_band"],
             "supertrend": st_res["supertrend"],
+            "active_supertrend_val": st_res["supertrend"],
             "current_trend": st_res["trend_name"],
             "trend": st_res["trend_name"],
             "prev_trend": "BULLISH" if st_res["prev_trend"] == 1 else ("BEARISH" if st_res["prev_trend"] == -1 else "INITIALIZING"),
             "is_flip": st_res["is_flip"],
+            "flipped": st_res["is_flip"],
             "flip_direction": flip_dir,
             "current_strategy_position": self.strategy_position,
+            "strategy_position": self.strategy_position,
             "proposed_action": proposed_action,
+            "action_taken": "DIAGNOSTIC_ONLY",
+            "last_candle": last_candle,
             "last_5_candles": last_5,
             "benchmarks": {
                 "fetch_ms": fetch_ms,
