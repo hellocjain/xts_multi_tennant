@@ -120,10 +120,15 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
     url_docker = f"http://xts_client_{t_id}:8000/internal/telemetry"
     url_local = f"http://127.0.0.1:{port}/internal/telemetry"
 
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
     data = None
     for target_url in [url_local, url_caddy, url_docker]:
         try:
-            resp = await client_session.get(target_url, timeout=1.5)
+            resp = await client_session.get(target_url, headers=headers, timeout=1.5)
             if resp.status_code == 200:
                 data = resp.json()
                 break

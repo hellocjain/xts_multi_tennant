@@ -341,8 +341,14 @@ async def health():
     }
 
 @app.get("/internal/telemetry")
-async def telemetry():
-    """Consolidated telemetry endpoint for Admin Portal polling."""
+async def telemetry(request: Request):
+    """Consolidated telemetry endpoint for Admin Portal polling (Internal Network Only)."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
     health_data = await health()
     pos_data = await anyio.to_thread.run_sync(xts_api.get_positions_telemetry)
     holdings_data = await anyio.to_thread.run_sync(xts_api.get_holdings_telemetry)
