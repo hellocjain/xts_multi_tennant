@@ -205,3 +205,35 @@ def test_order_status_classification():
     # Verify that Replaced, PendingNew, PendingReplace are all treated as non-terminal (not re-executed)
     for st in ["Replaced", "PendingNew", "PendingReplace", "PartiallyFilled", "New", "Filled"]:
         assert st.upper().replace("_", "").replace(" ", "") in non_terminal
+
+def test_broker_trades_endpoint(monkeypatch):
+    class MockResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "type": "success",
+                "result": [
+                    {
+                        "TradeID": "TR_101",
+                        "AppOrderID": "ORD_202",
+                        "TradingSymbol": "CRUDEOIL24AUGFUT",
+                        "TradedQuantity": 100,
+                        "TradePrice": 6500.0,
+                        "OrderSide": "BUY",
+                        "ExchangeSegment": "MCXFO"
+                    }
+                ]
+            }
+    
+    queried_urls = []
+    def mock_get(url, headers=None, timeout=None):
+        queried_urls.append(url)
+        return MockResponse()
+    
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda: "mock_token")
+    monkeypatch.setattr(xts_api.api_session, "get", mock_get)
+    
+    trades = xts_api.get_broker_trades()
+    assert len(trades) == 1
+    assert trades[0]["trade_id"] == "TR_101"
+    assert "/orders/trades" in queried_urls[0]

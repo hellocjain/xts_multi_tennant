@@ -1440,7 +1440,7 @@ def get_broker_trades():
         return []
     safe_url = get_safe_base_url()
     headers = {"authorization": token}
-    for endpoint in [f"{safe_url}/reports/trades", f"{safe_url}/trades"]:
+    for endpoint in [f"{safe_url}/orders/trades", f"{safe_url}/trades", f"{safe_url}/reports/trades"]:
         try:
             resp = api_session.get(endpoint, headers=headers, timeout=5)
             if resp.status_code == 200:
