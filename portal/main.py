@@ -638,6 +638,53 @@ async def restart_client(tenant_id: str, user: dict = Depends(require_auth)):
     database.record_audit(user["username"], "RESTART_CONTAINER", {}, tenant_id)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
+@app.api_route("/admin/clients/{tenant_id}/refresh-master", methods=["GET", "POST"])
+async def refresh_client_master(tenant_id: str, request: Request, user: dict = Depends(require_auth)):
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/master/refresh"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/master/refresh"
+    url_local = f"http://127.0.0.1:{port}/internal/master/refresh"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    data = None
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, timeout=12.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    break
+            except Exception:
+                pass
+
+    database.record_audit(user["username"], "REFRESH_MASTER_CACHE", {"result": data}, tenant_id)
+
+    # If requested via HTMX, return a fresh status badge
+    if request.headers.get("HX-Request"):
+        if data and data.get("status") == "success":
+            fut_c = data.get("futures_contracts", 0)
+            cash_c = data.get("cash_contracts", 0)
+            date_str = data.get("cached_date", "Today")
+            return HTMLResponse(
+                f"""<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    <span>Synced ({date_str} | {fut_c + cash_c} contracts)</span>
+                </span>"""
+            )
+        else:
+            return HTMLResponse(
+                f"""<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                    <span>Sync Failed</span>
+                </span>"""
+            )
+
+    return RedirectResponse(url=f"/admin/clients/{tenant_id}", status_code=303)
+
 @app.post("/admin/clients/{tenant_id}/delete")
 async def delete_client(tenant_id: str, user: dict = Depends(require_auth)):
     docker_manager.remove_client_container(tenant_id)

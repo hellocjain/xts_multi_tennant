@@ -63,6 +63,20 @@
                 <span class="bg-slate-900 px-2.5 py-1 rounded-md border border-bordercolor">
                     Docker: <span class="text-slate-300">{{ client.docker_status }}</span>
                 </span>
+                
+                <!-- Master Cache Sync Pill & Trigger -->
+                <div id="master-sync-badge-{{ client.id }}" class="inline-flex items-center">
+                    <button type="button" 
+                        hx-post="/admin/clients/{{ client.id }}/refresh-master" 
+                        hx-target="#master-sync-badge-{{ client.id }}"
+                        hx-indicator="#sync-spinner-{{ client.id }}"
+                        class="bg-slate-900 hover:bg-slate-800 text-slate-300 px-2.5 py-1 rounded-md border border-bordercolor text-xs font-mono transition flex items-center gap-1.5 cursor-pointer" 
+                        title="Click to force refresh contract master cache from XTS broker">
+                        <i data-lucide="database" class="w-3.5 h-3.5 text-brand-400"></i>
+                        <span>Sync Master</span>
+                        <span id="sync-spinner-{{ client.id }}" class="htmx-indicator animate-spin text-[10px]">⏳</span>
+                    </button>
+                </div>
             </div>
         </div>
 

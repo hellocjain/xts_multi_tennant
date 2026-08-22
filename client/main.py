@@ -391,11 +391,16 @@ def is_duplicate_signal(action: str, symbol: str, quantity: int, price: float, d
 async def health():
     unfinished = await anyio.to_thread.run_sync(db_fetch_unfinished)
     notional_state = await anyio.to_thread.run_sync(xts_api.get_daily_notional_state)
+    fut_contracts = sum(len(contracts) for contracts in xts_api.FUT_MASTER.values())
+    cash_contracts = sum(len(contracts) for contracts in xts_api.CASH_MASTER.values())
     return {
         "client_id": getattr(config, "CLIENT_ID", ""),
         "cache_healthy": xts_api.cache_is_healthy(),
+        "cache_date": str(xts_api.CACHE_DATE) if xts_api.CACHE_DATE else "N/A",
         "futures_loaded": len(xts_api.FUT_MASTER),
+        "futures_contracts": fut_contracts,
         "cash_loaded": len(xts_api.CASH_MASTER),
+        "cash_contracts": cash_contracts,
         "interactive_token_active": bool(xts_api.INTERACTIVE_TOKEN),
         "market_data_token_active": bool(xts_api.MARKET_DATA_TOKEN),
         "auth_error": xts_api.get_last_auth_error(),
@@ -404,6 +409,30 @@ async def health():
         "notional_today": notional_state.get("notional", 0.0),
         "notional_cap": notional_state.get("cap", 0.0),
         "notional_remaining": notional_state.get("remaining", 0.0),
+    }
+
+@app.post("/internal/master/refresh")
+async def refresh_master(request: Request):
+    """Manually forces a refresh of the Symphony XTS instrument master cache."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    ok = await anyio.to_thread.run_sync(xts_api.refresh_master_cache, True)
+    fut_contracts = sum(len(contracts) for contracts in xts_api.FUT_MASTER.values())
+    cash_contracts = sum(len(contracts) for contracts in xts_api.CASH_MASTER.values())
+    
+    return {
+        "status": "success" if ok else "error",
+        "cache_healthy": ok,
+        "cached_date": str(xts_api.CACHE_DATE) if xts_api.CACHE_DATE else "N/A",
+        "futures_symbols": len(xts_api.FUT_MASTER),
+        "futures_contracts": fut_contracts,
+        "cash_symbols": len(xts_api.CASH_MASTER),
+        "cash_contracts": cash_contracts,
+        "message": "Master cache refreshed successfully" if ok else "Failed to download master cache from broker"
     }
 
 @app.get("/internal/telemetry")

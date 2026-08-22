@@ -476,3 +476,18 @@ def test_telegram_discord_execution_notifications(monkeypatch):
     assert "e-order-0008" in tg_rej["json"]["text"]
     assert "Margin insufficient for order" in tg_rej["json"]["text"]
 
+def test_internal_master_refresh_endpoint(monkeypatch):
+    client = TestClient(app)
+    
+    # 1. Mock refresh_master_cache returning True
+    monkeypatch.setattr(xts_api, "refresh_master_cache", lambda force=False: True)
+    
+    res = client.post("/internal/master/refresh")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert data["cache_healthy"] is True
+    assert data["futures_symbols"] >= 1
+    assert "Master cache refreshed successfully" in data["message"]
+
+

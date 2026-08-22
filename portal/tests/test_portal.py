@@ -430,3 +430,40 @@ async def test_drawdown_circuit_breaker_auto_kill_switch(monkeypatch):
         assert details["net_mtm"] == -30000.0
         assert details["max_daily_loss_inr"] == 25000.0
 
+def test_admin_master_cache_manual_sync(monkeypatch):
+    import httpx
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('admin_sync', 'admin_sync', 'hash', 1, 1000)")
+            conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('sync_client', 'Sync Client', 'ACTIVE', 0, 0)")
+    
+    token = security.create_session("admin_sync", "testclient", "testclient")
+    client = TestClient(app, cookies={"admin_session": token})
+
+    class MockResp:
+        status_code = 200
+        def json(self):
+            return {
+                "status": "success",
+                "cache_healthy": True,
+                "cached_date": "2026-08-22",
+                "futures_contracts": 12,
+                "cash_contracts": 85
+            }
+
+    async def mock_post(self, url, **kwargs):
+        return MockResp()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    # 1. Standard POST request redirects to detail page
+    res_redirect = client.post("/admin/clients/sync_client/refresh-master", follow_redirects=False)
+    assert res_redirect.status_code in (303, 307)
+    assert "/admin/clients/sync_client" in res_redirect.headers["Location"]
+
+    # 2. HTMX request returns HTML status badge
+    res_htmx = client.post("/admin/clients/sync_client/refresh-master", headers={"HX-Request": "true"})
+    assert res_htmx.status_code == 200
+    assert "Synced (2026-08-22 | 97 contracts)" in res_htmx.text
+
+
