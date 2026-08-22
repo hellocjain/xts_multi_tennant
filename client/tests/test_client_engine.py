@@ -59,6 +59,10 @@ def test_tick_size_quantization():
     assert xts_api.apply_tick_size(6500.04, 0.05, "SELL") == 6500.00
     assert xts_api.apply_tick_size(100.8, 1.0, "SELL") == 100.0
 
+    # Currency CDS 4-decimal precision tests
+    assert xts_api.apply_tick_size(83.2501, 0.0025, "BUY") == 83.2525
+    assert xts_api.apply_tick_size(83.2524, 0.0025, "SELL") == 83.2500
+
 def test_daily_notional_tracking():
     # Initial state
     state = xts_api.get_daily_notional_state()

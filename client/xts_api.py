@@ -368,7 +368,7 @@ def _sane_numeric(value, minimum, maximum, field_name, line_preview):
 def apply_tick_size(price, tick_size, action="BUY"):
     if tick_size <= 0:
         tick_size = 0.05
-    p = Decimal(str(round(price, 4)))
+    p = Decimal(str(round(float(price), 6)))
     t = Decimal(str(tick_size))
     if action == "BUY":
         ticks = (p / t).quantize(Decimal('1'), rounding=ROUND_CEILING)
@@ -380,7 +380,8 @@ def apply_tick_size(price, tick_size, action="BUY"):
     if tick_size >= 1.0:
         return float(valid_price.quantize(Decimal('1')))
     else:
-        return float(valid_price)
+        dec_places = len(str(tick_size).split('.')[1]) if '.' in str(tick_size) else 2
+        return round(float(valid_price), dec_places)
 
 def refresh_master_cache(force=False):
     global FUT_MASTER, CASH_MASTER, FUT_NORM_MAP, CASH_NORM_MAP, CACHE_DATE, LAST_REFRESH_ATTEMPT
