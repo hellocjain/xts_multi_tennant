@@ -423,6 +423,10 @@ async def add_client_action(
     max_lots_limit: int = Form(100),
     max_order_value_inr: float = Form(5000000.0),
     daily_notional_cap_inr: float = Form(10000000.0),
+    max_daily_loss_inr: float = Form(50000.0),
+    telegram_bot_token: str = Form(""),
+    telegram_chat_id: str = Form(""),
+    discord_webhook_url: str = Form(""),
     slippage_buffer_pct: float = Form(0.005),
     min_days_before_expiry_mcx: int = Form(3),
     paper_trade_mode: int = Form(1),
@@ -462,9 +466,11 @@ async def add_client_action(
             conn.execute("""
                 INSERT INTO tenant_risk_limits (
                     tenant_id, max_lots_limit, max_order_value_inr, daily_notional_cap_inr,
+                    max_daily_loss_inr, telegram_bot_token, telegram_chat_id, discord_webhook_url,
                     slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (clean_id, max_lots_limit, max_order_value_inr, daily_notional_cap_inr,
+                  max_daily_loss_inr, telegram_bot_token.strip(), telegram_chat_id.strip(), discord_webhook_url.strip(),
                   slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, now))
 
     docker_manager.provision_client_container(clean_id)
@@ -562,6 +568,10 @@ async def edit_client_action(
     max_lots_limit: int = Form(...),
     max_order_value_inr: float = Form(...),
     daily_notional_cap_inr: float = Form(...),
+    max_daily_loss_inr: float = Form(50000.0),
+    telegram_bot_token: str = Form(""),
+    telegram_chat_id: str = Form(""),
+    discord_webhook_url: str = Form(""),
     slippage_buffer_pct: float = Form(...),
     min_days_before_expiry_mcx: int = Form(...),
     paper_trade_mode: int = Form(...),
@@ -586,9 +596,11 @@ async def edit_client_action(
             conn.execute("""
                 UPDATE tenant_risk_limits SET
                     max_lots_limit=?, max_order_value_inr=?, daily_notional_cap_inr=?,
+                    max_daily_loss_inr=?, telegram_bot_token=?, telegram_chat_id=?, discord_webhook_url=?,
                     slippage_buffer_pct=?, min_days_before_expiry_mcx=?, paper_trade_mode=?, updated_at=?
                 WHERE tenant_id=?
             """, (max_lots_limit, max_order_value_inr, daily_notional_cap_inr,
+                  max_daily_loss_inr, telegram_bot_token.strip(), telegram_chat_id.strip(), discord_webhook_url.strip(),
                   slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, now, tenant_id))
 
     docker_manager.restart_client_container(tenant_id)

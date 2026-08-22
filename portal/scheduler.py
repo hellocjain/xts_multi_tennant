@@ -61,17 +61,80 @@ async def run_rolling_cache_warmup(batch_size: int = None, delay_between_batches
     )
     return {"status": "success", "warmed_up": warmed_count, "failures": failures, "elapsed_seconds": elapsed}
 
-async def start_scheduler_loop():
-    """Background scheduler loop checking time for 08:30 IST daily trigger."""
+async def check_drawdown_circuit_breakers():
+    """
+    Evaluates real-time Net MTM against each tenant's max_daily_loss_inr.
+    If loss limit is breached, triggers emergency square-off and sets tenant status to PAUSED.
+    """
+    with closing(database.get_db_connection()) as conn:
+        active_tenants = [dict(r) for r in conn.execute("SELECT id, name FROM tenants WHERE status='ACTIVE'").fetchall()]
+        risk_limits = {r["tenant_id"]: dict(r) for r in conn.execute("SELECT * FROM tenant_risk_limits").fetchall()}
+        credentials = {r["tenant_id"]: dict(r) for r in conn.execute("SELECT * FROM tenant_credentials").fetchall()}
+
+    for t in active_tenants:
+        t_id = t["id"]
+        r_lim = risk_limits.get(t_id, {})
+        max_loss = float(r_lim.get("max_daily_loss_inr") or 50000.0)
+        
+        # Query telemetry for net_mtm
+        tel = await telemetry_service.get_single_client_telemetry(t_id)
+        net_mtm = float(tel.get("net_mtm") or 0.0)
+        
+        # If net_mtm is negative and breaches max_loss
+        if net_mtm <= -abs(max_loss) and max_loss > 0:
+            logger.critical(
+                f"🚨 [CIRCUIT BREAKER TRIGGERED] Tenant {t_id} ({t['name']}) breached max daily loss limit: "
+                f"Net MTM = -₹{abs(net_mtm):,.2f} <= -₹{max_loss:,.2f}. Initiating emergency panic & auto-pause."
+            )
+            
+            c_row = credentials.get(t_id)
+            secret = ""
+            if c_row:
+                try:
+                    import security
+                    dec = security.decrypt_credentials(c_row["encrypted_payload"])
+                    secret = dec.get("WEBHOOK_SECRET", "")
+                except Exception:
+                    pass
+
+            # 1. Trigger panic square off on client
+            panic_res = await telemetry_service.panic_single_client(t_id, secret)
+            
+            # 2. Pause client in database
+            with closing(database.get_db_connection()) as conn:
+                with conn:
+                    conn.execute("UPDATE tenants SET status='PAUSED', updated_at=? WHERE id=?", (time.time(), t_id))
+            
+            # 3. Reload caddy ingress
+            import caddy_manager
+            caddy_manager.sync_caddy_config()
+
+            # 4. Record critical audit log
+            database.record_audit(
+                "CIRCUIT_BREAKER",
+                "AUTO_KILL_SWITCH_TRIGGERED",
+                {
+                    "tenant_id": t_id,
+                    "net_mtm": net_mtm,
+                    "max_daily_loss_inr": max_loss,
+                    "panic_result": panic_res
+                },
+                target_tenant_id=t_id
+            )
+
+async def start_scheduler_loop(poll_interval_sec=5):
+    """Background scheduler loop checking time for 08:30 IST daily trigger and drawdown breakers."""
     IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     while True:
         try:
+            # 1. Check Drawdown Circuit Breakers across active clients
+            await check_drawdown_circuit_breakers()
+
+            # 2. Check 08:30 IST cache warmup
             now_ist = datetime.datetime.now(IST)
-            # Check if 08:30:00 - 08:30:10 IST
             if now_ist.hour == 8 and now_ist.minute == 30 and now_ist.second < 15:
                 await run_rolling_cache_warmup()
-                # Sleep 60 seconds to avoid duplicate trigger in the same minute
-                await asyncio.sleep(60)
+                await asyncio.sleep(30)
         except Exception as e:
             logger.error(f"Scheduler loop error: {e}")
-        await asyncio.sleep(10)
+        await asyncio.sleep(poll_interval_sec)

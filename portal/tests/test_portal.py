@@ -371,3 +371,62 @@ def test_validate_broker_credentials_wizard(monkeypatch):
     assert "Broker Authentication Failed" in res_fail.text
     assert "Invalid API Key or Secret" in res_fail.text
 
+@pytest.mark.anyio
+async def test_drawdown_circuit_breaker_auto_kill_switch(monkeypatch):
+    import scheduler
+    import telemetry_service
+    
+    # 1. Setup active tenant with max_daily_loss_inr = 25000.0
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('loss_tenant', 'Loss Trader', 'ACTIVE', 0, 0)")
+            enc = security.encrypt_credentials({"WEBHOOK_SECRET": "test_sec"})
+            conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('loss_tenant', ?, 0)", (enc,))
+            conn.execute("""
+                INSERT OR REPLACE INTO tenant_risk_limits (
+                    tenant_id, max_daily_loss_inr, updated_at
+                ) VALUES ('loss_tenant', 25000.0, 0)
+            """)
+
+    # 2. Case A: Net MTM is -₹10,000 (below threshold) -> No circuit breaker
+    async def mock_telemetry_safe(t_id):
+        return {"net_mtm": -10000.0}
+    monkeypatch.setattr(telemetry_service, "get_single_client_telemetry", mock_telemetry_safe)
+    await scheduler.check_drawdown_circuit_breakers()
+
+    with database.get_db_connection() as conn:
+        t_row = conn.execute("SELECT status FROM tenants WHERE id='loss_tenant'").fetchone()
+        assert t_row["status"] == "ACTIVE"
+
+    # 3. Case B: Net MTM is -₹30,000 (breaches ₹25,000 limit) -> Triggers panic and auto-pauses
+    panic_called = []
+    async def mock_panic(t_id, secret):
+        panic_called.append((t_id, secret))
+        return {"status": "success", "orders_cancelled": 2, "positions_squared_off": 1}
+
+    async def mock_telemetry_loss(t_id):
+        return {"net_mtm": -30000.0}
+
+    monkeypatch.setattr(telemetry_service, "get_single_client_telemetry", mock_telemetry_loss)
+    monkeypatch.setattr(telemetry_service, "panic_single_client", mock_panic)
+    monkeypatch.setattr(caddy_manager, "sync_caddy_config", lambda: True)
+
+    await scheduler.check_drawdown_circuit_breakers()
+
+    # Verify panic was called with secret
+    assert len(panic_called) == 1
+    assert panic_called[0] == ("loss_tenant", "test_sec")
+
+    # Verify tenant status is now PAUSED
+    with database.get_db_connection() as conn:
+        t_row = conn.execute("SELECT status FROM tenants WHERE id='loss_tenant'").fetchone()
+        assert t_row["status"] == "PAUSED"
+        
+        # Verify critical audit log
+        audit = conn.execute("SELECT * FROM audit_logs WHERE action='AUTO_KILL_SWITCH_TRIGGERED'").fetchone()
+        assert audit is not None
+        assert audit["target_tenant_id"] == "loss_tenant"
+        details = json.loads(audit["details_json"])
+        assert details["net_mtm"] == -30000.0
+        assert details["max_daily_loss_inr"] == 25000.0
+

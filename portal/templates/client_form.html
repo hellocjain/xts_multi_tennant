@@ -128,6 +128,11 @@
                             class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
                     </div>
                     <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1.5">Max Daily Loss / Kill-Switch (₹)</label>
+                        <input type="number" name="max_daily_loss_inr" required value="{{ risk.max_daily_loss_inr if risk and risk.max_daily_loss_inr is defined else 50000 }}"
+                            class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-xs text-rose-300 focus:outline-none focus:border-rose-500 font-mono">
+                    </div>
+                    <div>
                         <label class="block text-xs font-semibold text-slate-400 mb-1.5">Slippage Buffer (e.g. 0.005 = 0.5%)</label>
                         <input type="number" step="0.001" name="slippage_buffer_pct" required value="{{ risk.slippage_buffer_pct if risk else 0.005 }}"
                             class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
@@ -143,6 +148,31 @@
                             <option value="1" {{ 'selected' if risk and risk.paper_trade_mode else '' }}>📝 Paper Trading (Zero Risk Sandbox)</option>
                             <option value="0" {{ 'selected' if risk and not risk.paper_trade_mode else '' }}>🔥 LIVE Real-Money Trading (XTS Broker)</option>
                         </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Execution Notifications & Alert Dispatcher -->
+            <div class="space-y-4">
+                <div class="flex items-center space-x-2 border-b border-bordercolor/60 pb-2">
+                    <i data-lucide="bell-ring" class="w-4 h-4 text-brand-400"></i>
+                    <h2 class="text-xs font-bold text-slate-200 uppercase tracking-wider">4. Push Notifications & Fill Alerts (Telegram / Discord)</h2>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1.5">Telegram Bot Token (Optional)</label>
+                        <input type="password" name="telegram_bot_token" value="{{ risk.telegram_bot_token if risk and risk.telegram_bot_token else '' }}" placeholder="123456789:ABCdefGhIJKlm..."
+                            class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1.5">Telegram Chat ID (Optional)</label>
+                        <input type="text" name="telegram_chat_id" value="{{ risk.telegram_chat_id if risk and risk.telegram_chat_id else '' }}" placeholder="-1001234567890 or 987654321"
+                            class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1.5">Discord Webhook URL (Optional)</label>
+                        <input type="password" name="discord_webhook_url" value="{{ risk.discord_webhook_url if risk and risk.discord_webhook_url else '' }}" placeholder="https://discord.com/api/webhooks/..."
+                            class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
                     </div>
                 </div>
             </div>

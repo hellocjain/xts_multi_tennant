@@ -56,6 +56,10 @@ def init_portal_db():
                     max_units_limit INTEGER DEFAULT 100000,
                     max_order_value_inr REAL DEFAULT 5000000.0,
                     daily_notional_cap_inr REAL DEFAULT 10000000.0,
+                    max_daily_loss_inr REAL DEFAULT 50000.0,
+                    telegram_bot_token TEXT DEFAULT '',
+                    telegram_chat_id TEXT DEFAULT '',
+                    discord_webhook_url TEXT DEFAULT '',
                     min_days_before_expiry_mcx INTEGER DEFAULT 3,
                     min_days_before_expiry_derivatives INTEGER DEFAULT 0,
                     cancel_lingering_partial_fills INTEGER DEFAULT 1,
@@ -64,6 +68,17 @@ def init_portal_db():
                     updated_at REAL NOT NULL
                 )
             """)
+
+            # Column migrations if table already existed
+            existing_cols = [row[1] for row in conn.execute("PRAGMA table_info(tenant_risk_limits)").fetchall()]
+            if "max_daily_loss_inr" not in existing_cols:
+                conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN max_daily_loss_inr REAL DEFAULT 50000.0")
+            if "telegram_bot_token" not in existing_cols:
+                conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN telegram_bot_token TEXT DEFAULT ''")
+            if "telegram_chat_id" not in existing_cols:
+                conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN telegram_chat_id TEXT DEFAULT ''")
+            if "discord_webhook_url" not in existing_cols:
+                conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN discord_webhook_url TEXT DEFAULT ''")
 
             # 4. Admin Users & 2FA State
             conn.execute("""

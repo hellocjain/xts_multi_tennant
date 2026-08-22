@@ -212,6 +212,24 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
         error=None
     )
 
+async def get_single_client_telemetry(tenant_id: str) -> dict:
+    """Fetches telemetry for a single tenant by tenant_id."""
+    with closing(get_db_connection()) as conn:
+        row = conn.execute("""
+            SELECT t.id, t.name, t.status, r.paper_trade_mode, c.encrypted_payload
+            FROM tenants t
+            LEFT JOIN tenant_risk_limits r ON t.id = r.tenant_id
+            LEFT JOIN tenant_credentials c ON t.id = c.tenant_id
+            WHERE t.id = ?
+        """, (tenant_id,)).fetchone()
+    
+    if not row:
+        return build_client_telemetry_dict(tenant_id=tenant_id, name=tenant_id, status="NOT_FOUND", error="Tenant not found in database")
+    
+    tenant_dict = dict(row)
+    async with httpx.AsyncClient() as client:
+        return await fetch_single_client_telemetry(client, tenant_dict)
+
 async def aggregate_all_telemetry() -> dict:
     with closing(get_db_connection()) as conn:
         tenants = [dict(r) for r in conn.execute("""
