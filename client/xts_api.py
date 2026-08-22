@@ -318,6 +318,82 @@ def start_token_keepalive():
                 pass
     threading.Thread(target=_heartbeat, name="token-keepalive", daemon=True).start()
 
+def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timeframe_seconds: int, lookback_bars: int = 100) -> list:
+    """
+    Fetches historical OHLC candle data from Symphony XTS Market Data API.
+    Returns list of candle dicts sorted ascending:
+    [{"time": ts, "open": o, "high": h, "low": l, "close": c, "volume": v, "oi": oi}, ...]
+    """
+    token, base_md_url = get_marketdata_token()
+    if not token or not base_md_url:
+        logger.error(f"OHLC: Failed to acquire Market Data token for {exchange_segment}:{exchange_instrument_id}")
+        return []
+
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_ist = datetime.datetime.now(IST)
+    
+    lookback_seconds = max(timeframe_seconds * lookback_bars * 2, 86400 * 3)
+    start_ist = now_ist - datetime.timedelta(seconds=lookback_seconds)
+
+    start_str = start_ist.strftime("%b %d %Y %H%M%S")
+    end_str = now_ist.strftime("%b %d %Y %H%M%S")
+
+    params = {
+        "exchangeSegment": exchange_segment,
+        "exchangeInstrumentID": int(exchange_instrument_id),
+        "startTime": start_str,
+        "endTime": end_str,
+        "compressionValue": int(timeframe_seconds)
+    }
+
+    url = f"{base_md_url}/instruments/ohlc"
+    headers = {"Authorization": token, "Content-Type": "application/json"}
+
+    try:
+        resp = api_session.get(url, headers=headers, params=params, timeout=6)
+        if resp.status_code != 200:
+            logger.warning(f"OHLC: Broker returned HTTP {resp.status_code} for {exchange_segment}:{exchange_instrument_id} -> {resp.text[:100]}")
+            return []
+
+        data = resp.json()
+        raw_candles = data.get("result", {}).get("dataReponse", "")
+        if not raw_candles or not isinstance(raw_candles, str):
+            return []
+
+        candles = []
+        for row in raw_candles.strip().split(","):
+            row = row.strip()
+            if not row:
+                continue
+            parts = row.split("|")
+            if len(parts) >= 5:
+                try:
+                    ts = int(parts[0])
+                    o = float(parts[1])
+                    h = float(parts[2])
+                    l = float(parts[3])
+                    c = float(parts[4])
+                    v = int(float(parts[5])) if len(parts) > 5 and parts[5] else 0
+                    oi = int(float(parts[6])) if len(parts) > 6 and parts[6] else 0
+                    candles.append({
+                        "time": ts,
+                        "open": o,
+                        "high": h,
+                        "low": l,
+                        "close": c,
+                        "volume": v,
+                        "oi": oi
+                    })
+                except (ValueError, IndexError):
+                    continue
+
+        candles.sort(key=lambda x: x["time"])
+        return candles
+    except Exception as e:
+        logger.error(f"OHLC: Failed to fetch candles for {exchange_segment}:{exchange_instrument_id}: {e}")
+        return []
+
+
 def _extract_expiry(parts, desc):
     for idx, col in enumerate(parts):
         col_str = col.strip()
@@ -689,6 +765,22 @@ def get_dynamic_contract_info(symbol):
         return _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1)
 
     return _resolve_front_month(symbol, target_name, is_future_intent=False, depth=1)
+
+def resolve_contract(symbol: str) -> dict | None:
+    """Helper returning a structured dictionary for resolved contract."""
+    res = get_dynamic_contract_info(symbol)
+    if not res:
+        return None
+    inst_id, exch_seg, prod_type, lot_size, tick_size, name, expiry = res
+    return {
+        "inst_id": inst_id,
+        "exch_seg": exch_seg,
+        "prod_type": prod_type,
+        "lot_size": lot_size,
+        "tick_size": tick_size,
+        "name": name,
+        "expiry": expiry
+    }
 
 def get_live_price(instrument_id, exch_seg):
     md_token, md_base_url = get_marketdata_token()

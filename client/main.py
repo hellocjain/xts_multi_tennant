@@ -15,9 +15,14 @@ import threading
 import uuid
 import anyio
 import re
+import sys
+import asyncio
 
 import config
 import xts_api
+from supertrend_engine import SuperTrendEngine
+
+supertrend_engine = SuperTrendEngine()
 
 # Sanitize string variables
 for _key in ("WEBHOOK_SECRET", "CLIENT_ID", "API_KEY", "API_SECRET", "MD_API_KEY", "MD_API_SECRET", "XTS_API_BASE_URL"):
@@ -338,7 +343,10 @@ async def lifespan(app: FastAPI):
     
     db_prune_old()
     logger.info(f"--- CLIENT READY [{getattr(config, 'CLIENT_ID', 'UNKNOWN')}]: SESSIONS ACTIVE ---")
+    st_task = asyncio.create_task(supertrend_engine.run_loop(xts_api, sys.modules[__name__]))
     yield
+    supertrend_engine.stop()
+    st_task.cancel()
 
 app = FastAPI(title="XTS Client Execution Gateway", lifespan=lifespan)
 
@@ -473,6 +481,7 @@ async def telemetry(request: Request):
     recent_signals = await anyio.to_thread.run_sync(db_fetch_recent, 50)
     broker_orders = await anyio.to_thread.run_sync(xts_api.get_broker_orders)
     broker_trades = await anyio.to_thread.run_sync(xts_api.get_broker_trades)
+    supertrend_telemetry = supertrend_engine.get_telemetry()
     
     return {
         "health": health_data,
@@ -482,8 +491,37 @@ async def telemetry(request: Request):
         "recent_signals": recent_signals,
         "broker_orders": broker_orders,
         "broker_trades": broker_trades,
+        "supertrend": supertrend_telemetry,
         "server_time": time.time()
     }
+
+@app.post("/internal/supertrend/config")
+async def configure_supertrend(request: Request):
+    """Updates active SuperTrend configuration parameters."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    supertrend_engine.update_config(data)
+    return {"status": "success", "telemetry": supertrend_engine.get_telemetry()}
+
+@app.get("/internal/supertrend/status")
+async def get_supertrend_status(request: Request):
+    """Returns current SuperTrend strategy telemetry."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    return supertrend_engine.get_telemetry()
 
 @app.post("/internal/pause")
 async def pause_trading(request: Request):

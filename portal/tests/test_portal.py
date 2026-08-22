@@ -3,6 +3,7 @@ import sys
 import tempfile
 import json
 import pytest
+from contextlib import closing
 from fastapi.testclient import TestClient
 
 test_dir = tempfile.mkdtemp()
@@ -24,6 +25,7 @@ import database
 import security
 import caddy_manager
 import docker_manager
+import telemetry_service
 import main as portal_main
 app = portal_main.app
 
@@ -519,6 +521,64 @@ def test_trade_book_contract_note_csv_export(monkeypatch):
     assert "TR_99182" in lines[1]
     assert "CRUDEOIL24AUGFUT" in lines[1]
     assert "TR_99183" in lines[2]
+
+def test_portal_supertrend_config_and_validation_guard(monkeypatch):
+    with TestClient(app) as client:
+        # Create dummy admin and session
+        enc_payload = security.encrypt_credentials({"CLIENT_ID": "ST01", "WEBHOOK_SECRET": "sec123"})
+        with closing(database.get_db_connection()) as conn:
+            with conn:
+                conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('admin_st', 'admin_st', 'hash', 1, 100)")
+                conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('st_tenant', 'ST Test', 'ACTIVE', 100, 100)")
+                conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('st_tenant', ?, 100)", (enc_payload,))
+                conn.execute("INSERT OR REPLACE INTO tenant_risk_limits (tenant_id, updated_at) VALUES ('st_tenant', 100)")
+
+        cookie = security.create_session("admin_st", "127.0.0.1", "pytest-st")
+
+        # 1. Validation Guard: Attempting to enable unconfigured strategy must fail with 400
+        res_invalid = client.post("/admin/clients/st_tenant/supertrend/config", data={
+            "is_enabled": "true",
+            "symbol": "",
+            "exchange_segment": "",
+            "quantity": 1
+        }, cookies={"admin_session": cookie})
+        assert res_invalid.status_code == 400
+        assert "Please configure and save a trading symbol" in res_invalid.text
+
+        # 2. Save valid configuration
+        res_valid = client.post("/admin/clients/st_tenant/supertrend/config", data={
+            "is_enabled": "true",
+            "symbol": "CRUDEOIL",
+            "exchange_segment": "MCXFO",
+            "timeframe": "5m",
+            "quantity": 2,
+            "product_type": "NRML",
+            "atr_period": 10,
+            "multiplier": 3.0
+        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_valid.status_code == 303
+
+        with closing(database.get_db_connection()) as conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE tenant_id='st_tenant'").fetchone()
+            assert row is not None
+            assert row["is_enabled"] == 1
+            assert row["is_configured"] == 1
+            assert row["symbol"] == "CRUDEOIL"
+            assert row["quantity"] == 2
+
+        # 3. Verify client detail view renders 6th tab
+        async def mock_fetch_tel(*a, **k):
+            return {
+                "id": "st_tenant", "name": "ST Test", "status": "ACTIVE", "positions": [], "all_positions": [],
+                "holdings": {"holdings_count": 0, "holdings": []}, "broker_orders": [], "broker_trades": [],
+                "supertrend": {"status": "RUNNING", "current_trend": "BULLISH", "atr": 15.2}
+            }
+        monkeypatch.setattr(telemetry_service, "fetch_single_client_telemetry", mock_fetch_tel)
+        res_detail = client.get("/admin/clients/st_tenant", cookies={"admin_session": cookie})
+        assert res_detail.status_code == 200
+        assert "SuperTrend Strategy" in res_detail.text
+        assert "client-tab-supertrend" in res_detail.text
+
 
 
 

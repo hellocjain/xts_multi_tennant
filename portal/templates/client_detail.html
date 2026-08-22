@@ -155,6 +155,10 @@
             <i data-lucide="shield" class="w-4 h-4"></i>
             <span>Risk &amp; RMS Margin</span>
         </button>
+        <button onclick="switchClientTab('supertrend')" id="tab-nav-supertrend" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
+            <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
+            <span>SuperTrend Strategy</span>
+        </button>
         <button onclick="switchClientTab('logs')" id="tab-nav-logs" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
             <i data-lucide="terminal" class="w-4 h-4"></i>
             <span>Container Logs</span>
@@ -895,6 +899,252 @@
                                     <i data-lucide="activity" class="w-8 h-8 text-slate-600"></i>
                                     <span>No trading signals recorded for this client account today.</span>
                                 </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- TAB 6: SuperTrend Auto-Trading Strategy -->
+    <div id="client-tab-supertrend" class="tab-pane hidden space-y-5">
+        <!-- Telemetry Summary Cards Grid -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Strategy Status</span>
+                <div class="flex items-center space-x-1.5 mt-1">
+                    {% set st_stat = client.supertrend.status|default('DISABLED') if client and client.supertrend else ('RUNNING' if supertrend.is_enabled else 'DISABLED') %}
+                    {% if st_stat == 'RUNNING' %}
+                    <span class="inline-flex items-center text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/30 font-mono">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span> Active Engine
+                    </span>
+                    {% elif st_stat == 'EXPIRED_PAUSED' %}
+                    <span class="inline-flex items-center text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/30 font-mono">
+                        <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1"></i> Expired Paused
+                    </span>
+                    {% elif st_stat == 'PAUSED' %}
+                    <span class="inline-flex items-center text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/30 font-mono">
+                        <i data-lucide="pause-circle" class="w-3.5 h-3.5 mr-1"></i> Bot Paused
+                    </span>
+                    {% else %}
+                    <span class="inline-flex items-center text-xs font-bold text-slate-400 bg-slate-800 px-2.5 py-1 rounded-md border border-bordercolor font-mono">
+                        <i data-lucide="power-off" class="w-3.5 h-3.5 mr-1"></i> Disabled
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active SuperTrend</span>
+                {% set cur_trend = client.supertrend.current_trend|default('INITIALIZING') if client and client.supertrend else 'INITIALIZING' %}
+                <div class="text-lg font-bold font-mono {% if cur_trend == 'BULLISH' %}text-emerald-400{% elif cur_trend == 'BEARISH' %}text-rose-400{% else %}text-slate-400{% endif %}">
+                    {% if cur_trend == 'BULLISH' %}▲ BULLISH{% elif cur_trend == 'BEARISH' %}▼ BEARISH{% else %}⏳ INITIALIZING{% endif %}
+                </div>
+                <div class="text-[11px] font-mono text-slate-400">
+                    ATR({{ supertrend.atr_period }}): <strong class="text-slate-200">₹{{ client.supertrend.atr|default(0.0) if client and client.supertrend else 0.0 }}</strong>
+                </div>
+            </div>
+
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Strategy Position</span>
+                {% set st_pos = client.supertrend.strategy_position|default('FLAT') if client and client.supertrend else 'FLAT' %}
+                <div class="text-lg font-bold font-mono {% if st_pos == 'LONG' %}text-emerald-400{% elif st_pos == 'SHORT' %}text-rose-400{% else %}text-slate-300{% endif %}">
+                    {{ st_pos }}
+                </div>
+                <div class="text-[11px] font-mono text-slate-400">
+                    Broker Net Qty: <strong class="text-slate-200">{{ client.supertrend.current_broker_quantity|default(0) if client and client.supertrend else 0 }}</strong>
+                </div>
+            </div>
+
+            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
+                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Indicator Levels</span>
+                <div class="text-[11px] font-mono space-y-0.5 mt-0.5">
+                    <div class="text-emerald-400">Lower Band: ₹{{ client.supertrend.lower_band|default(0.0) if client and client.supertrend else 0.0 }}</div>
+                    <div class="text-rose-400">Upper Band: ₹{{ client.supertrend.upper_band|default(0.0) if client and client.supertrend else 0.0 }}</div>
+                </div>
+            </div>
+        </div>
+
+        {% if client.supertrend and client.supertrend.last_error %}
+        <div class="bg-rose-500/10 border border-rose-500/30 text-rose-300 p-3.5 rounded-xl text-xs flex items-center gap-2">
+            <i data-lucide="alert-octagon" class="w-4 h-4 text-rose-400 flex-shrink-0"></i>
+            <span><strong>Engine Warning:</strong> {{ client.supertrend.last_error }}</span>
+        </div>
+        {% endif %}
+
+        <!-- SuperTrend Configuration Form -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-6">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-4">
+                <div class="flex items-center space-x-3">
+                    <div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                        <i data-lucide="trending-up" class="w-5 h-5 text-emerald-400"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-base text-slate-100">SuperTrend Strategy Configuration</h3>
+                        <p class="text-xs text-slate-400">Automated in-process SuperTrend signal generation with sequential reversal order routing</p>
+                    </div>
+                </div>
+                <div class="text-xs font-mono text-slate-400">
+                    Client: <strong class="text-emerald-400">{{ client.id }}</strong>
+                </div>
+            </div>
+
+            <form method="POST" action="/admin/clients/{{ client.id }}/supertrend/config" class="space-y-6">
+                <!-- Master Toggle Switch -->
+                <div class="flex items-center justify-between p-4 bg-slate-900/80 rounded-xl border border-bordercolor">
+                    <div class="space-y-0.5">
+                        <label for="st-enable-toggle" class="text-xs font-bold text-slate-200 cursor-pointer flex items-center gap-2">
+                            <span>Enable SuperTrend Auto-Trading</span>
+                        </label>
+                        <p class="text-[11px] text-slate-400">When enabled, the engine evaluates closed candles and autonomously reverses positions on trend flips.</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="st-enable-toggle" name="is_enabled" value="true" class="sr-only peer" {% if supertrend.is_enabled %}checked{% endif %}>
+                        <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                    </label>
+                </div>
+
+                <!-- Parameters Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <!-- Symbol -->
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-semibold text-slate-300">Trading Symbol / Root <span class="text-rose-400">*</span></label>
+                        <input type="text" name="symbol" value="{{ supertrend.symbol|default('') }}" placeholder="e.g. CRUDEOIL, SILVER100, RELIANCE" required
+                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                        <p class="text-[10px] text-slate-400">Must match loaded contract symbol or root in master cache.</p>
+                    </div>
+
+                    <!-- Exchange Segment -->
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-semibold text-slate-300">Exchange Segment <span class="text-rose-400">*</span></label>
+                        <select name="exchange_segment" required
+                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                            <option value="MCXFO" {% if supertrend.exchange_segment == 'MCXFO' %}selected{% endif %}>MCXFO (Commodities Futures)</option>
+                            <option value="NSEFO" {% if supertrend.exchange_segment == 'NSEFO' %}selected{% endif %}>NSEFO (Equity Derivatives)</option>
+                            <option value="NSECM" {% if supertrend.exchange_segment == 'NSECM' %}selected{% endif %}>NSECM (Equity Cash / Intraday)</option>
+                            <option value="NSECD" {% if supertrend.exchange_segment == 'NSECD' %}selected{% endif %}>NSECD (Currency Derivatives)</option>
+                        </select>
+                    </div>
+
+                    <!-- Timeframe -->
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-semibold text-slate-300">Candle Timeframe</label>
+                        <select name="timeframe"
+                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                            <option value="1m" {% if supertrend.timeframe == '1m' %}selected{% endif %}>1 Minute (60s)</option>
+                            <option value="3m" {% if supertrend.timeframe == '3m' %}selected{% endif %}>3 Minutes (180s)</option>
+                            <option value="5m" {% if supertrend.timeframe == '5m' or not supertrend.timeframe %}selected{% endif %}>5 Minutes (300s - Default)</option>
+                            <option value="15m" {% if supertrend.timeframe == '15m' %}selected{% endif %}>15 Minutes (900s)</option>
+                            <option value="30m" {% if supertrend.timeframe == '30m' %}selected{% endif %}>30 Minutes (1800s)</option>
+                            <option value="1h" {% if supertrend.timeframe == '1h' %}selected{% endif %}>1 Hour (3600s)</option>
+                        </select>
+                    </div>
+
+                    <!-- Quantity -->
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-semibold text-slate-300">Order Quantity (Lots / Shares) <span class="text-rose-400">*</span></label>
+                        <input type="number" name="quantity" min="1" max="100000" value="{{ supertrend.quantity|default(1) }}" required
+                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                    </div>
+
+                    <!-- Product Type -->
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-semibold text-slate-300">Product Type</label>
+                        <select name="product_type"
+                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                            <option value="NRML" {% if supertrend.product_type == 'NRML' or not supertrend.product_type %}selected{% endif %}>NRML (Normal Margin - F&amp;O)</option>
+                            <option value="MIS" {% if supertrend.product_type == 'MIS' %}selected{% endif %}>MIS (Intraday Square-off)</option>
+                            <option value="CNC" {% if supertrend.product_type == 'CNC' %}selected{% endif %}>CNC (Cash &amp; Carry Delivery)</option>
+                        </select>
+                    </div>
+
+                    <!-- ATR Period -->
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-semibold text-slate-300">ATR Period</label>
+                        <input type="number" name="atr_period" min="2" max="100" value="{{ supertrend.atr_period|default(10) }}"
+                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                    </div>
+
+                    <!-- Multiplier -->
+                    <div class="space-y-1.5">
+                        <label class="text-xs font-semibold text-slate-300">ATR Multiplier</label>
+                        <input type="number" step="0.1" name="multiplier" min="0.1" max="20.0" value="{{ supertrend.multiplier|default(3.0) }}"
+                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end space-x-3 pt-4 border-t border-bordercolor">
+                    <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs px-6 py-2.5 rounded-xl transition shadow-lg shadow-brand-600/30 flex items-center gap-2">
+                        <i data-lucide="save" class="w-4 h-4"></i>
+                        <span>Save SuperTrend Settings</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- SuperTrend Execution Orders Log Table -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-4">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="history" class="w-4 h-4 text-emerald-400"></i>
+                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">SuperTrend Strategy Order Log</h3>
+                </div>
+                <span class="text-xs font-mono text-slate-400">Filtered: source="supertrend_engine"</span>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-bordercolor">
+                <table class="w-full text-left text-xs font-mono">
+                    <thead class="bg-slate-900 text-slate-400 uppercase text-[10px] tracking-wider border-b border-bordercolor">
+                        <tr>
+                            <th class="p-3">Signal ID</th>
+                            <th class="p-3">Time</th>
+                            <th class="p-3">Action</th>
+                            <th class="p-3">Symbol</th>
+                            <th class="p-3">Qty</th>
+                            <th class="p-3">Status</th>
+                            <th class="p-3">Order Ref</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-bordercolor">
+                        {% set st_signals = [] %}
+                        {% if client.recent_signals %}
+                            {% for s in client.recent_signals %}
+                                {% if s.payload and s.payload.source == 'supertrend_engine' %}
+                                    {% set _ = st_signals.append(s) %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+
+                        {% for sig in st_signals %}
+                        <tr class="hover:bg-slate-900/50 transition">
+                            <td class="p-3 font-bold text-slate-200">{{ sig.id }}</td>
+                            <td class="p-3 text-slate-400">{{ sig.received_at|epoch_to_ist }}</td>
+                            <td class="p-3">
+                                {% if sig.payload.action == 'BUY' %}
+                                <span class="text-emerald-400 font-bold">BUY</span>
+                                {% else %}
+                                <span class="text-rose-400 font-bold">SELL</span>
+                                {% endif %}
+                            </td>
+                            <td class="p-3 text-slate-200">{{ sig.payload.symbol }}</td>
+                            <td class="p-3 text-slate-200">{{ sig.payload.quantity }}</td>
+                            <td class="p-3">
+                                {% if sig.status in ('done', 'paper_done') %}
+                                <span class="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded text-[10px] border border-emerald-500/20 font-bold uppercase">{{ sig.status }}</span>
+                                {% elif sig.status == 'processing' %}
+                                <span class="text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded text-[10px] border border-amber-500/20 font-bold uppercase">{{ sig.status }}</span>
+                                {% else %}
+                                <span class="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded text-[10px] border border-rose-500/20 font-bold uppercase">{{ sig.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="p-3 text-slate-400 text-[11px]">{{ sig.payload.order_ref|default('N/A') }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="p-8 text-center text-slate-500">
+                                No SuperTrend strategy signals executed yet.
                             </td>
                         </tr>
                         {% endfor %}

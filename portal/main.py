@@ -39,9 +39,19 @@ def format_inr(val, decimals=2):
     except Exception:
         return "0.00" if decimals > 0 else "0"
 
+def format_epoch_to_ist(val):
+    if not val:
+        return "N/A"
+    try:
+        IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        return datetime.datetime.fromtimestamp(float(val), tz=IST).strftime("%H:%M:%S")
+    except Exception:
+        return str(val)
+
 templates.env.filters["inr"] = format_inr
 templates.env.filters["num"] = lambda v: format_inr(v, decimals=0)
 templates.env.filters["abs"] = lambda v: abs(float(v)) if v is not None else 0.0
+templates.env.filters["epoch_to_ist"] = format_epoch_to_ist
 
 DOMAIN_NAME = os.environ.get("DOMAIN_NAME", "trading.yourdomain.com")
 
@@ -487,6 +497,7 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         t_row = conn.execute("SELECT id, name, status FROM tenants WHERE id=?", (tenant_id,)).fetchone()
         c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
         r_row = conn.execute("SELECT * FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
+        st_row = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE tenant_id=?", (tenant_id,)).fetchone()
         if not t_row:
             raise HTTPException(status_code=404, detail="Client not found")
 
@@ -517,11 +528,25 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         tel_data.setdefault("positions_count", len(tel_data.get("positions", [])))
         tel_data.setdefault("all_positions_count", len(tel_data.get("all_positions", [])))
 
+    supertrend_config = dict(st_row) if st_row else {
+        "tenant_id": tenant_id,
+        "is_enabled": 0,
+        "is_configured": 0,
+        "symbol": "",
+        "exchange_segment": "",
+        "timeframe": "5m",
+        "quantity": 1,
+        "product_type": "NRML",
+        "atr_period": 10,
+        "multiplier": 3.0,
+    }
+
     logs = docker_manager.get_container_logs(tenant_id, tail=100)
 
     return templates.TemplateResponse(request=request, name="client_detail.html", context={
         "client": tel_data,
         "risk": dict(r_row) if r_row else {},
+        "supertrend": supertrend_config,
         "logs": logs,
         "domain": DOMAIN_NAME,
         "webhook_url": wb_data["webhook_url"],
@@ -696,6 +721,99 @@ async def delete_client(tenant_id: str, user: dict = Depends(require_auth)):
     if not caddy_ok:
         return RedirectResponse(url="/admin/dashboard?warn=Client+deleted+but+Caddy+ingress+reload+failed.", status_code=303)
     return RedirectResponse(url="/admin/dashboard", status_code=303)
+
+@app.post("/admin/clients/{tenant_id}/supertrend/config")
+async def save_supertrend_config(
+    tenant_id: str,
+    request: Request,
+    is_enabled: bool = Form(False),
+    symbol: str = Form(""),
+    exchange_segment: str = Form(""),
+    timeframe: str = Form("5m"),
+    quantity: int = Form(1),
+    product_type: str = Form("NRML"),
+    atr_period: int = Form(10),
+    multiplier: float = Form(3.0),
+    user: dict = Depends(require_auth)
+):
+    clean_sym = symbol.strip().upper()
+    clean_seg = exchange_segment.strip().upper()
+    clean_tf = timeframe.strip().lower()
+    clean_prod = product_type.strip().upper()
+    clean_qty = max(1, quantity)
+    clean_atr = max(2, atr_period)
+    clean_mult = max(0.1, multiplier)
+
+    is_conf = bool(clean_sym and clean_seg and clean_qty > 0)
+    
+    # UI-level validation guard: Cannot enable if unconfigured
+    if is_enabled and not is_conf:
+        raise HTTPException(
+            status_code=400,
+            detail="Please configure and save a trading symbol, exchange segment, and quantity before enabling SuperTrend auto-trading."
+        )
+
+    now = time.time()
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO tenant_supertrend_configs
+                (tenant_id, is_enabled, is_configured, symbol, exchange_segment, timeframe, quantity, product_type, atr_period, multiplier, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                tenant_id,
+                1 if is_enabled else 0,
+                1 if is_conf else 0,
+                clean_sym,
+                clean_seg,
+                clean_tf,
+                clean_qty,
+                clean_prod,
+                clean_atr,
+                clean_mult,
+                now
+            ))
+
+    database.record_audit(user["username"], "UPDATE_SUPERTREND_CONFIG", {
+        "is_enabled": is_enabled,
+        "symbol": clean_sym,
+        "exchange_segment": clean_seg,
+        "timeframe": clean_tf,
+        "quantity": clean_qty
+    }, tenant_id)
+
+    # Push config to client container
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/config"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/config"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/config"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    payload = {
+        "is_enabled": is_enabled,
+        "symbol": clean_sym,
+        "exchange_segment": clean_seg,
+        "timeframe": clean_tf,
+        "quantity": clean_qty,
+        "product_type": clean_prod,
+        "atr_period": clean_atr,
+        "multiplier": clean_mult
+    }
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, json=payload, timeout=5.0)
+                if resp.status_code == 200:
+                    break
+            except Exception:
+                pass
+
+    return RedirectResponse(url=f"/admin/clients/{tenant_id}?tab=supertrend&saved=1", status_code=303)
 
 # =====================================================================
 # EMERGENCY PANIC SWITCHES

@@ -80,7 +80,24 @@ def init_portal_db():
             if "discord_webhook_url" not in existing_cols:
                 conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN discord_webhook_url TEXT DEFAULT ''")
 
-            # 4. Admin Users & 2FA State
+            # 4. Tenant SuperTrend Auto-Trading Strategy Configurations
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tenant_supertrend_configs (
+                    tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+                    is_enabled INTEGER DEFAULT 0,
+                    is_configured INTEGER DEFAULT 0,
+                    symbol TEXT DEFAULT '',
+                    exchange_segment TEXT DEFAULT '',
+                    timeframe TEXT DEFAULT '5m',
+                    quantity INTEGER DEFAULT 1,
+                    product_type TEXT DEFAULT 'NRML',
+                    atr_period INTEGER DEFAULT 10,
+                    multiplier REAL DEFAULT 3.0,
+                    updated_at REAL NOT NULL
+                )
+            """)
+
+            # 5. Admin Users & 2FA State
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS admin_users (
                     id TEXT PRIMARY KEY,
