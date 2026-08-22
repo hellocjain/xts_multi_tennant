@@ -1255,19 +1255,39 @@ def get_positions_telemetry():
             if sell_avg == 0 and open_sell_qty > 0 and sell_amt > 0:
                 sell_avg = sell_amt / (open_sell_qty * mult) if mult > 0 else (sell_amt / open_sell_qty)
 
+            broker_unrealized = float(p.get("UnrealizedMTM", 0) or p.get("MTM", 0) or p.get("UnrealizedPNL", 0) or 0)
             ltp = live_prices_map.get(inst_id)
-            if not ltp or ltp <= 0:
-                ltp = float(p.get("LastTradedPrice", 0) or p.get("LTP", 0) or buy_avg or sell_avg)
-
+            
             unrealized_pnl = 0.0
             side = "FLAT"
 
             if qty > 0:
                 side = "LONG"
-                unrealized_pnl = (ltp - buy_avg) * qty * mult
+                if ltp and ltp > 0:
+                    unrealized_pnl = (ltp - buy_avg) * qty * mult
+                elif broker_unrealized != 0:
+                    unrealized_pnl = broker_unrealized
+                elif float(p.get("LastTradedPrice", 0) or p.get("LTP", 0)) > 0:
+                    ltp = float(p.get("LastTradedPrice", 0) or p.get("LTP", 0))
+                    unrealized_pnl = (ltp - buy_avg) * qty * mult
+                else:
+                    ltp = buy_avg
+                    unrealized_pnl = broker_unrealized
             elif qty < 0:
                 side = "SHORT"
-                unrealized_pnl = (sell_avg - ltp) * abs(qty) * mult
+                if ltp and ltp > 0:
+                    unrealized_pnl = (sell_avg - ltp) * abs(qty) * mult
+                elif broker_unrealized != 0:
+                    unrealized_pnl = broker_unrealized
+                elif float(p.get("LastTradedPrice", 0) or p.get("LTP", 0)) > 0:
+                    ltp = float(p.get("LastTradedPrice", 0) or p.get("LTP", 0))
+                    unrealized_pnl = (sell_avg - ltp) * abs(qty) * mult
+                else:
+                    ltp = sell_avg
+                    unrealized_pnl = broker_unrealized
+
+            if not ltp or ltp <= 0:
+                ltp = float(p.get("LastTradedPrice", 0) or p.get("LTP", 0) or buy_avg or sell_avg)
             
             realized_raw = float(p.get("RealizedMTM", 0) or p.get("RealizedPNL", 0) or 0)
             if realized_raw != 0:

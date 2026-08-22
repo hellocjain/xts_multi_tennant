@@ -316,3 +316,34 @@ def test_panic_fail_closed_authentication(monkeypatch):
         # 3. Correct secret -> must succeed
         res = client.post("/panic", json={"secret": "ConfiguredSecret"})
         assert res.status_code == 200
+
+def test_unrealized_mtm_broker_fallback(monkeypatch):
+    class MockResp:
+        status_code = 200
+        def json(self):
+            return {
+                "type": "success",
+                "result": {
+                    "positionList": [
+                        {
+                            "TradingSymbol": "GOLD24AUGFUT",
+                            "ExchangeInstrumentId": 25002,
+                            "ExchangeSegment": "MCXFO",
+                            "Quantity": 100,
+                            "BuyAveragePrice": 72000.0,
+                            "Multiplier": 1,
+                            "UnrealizedMTM": 45000.0, # Broker ground truth
+                            "LastTradedPrice": 0.0
+                        }
+                    ]
+                }
+            }
+    
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda: "mock_token")
+    monkeypatch.setattr(xts_api.api_session, "get", lambda *args, **kwargs: MockResp())
+    monkeypatch.setattr(xts_api, "get_live_prices_batch", lambda *args, **kwargs: {}) # No live quotes
+
+    telemetry = xts_api.get_positions_telemetry()
+    assert telemetry["unrealized_mtm"] == 45000.0
+    assert telemetry["positions"][0]["unrealized_mtm"] == 45000.0
