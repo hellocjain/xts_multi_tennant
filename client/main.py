@@ -438,6 +438,20 @@ async def refresh_master(request: Request):
         "message": "Master cache refreshed successfully" if ok else "Failed to download master cache from broker"
     }
 
+SIM_PAPER_MTM = 0.0
+
+@app.post("/internal/sim-mtm")
+async def set_sim_mtm(request: Request):
+    """Sets a simulated paper MTM for staging/drawdown soak testing."""
+    global SIM_PAPER_MTM
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    SIM_PAPER_MTM = float(data.get("mtm", 0.0))
+    logger.info(f"STAGING: Set simulated paper MTM to ₹{SIM_PAPER_MTM:,.2f}")
+    return {"status": "success", "sim_mtm": SIM_PAPER_MTM}
+
 @app.get("/internal/telemetry")
 async def telemetry(request: Request):
     """Consolidated telemetry endpoint for Admin Portal polling (Internal Network Only)."""
@@ -449,6 +463,11 @@ async def telemetry(request: Request):
 
     health_data = await health()
     pos_data = await anyio.to_thread.run_sync(xts_api.get_positions_telemetry)
+    
+    if SIM_PAPER_MTM != 0.0 and getattr(config, "PAPER_TRADE_MODE", False):
+        pos_data["net_mtm"] = SIM_PAPER_MTM
+        pos_data["unrealized_mtm"] = SIM_PAPER_MTM
+    
     holdings_data = await anyio.to_thread.run_sync(xts_api.get_holdings_telemetry)
     margin_data = await anyio.to_thread.run_sync(xts_api.get_margin_telemetry)
     recent_signals = await anyio.to_thread.run_sync(db_fetch_recent, 50)
