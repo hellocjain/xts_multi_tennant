@@ -1007,12 +1007,21 @@ def place_order(action, symbol, quantity, tv_price, order_ref):
     tv_sends_lots = getattr(config, "TV_SENDS_LOTS", True)
     execution_qty = (quantity * lot_size) if (tv_sends_lots and exch_seg not in ["NSECM", "BSECM"]) else quantity
 
+    if exch_seg not in ["NSECM", "BSECM"] and lot_size > 1:
+        if execution_qty % lot_size != 0:
+            logger.error(f"REJECTED: Quantity {execution_qty} is not a multiple of lot size {lot_size} for {exch_seg} {symbol}")
+            return {"status": "error", "message": f"Quantity ({execution_qty}) must be a multiple of lot size ({lot_size}) for {exch_seg}"}
+        if execution_qty < lot_size:
+            logger.error(f"REJECTED: Quantity {execution_qty} is less than minimum lot size {lot_size} for {exch_seg} {symbol}")
+            return {"status": "error", "message": f"Quantity ({execution_qty}) cannot be less than lot size ({lot_size}) for {exch_seg}"}
+
     if execution_qty > freeze_qty:
         return {"status": "error", "message": f"Quantity ({execution_qty}) exceeds broker freeze limit ({freeze_qty})"}
 
     max_lots = getattr(config, "MAX_LOTS_LIMIT", 100)
-    if (execution_qty // lot_size) > max_lots:
-        return {"status": "error", "message": f"Order lots ({execution_qty // lot_size}) exceed safety cap ({max_lots})"}
+    effective_lots = (execution_qty // lot_size) if lot_size > 0 else execution_qty
+    if effective_lots > max_lots:
+        return {"status": "error", "message": f"Order lots ({effective_lots}) exceed safety cap ({max_lots})"}
 
     max_units = getattr(config, "MAX_UNITS_LIMIT", 100000)
     if execution_qty > max_units:

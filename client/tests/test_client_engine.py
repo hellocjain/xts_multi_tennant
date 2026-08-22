@@ -347,3 +347,30 @@ def test_unrealized_mtm_broker_fallback(monkeypatch):
     telemetry = xts_api.get_positions_telemetry()
     assert telemetry["unrealized_mtm"] == 45000.0
     assert telemetry["positions"][0]["unrealized_mtm"] == 45000.0
+
+def test_derivative_lot_size_alignment(monkeypatch):
+    import datetime
+    today = datetime.date.today()
+    xts_api.CACHE_DATE = today
+    # CRUDEOIL has lot size 100
+    xts_api.FUT_MASTER = {
+        "CRUDEOIL": [(today + datetime.timedelta(days=30), 25001, "MCXFO", "CRUDEOIL24AUGFUT", 1.0, 100, 10000)],
+    }
+    
+    monkeypatch.setattr(config, "TV_SENDS_LOTS", False)
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", True)
+    monkeypatch.setattr(config, "MAX_ORDER_VALUE_INR", 500000000.0)
+    monkeypatch.setattr(config, "DAILY_NOTIONAL_CAP_INR", 1000000000.0)
+    
+    # 1. Unaligned quantity (e.g. 150 units when lot size is 100) -> must be rejected
+    res_bad = xts_api.place_order("BUY", "CRUDEOIL", 150, 100.0, "REF_LOT_1")
+    assert res_bad["status"] == "error"
+    assert "multiple of lot size" in res_bad["message"]
+
+    # 2. Less than 1 lot (e.g. 50 units) -> must be rejected
+    res_small = xts_api.place_order("BUY", "CRUDEOIL", 50, 100.0, "REF_LOT_2")
+    assert res_small["status"] == "error"
+
+    # 3. Aligned quantity (e.g. 200 units = 2 lots) -> must succeed
+    res_good = xts_api.place_order("BUY", "CRUDEOIL", 200, 100.0, "REF_LOT_3")
+    assert res_good["type"] == "success"
