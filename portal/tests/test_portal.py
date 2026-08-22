@@ -515,7 +515,7 @@ def test_trade_book_contract_note_csv_export(monkeypatch):
     lines = csv_text.strip().split("\r\n" if "\r\n" in csv_text else "\n")
     assert len(lines) == 3 # Header + 2 rows
     assert "Gross Turnover (INR)" in lines[0]
-    assert "Total Statutory Charges (INR)" in lines[0]
+    assert "Estimated Total Statutory Charges (INR)" in lines[0]
     assert "TR_99182" in lines[1]
     assert "CRUDEOIL24AUGFUT" in lines[1]
     assert "TR_99183" in lines[2]

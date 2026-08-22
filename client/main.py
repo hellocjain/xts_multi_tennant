@@ -387,6 +387,8 @@ def is_duplicate_signal(action: str, symbol: str, quantity: int, price: float, d
         logger.error(f"DEDUP SHIELD ERROR: {e}. Failing closed to prevent duplicate orders.")
         return True 
 
+TRADING_PAUSED = False
+
 @app.get("/health")
 async def health():
     unfinished = await anyio.to_thread.run_sync(db_fetch_unfinished)
@@ -395,6 +397,7 @@ async def health():
     cash_contracts = sum(len(contracts) for contracts in xts_api.CASH_MASTER.values())
     return {
         "client_id": getattr(config, "CLIENT_ID", ""),
+        "trading_paused": TRADING_PAUSED,
         "cache_healthy": xts_api.cache_is_healthy(),
         "cache_date": str(xts_api.CACHE_DATE) if xts_api.CACHE_DATE else "N/A",
         "futures_loaded": len(xts_api.FUT_MASTER),
@@ -463,9 +466,38 @@ async def telemetry(request: Request):
         "server_time": time.time()
     }
 
+@app.post("/internal/pause")
+async def pause_trading(request: Request):
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    global TRADING_PAUSED
+    TRADING_PAUSED = True
+    logger.warning(f"CIRCUIT BREAKER: Client {getattr(config, 'CLIENT_ID', '')} trading state set to PAUSED")
+    return {"status": "success", "trading_paused": True}
+
+@app.post("/internal/resume")
+async def resume_trading(request: Request):
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    global TRADING_PAUSED
+    TRADING_PAUSED = False
+    logger.info(f"RESUMED: Client {getattr(config, 'CLIENT_ID', '')} trading state set to ACTIVE")
+    return {"status": "success", "trading_paused": False}
+
 @app.post("/panic")
 async def panic(request: Request):
     """Emergency Kill-Switch API endpoint"""
+    global TRADING_PAUSED
+    TRADING_PAUSED = True
+
     try:
         data = await request.json()
     except Exception:
@@ -509,6 +541,10 @@ async def panic(request: Request):
 async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     client_ip = request.client.host or "unknown"
     now = time.time()
+
+    if TRADING_PAUSED:
+        logger.warning(f"REJECTED: Trading is currently PAUSED on client {getattr(config, 'CLIENT_ID', '')}. Webhook signal dropped.")
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Trading is paused on this account due to circuit breaker/kill switch"})
 
     body_bytes = b""
     try:

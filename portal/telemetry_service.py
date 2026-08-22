@@ -458,12 +458,12 @@ def generate_trade_book_csv(trades: list, tenant_id: str = "") -> str:
         "Quantity",
         "Price (INR)",
         "Gross Turnover (INR)",
-        "STT / CTT (INR)",
-        "Exchange Charges (INR)",
-        "SEBI Fees (INR)",
-        "Stamp Duty (INR)",
-        "GST 18% (INR)",
-        "Total Statutory Charges (INR)"
+        "Estimated STT / CTT (INR)",
+        "Estimated Exchange Charges (INR)",
+        "Estimated SEBI Fees (INR)",
+        "Estimated Stamp Duty (INR)",
+        "Estimated GST 18% (INR)",
+        "Estimated Total Statutory Charges (INR)"
     ])
 
     for tr in trades:

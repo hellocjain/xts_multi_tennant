@@ -490,4 +490,36 @@ def test_internal_master_refresh_endpoint(monkeypatch):
     assert data["futures_symbols"] >= 1
     assert "Master cache refreshed successfully" in data["message"]
 
+def test_trading_paused_webhook_rejection():
+    client = TestClient(app)
+    
+    # 1. Initially active -> webhook accepted
+    client_main.TRADING_PAUSED = False
+    valid_payload = {
+        "secret": "TestSecret123",
+        "action": "BUY",
+        "symbol": "CRUDEOIL",
+        "quantity": 1,
+        "price": 6500.0
+    }
+    res_active = client.post("/webhook", json=valid_payload)
+    assert res_active.status_code == 200
+    assert res_active.json()["status"] == "success"
+
+    # 2. Trigger pause -> next incoming webhook rejected with 403
+    client.post("/internal/pause")
+    assert client_main.TRADING_PAUSED is True
+
+    res_paused = client.post("/webhook", json=valid_payload)
+    assert res_paused.status_code == 403
+    assert "Trading is paused" in res_paused.json()["message"]
+
+    # 3. Trigger resume -> webhook accepted again
+    client.post("/internal/resume")
+    assert client_main.TRADING_PAUSED is False
+
+    res_resumed = client.post("/webhook", json=valid_payload)
+    assert res_resumed.status_code == 200
+
+
 
