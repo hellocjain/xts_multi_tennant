@@ -96,9 +96,13 @@ def get_contract_multiplier(symbol: str, exch_seg: str = "") -> float:
     if exch_seg and exch_seg not in ("MCXFO", "NCDEX"):
         return 1.0
     clean = resolve_symbol_smart(symbol)
-    for root, mult in COMMODITY_MULTIPLIERS.items():
-        if clean.startswith(root) or root in clean:
-            return mult
+    # Match longest root first so variants (GOLDPETAL, GOLDM, CRUDEOILM, SILVERMIC) are not shadowed by base roots
+    for root in sorted(COMMODITY_MULTIPLIERS.keys(), key=len, reverse=True):
+        if clean.startswith(root):
+            return COMMODITY_MULTIPLIERS[root]
+    for root in sorted(COMMODITY_MULTIPLIERS.keys(), key=len, reverse=True):
+        if root in clean:
+            return COMMODITY_MULTIPLIERS[root]
     return 1.0
 
 COMMON_ALIASES = {
@@ -110,7 +114,6 @@ COMMON_ALIASES = {
     "GOLDMINI": "GOLDM",
     "SILVERMINI": "SILVERM",
     "SILVERMICRO": "SILVERMIC",
-    "ALUMINIUM": "ALUMINI",
     "ALUMINIUMMINI": "ALUMINI",
     "ZINCMINI": "ZINC",
     "LEADMINI": "LEAD",
