@@ -1125,8 +1125,8 @@ def check_order_status_by_ref(order_ref):
         return "NETWORK_ERROR"
     return "NOT_FOUND"
 
-def execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, attempt=1):
-    result = place_order(action, symbol, quantity, tv_price, order_ref)
+def execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, attempt=1, is_paper=False):
+    result = place_order(action, symbol, quantity, tv_price, order_ref, is_paper=is_paper)
 
     if result.get("status") == "error" or result.get("type") == "error" or result.get("type") != "success":
         err_msg = str(result.get("description") or result.get("message") or result.get("error") or result).lower()
@@ -1146,7 +1146,7 @@ def execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, atte
         if is_auth_issue and attempt == 1:
             logger.warning("Session expired. Auto-healing authentication immediately...")
             clear_tokens()
-            return execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, attempt=2)
+            return execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, attempt=2, is_paper=is_paper)
 
     if result.get("status") == "error" or result.get("type") == "error":
         send_ops_alert(f"XTS bot: order FAILED for {symbol} ({action} x{quantity}) ref={order_ref}: {result}")
@@ -1179,8 +1179,8 @@ def _monitor_and_clean_partial_fills(order_ref, client_id, token):
     except Exception as e:
         logger.error(f"Partial fill monitor error: {e}")
 
-def place_order(action, symbol, quantity, tv_price, order_ref):
-    is_paper = getattr(config, "PAPER_TRADE_MODE", False)
+def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
+    is_paper = is_paper or getattr(config, "PAPER_TRADE_MODE", False)
     token = None
     if not is_paper:
         token = get_interactive_token()
@@ -1251,14 +1251,14 @@ def place_order(action, symbol, quantity, tv_price, order_ref):
         return {"status": "error", "message": "Daily cumulative notional cap reached"}
 
     client_id = getattr(config, "CLIENT_ID", "").strip()
-    if not client_id:
+    if not client_id and not is_paper:
         refund_daily_notional(order_val)
         return {"status": "error", "message": "CRITICAL: CLIENT_ID is unconfigured."}
 
     time_in_force = getattr(config, "TIME_IN_FORCE", "DAY")
     safe_url = get_safe_base_url()
     url = f"{safe_url}/orders"
-    headers = {"authorization": token, "Content-Type": "application/json"}
+    headers = {"authorization": token, "Content-Type": "application/json"} if token else {}
     payload = {
         "exchangeSegment": exch_seg,
         "exchangeInstrumentID": instrument_id,
@@ -1272,10 +1272,10 @@ def place_order(action, symbol, quantity, tv_price, order_ref):
         "stopPrice": 0,
         "apiOrderSource": "WEBAPI",
         "orderUniqueIdentifier": order_ref,
-        "clientID": client_id,
+        "clientID": client_id or "PAPER_CLIENT",
     }
 
-    if getattr(config, "PAPER_TRADE_MODE", False):
+    if is_paper:
         paper_order_id = f"PAPER_{int(time.time() * 1000)}"
         simulated_response = {
             "type": "success",

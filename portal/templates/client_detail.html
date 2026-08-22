@@ -1024,6 +1024,69 @@
         </div>
         {% endif %}
 
+        <!-- Live Candlestick & SuperTrend Indicator Chart Card (TradingView Lightweight Charts v4) -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl space-y-4">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-3">
+                    <div class="w-9 h-9 rounded-xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">
+                        <i data-lucide="candlestick-chart" class="w-5 h-5 text-brand-400"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Live Candlestick &amp; SuperTrend Chart</h3>
+                            <span id="st-chart-symbol-badge" class="text-[10px] font-mono bg-brand-500/20 text-brand-300 px-2 py-0.5 rounded border border-brand-500/30">{{ supertrend.symbol|default('NO SYMBOL') }}</span>
+                        </div>
+                        <p class="text-xs text-slate-400 font-mono">Real-time OHLC &amp; Wilder's ATR SuperTrend with trade entry/exit markers</p>
+                    </div>
+                </div>
+
+                <!-- Timeframe Switcher Pills & Diagnostics Action -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="flex items-center bg-slate-900 border border-bordercolor rounded-xl p-1 font-mono text-[11px]">
+                        {% for tf_opt in ['1m', '3m', '5m', '15m', '20m', '25m', '30m', '1h'] %}
+                        <button type="button" onclick="switchChartTimeframe('{{ tf_opt }}')" id="chart-tf-btn-{{ tf_opt }}"
+                            class="px-2.5 py-1 rounded-lg transition font-bold {% if supertrend.timeframe == tf_opt or (loop.first and not supertrend.timeframe) %}bg-brand-600 text-white shadow{% else %}text-slate-400 hover:text-slate-200{% endif %}">
+                            {{ tf_opt }}
+                        </button>
+                        {% endfor %}
+                    </div>
+
+                    <button type="button" onclick="refreshSuperTrendChart()" title="Refresh Chart Data"
+                        class="p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-bordercolor transition">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                    </button>
+
+                    <button type="button" onclick="openEvaluateModal()"
+                        class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 shadow-sm">
+                        <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i>
+                        <span>Force Evaluate Cycle</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chart Canvas Container -->
+            <div id="st-chart-container" class="w-full h-[380px] bg-slate-950 rounded-xl overflow-hidden relative border border-bordercolor flex items-center justify-center">
+                <div id="st-chart-loading" class="text-xs font-mono text-slate-400 flex items-center gap-2">
+                    <i data-lucide="loader-2" class="w-4 h-4 animate-spin text-brand-400"></i>
+                    <span>Loading Live Candle Feed &amp; SuperTrend Series...</span>
+                </div>
+            </div>
+
+            <!-- Chart Status / Telemetry Footer -->
+            <div class="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-slate-400 pt-1 border-t border-bordercolor/50">
+                <div class="flex items-center gap-4">
+                    <span>LTP: <strong id="chart-ltp-val" class="text-slate-100">--</strong></span>
+                    <span>ATR(10): <strong id="chart-atr-val" class="text-emerald-400">--</strong></span>
+                    <span>Lower Band: <strong id="chart-up-val" class="text-emerald-400">--</strong></span>
+                    <span>Upper Band: <strong id="chart-dn-val" class="text-rose-400">--</strong></span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Auto-refreshes on candle close</span>
+                </div>
+            </div>
+        </div>
+
         <!-- SuperTrend Configuration Form -->
         <div class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-6">
             <div class="flex items-center justify-between border-b border-bordercolor pb-4">
@@ -1054,6 +1117,44 @@
                         <input type="checkbox" id="st-enable-toggle" name="is_enabled" value="true" class="sr-only peer" {% if supertrend.is_enabled %}checked{% endif %}>
                         <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
                     </label>
+                </div>
+
+                <!-- Execution Mode Selector (LIVE vs PAPER) -->
+                <div class="space-y-2">
+                    <label class="text-xs font-bold text-slate-200">Execution Mode <span class="text-rose-400">*</span></label>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label id="exec-mode-label-live" class="relative flex items-start p-3.5 rounded-xl border cursor-pointer transition {% if supertrend.execution_mode == 'LIVE' or not supertrend.execution_mode %}bg-emerald-500/10 border-emerald-500/40 text-slate-100{% else %}bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700{% endif %}">
+                            <input type="radio" name="execution_mode" value="LIVE" class="sr-only" {% if supertrend.execution_mode == 'LIVE' or not supertrend.execution_mode %}checked{% endif %} onchange="updateExecutionModeUI(this.value)">
+                            <div class="flex items-center gap-3">
+                                <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
+                                    <i data-lucide="shield-alert" class="w-4 h-4"></i>
+                                </div>
+                                <div class="space-y-0.5">
+                                    <div class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                                        <span>LIVE Broker Trading</span>
+                                        <span class="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-mono font-bold">REAL CAPITAL</span>
+                                    </div>
+                                    <p class="text-[10px] text-slate-400">Routes real marketable limit orders to Symphony XTS broker terminal with instant risk controls.</p>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label id="exec-mode-label-paper" class="relative flex items-start p-3.5 rounded-xl border cursor-pointer transition {% if supertrend.execution_mode == 'PAPER' %}bg-amber-500/10 border-amber-500/40 text-slate-100{% else %}bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700{% endif %}">
+                            <input type="radio" name="execution_mode" value="PAPER" class="sr-only" {% if supertrend.execution_mode == 'PAPER' %}checked{% endif %} onchange="updateExecutionModeUI(this.value)">
+                            <div class="flex items-center gap-3">
+                                <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0">
+                                    <i data-lucide="test-tube-2" class="w-4 h-4"></i>
+                                </div>
+                                <div class="space-y-0.5">
+                                    <div class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                                        <span>PAPER Simulation (Dry Run)</span>
+                                        <span class="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-mono font-bold">RISK-FREE</span>
+                                    </div>
+                                    <p class="text-[10px] text-slate-400">Fetches live broker candles and generates signals, simulating full fills and MTM with zero broker orders.</p>
+                                </div>
+                            </div>
+                        </label>
+                    </div>
                 </div>
 
                 <!-- Parameters Grid -->
@@ -1466,5 +1567,319 @@
             wrap.classList.add('hidden');
         }
     }
+
+    function updateExecutionModeUI(mode) {
+        const liveLabel = document.getElementById('exec-mode-label-live');
+        const paperLabel = document.getElementById('exec-mode-label-paper');
+        if (!liveLabel || !paperLabel) return;
+        if (mode === 'LIVE') {
+            liveLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-emerald-500/10 border-emerald-500/40 text-slate-100";
+            paperLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700";
+        } else {
+            paperLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-amber-500/10 border-amber-500/40 text-slate-100";
+            liveLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700";
+        }
+    }
+
+    // =========================================================================
+    // TRADINGVIEW LIGHTWEIGHT CHARTS V4 INTEGRATION
+    // =========================================================================
+    let stChartInstance = null;
+    let stCandleSeries = null;
+    let stLineSeries = null;
+    let stActiveTimeframe = "{{ supertrend.timeframe|default('5m') }}";
+    let stChartRefreshTimer = null;
+
+    function initSuperTrendChart() {
+        const container = document.getElementById('st-chart-container');
+        if (!container || typeof LightweightCharts === 'undefined') return;
+
+        if (!stChartInstance) {
+            container.innerHTML = '';
+            stChartInstance = LightweightCharts.createChart(container, {
+                width: container.clientWidth,
+                height: 380,
+                layout: {
+                    background: { color: '#020617' },
+                    textColor: '#94a3b8',
+                    fontSize: 11,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+                grid: {
+                    vertLines: { color: '#1e293b' },
+                    horzLines: { color: '#1e293b' },
+                },
+                timeScale: {
+                    timeVisible: true,
+                    secondsVisible: false,
+                    borderColor: '#334155',
+                },
+                rightPriceScale: {
+                    borderColor: '#334155',
+                    scaleMargins: { top: 0.1, bottom: 0.1 },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+            });
+
+            // Candlestick Series
+            stCandleSeries = stChartInstance.addCandlestickSeries({
+                upColor: '#10b981',
+                downColor: '#f43f5e',
+                borderUpColor: '#10b981',
+                borderDownColor: '#f43f5e',
+                wickUpColor: '#10b981',
+                wickDownColor: '#f43f5e',
+            });
+
+            // SuperTrend Line Series
+            stLineSeries = stChartInstance.addLineSeries({
+                color: '#10b981',
+                lineWidth: 2,
+                title: 'SuperTrend',
+                priceLineVisible: false,
+            });
+
+            // Responsive auto-resize
+            window.addEventListener('resize', () => {
+                if (stChartInstance && container) {
+                    stChartInstance.applyOptions({ width: container.clientWidth });
+                }
+            });
+        }
+
+        refreshSuperTrendChart();
+    }
+
+    async function refreshSuperTrendChart() {
+        const tenantId = "{{ client.id }}";
+        if (!tenantId) return;
+
+        try {
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/chart-data?timeframe=${encodeURIComponent(stActiveTimeframe)}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+
+            const loadingEl = document.getElementById('st-chart-loading');
+            if (loadingEl) loadingEl.remove();
+
+            if (data.candlestick && data.candlestick.length > 0 && stCandleSeries) {
+                stCandleSeries.setData(data.candlestick);
+                
+                if (data.supertrend_line && data.supertrend_line.length > 0 && stLineSeries) {
+                    stLineSeries.setData(data.supertrend_line);
+                }
+
+                if (data.markers && data.markers.length > 0 && stCandleSeries.setMarkers) {
+                    stCandleSeries.setMarkers(data.markers);
+                }
+
+                if (stChartInstance) {
+                    stChartInstance.timeScale().fitContent();
+                }
+
+                // Update bottom status bar
+                const lastCandle = data.candlestick[data.candlestick.length - 1];
+                if (lastCandle) {
+                    const ltpEl = document.getElementById('chart-ltp-val');
+                    if (ltpEl) ltpEl.innerText = '₹' + Number(lastCandle.close).toFixed(2);
+                }
+                if (data.symbol) {
+                    const badge = document.getElementById('st-chart-symbol-badge');
+                    if (badge) badge.innerText = `${data.symbol} (${stActiveTimeframe})`;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load SuperTrend chart data:', e);
+        }
+    }
+
+    function switchChartTimeframe(tf) {
+        stActiveTimeframe = tf;
+        document.querySelectorAll('[id^="chart-tf-btn-"]').forEach(btn => {
+            btn.className = "px-2.5 py-1 rounded-lg transition font-bold text-slate-400 hover:text-slate-200";
+        });
+        const activeBtn = document.getElementById(`chart-tf-btn-${tf}`);
+        if (activeBtn) {
+            activeBtn.className = "px-2.5 py-1 rounded-lg transition font-bold bg-brand-600 text-white shadow";
+        }
+        refreshSuperTrendChart();
+    }
+
+    // Modal: Force Evaluate Strategy Cycle
+    async function openEvaluateModal() {
+        const modal = document.getElementById('st-evaluate-modal');
+        const body = document.getElementById('st-evaluate-modal-body');
+        if (!modal || !body) return;
+
+        modal.classList.remove('hidden');
+        lucide.createIcons();
+
+        body.innerHTML = `
+            <div class="text-center py-8 space-y-3">
+                <i data-lucide="loader-2" class="w-8 h-8 animate-spin text-brand-400 mx-auto"></i>
+                <div class="text-slate-300 text-xs font-mono">Querying live broker OHLC &amp; evaluating SuperTrend Pine Script formula...</div>
+            </div>
+        `;
+        lucide.createIcons();
+
+        try {
+            const tenantId = "{{ client.id }}";
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/evaluate-now`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const res = await resp.json();
+
+            if (res.status === 'OK') {
+                const isBull = res.trend === 'BULLISH';
+                const trendColor = isBull ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-rose-400 bg-rose-500/10 border-rose-500/30';
+                
+                body.innerHTML = `
+                    <div class="space-y-4">
+                        <!-- Key Outcome Header Card -->
+                        <div class="bg-slate-900/90 border border-bordercolor p-4 rounded-xl flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <div class="text-[10px] uppercase text-slate-400 font-bold">Evaluated Contract &amp; Frame</div>
+                                <div class="text-sm font-bold text-slate-100 font-mono">${res.symbol} (${res.timeframe}) &bull; ID: ${res.instrument_id} (${res.exchange_segment})</div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="px-3 py-1 rounded-lg text-xs font-bold border font-mono ${trendColor}">
+                                    ${isBull ? '▲ BULLISH' : '▼ BEARISH'}
+                                </span>
+                                <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 text-slate-200 border border-bordercolor font-mono">
+                                    Pos: ${res.strategy_position}
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Mathematical Metrics Grid -->
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                            <div class="bg-slate-900 border border-bordercolor p-3 rounded-xl">
+                                <div class="text-[10px] text-slate-400">Wilder's ATR(${res.atr_period})</div>
+                                <div class="text-sm font-bold text-emerald-400 mt-0.5">₹${res.calculated_atr}</div>
+                            </div>
+                            <div class="bg-slate-900 border border-bordercolor p-3 rounded-xl">
+                                <div class="text-[10px] text-slate-400">Lower Band (Up)</div>
+                                <div class="text-sm font-bold text-emerald-400 mt-0.5">₹${res.lower_band}</div>
+                            </div>
+                            <div class="bg-slate-900 border border-bordercolor p-3 rounded-xl">
+                                <div class="text-[10px] text-slate-400">Upper Band (Dn)</div>
+                                <div class="text-sm font-bold text-rose-400 mt-0.5">₹${res.upper_band}</div>
+                            </div>
+                            <div class="bg-slate-900 border border-bordercolor p-3 rounded-xl">
+                                <div class="text-[10px] text-slate-400">Active SuperTrend</div>
+                                <div class="text-sm font-bold text-slate-100 mt-0.5">₹${res.active_supertrend_val}</div>
+                            </div>
+                        </div>
+
+                        <!-- Signal Decision Banner -->
+                        <div class="p-3.5 rounded-xl border ${res.flipped ? 'bg-amber-500/10 border-amber-500/40 text-amber-300' : 'bg-slate-900 border-bordercolor text-slate-300'} flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <i data-lucide="${res.flipped ? 'alert-circle' : 'check-circle'}" class="w-4 h-4 ${res.flipped ? 'text-amber-400' : 'text-emerald-400'}"></i>
+                                <span><strong>Trend Flip Event:</strong> ${res.flipped ? '⚡ FLIP DETECTED (' + res.proposed_action + ')' : 'No Flip (Trend Continuous)'}</span>
+                            </div>
+                            <span class="text-[10px] text-slate-400">Evaluation: <strong>${res.action_taken}</strong></span>
+                        </div>
+
+                        <!-- Last Closed Candle Details -->
+                        ${res.last_candle ? `
+                        <div class="bg-slate-900 border border-bordercolor p-3.5 rounded-xl space-y-2">
+                            <div class="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                                <span>Last Closed Bar: ${res.last_candle.timestamp}</span>
+                                <span class="text-slate-400">Close: <strong class="text-slate-100">₹${res.last_candle.close}</strong></span>
+                            </div>
+                            <div class="grid grid-cols-4 gap-2 text-[11px] text-slate-400 pt-1">
+                                <div>O: <strong class="text-slate-200">${res.last_candle.open}</strong></div>
+                                <div>H: <strong class="text-slate-200">${res.last_candle.high}</strong></div>
+                                <div>L: <strong class="text-slate-200">${res.last_candle.low}</strong></div>
+                                <div>C: <strong class="text-slate-200">${res.last_candle.close}</strong></div>
+                            </div>
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            } else {
+                body.innerHTML = `
+                    <div class="bg-rose-500/10 border border-rose-500/30 text-rose-300 p-4 rounded-xl space-y-1">
+                        <div class="font-bold flex items-center gap-1.5 text-rose-400">
+                            <i data-lucide="alert-octagon" class="w-4 h-4"></i>
+                            <span>Evaluation Error</span>
+                        </div>
+                        <p class="text-xs text-slate-300">${res.error || 'Failed to complete diagnostic evaluation.'}</p>
+                    </div>
+                `;
+            }
+        } catch (e) {
+            body.innerHTML = `
+                <div class="bg-rose-500/10 border border-rose-500/30 text-rose-300 p-4 rounded-xl text-xs">
+                    Failed to reach client container: ${e.message}
+                </div>
+            `;
+        }
+        lucide.createIcons();
+    }
+
+    function closeEvaluateModal() {
+        const modal = document.getElementById('st-evaluate-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    // Auto-init chart when tab loads or is switched
+    document.addEventListener('DOMContentLoaded', () => {
+        const currentTab = localStorage.getItem('client_detail_active_tab') || 'overview';
+        if (currentTab === 'supertrend') {
+            setTimeout(initSuperTrendChart, 200);
+        }
+
+        // Set up periodic chart refresh when supertrend tab is active
+        if (stChartRefreshTimer) clearInterval(stChartRefreshTimer);
+        stChartRefreshTimer = setInterval(() => {
+            const pane = document.getElementById('client-tab-supertrend');
+            if (pane && !pane.classList.contains('hidden')) {
+                refreshSuperTrendChart();
+            }
+        }, 10000);
+    });
+
+    // Hook tab switch to trigger chart render and resize
+    const originalSwitchClientTab = window.switchClientTab;
+    window.switchClientTab = function(tabName) {
+        if (typeof originalSwitchClientTab === 'function') {
+            originalSwitchClientTab(tabName);
+        }
+        if (tabName === 'supertrend') {
+            setTimeout(initSuperTrendChart, 150);
+        }
+    };
 </script>
+
+<!-- Force Evaluate Diagnostic Trace Modal -->
+<div id="st-evaluate-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-cardbg border border-brand-500/40 w-full max-w-xl rounded-2xl p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-3 text-brand-400">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center">
+                    <i data-lucide="cpu" class="w-5 h-5 text-brand-400"></i>
+                </div>
+                <div>
+                    <h3 class="font-bold text-base text-slate-100">Live Strategy Calculation Trace</h3>
+                    <p class="text-xs text-slate-400 font-mono">Step-by-step Pine Script parity verification</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeEvaluateModal()" class="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg bg-slate-800 transition">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+        <div id="st-evaluate-modal-body" class="space-y-4 font-mono text-xs">
+            <!-- Dynamic Content -->
+        </div>
+        <div class="flex justify-end pt-2 border-t border-bordercolor">
+            <button type="button" onclick="closeEvaluateModal()" class="px-4 py-2 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition">
+                Close Trace
+            </button>
+        </div>
+    </div>
+</div>
 {% endblock %}

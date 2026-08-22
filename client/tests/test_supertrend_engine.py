@@ -298,3 +298,82 @@ def test_symbol_validation_and_market_readiness_endpoints(monkeypatch):
     d_read = res_readiness.json()
     assert d_read["all_ready"] is True
     assert d_read["interactive_auth"]["status"] == "OK"
+
+def test_supertrend_chart_data_and_evaluate_now_endpoints(monkeypatch):
+    client = TestClient(app)
+
+    # 1. Test /internal/supertrend/candles
+    supertrend_engine.cached_candles = [
+        {"time": 1787200000, "open": 100.0, "high": 105.0, "low": 98.0, "close": 104.0, "supertrend": 95.0, "upper_band": 110.0, "lower_band": 95.0, "trend": 1, "atr": 3.5, "volume": 500}
+    ]
+    res_candles = client.get("/internal/supertrend/candles")
+    assert res_candles.status_code == 200
+    c_data = res_candles.json()
+    assert "candlestick" in c_data
+    assert "supertrend_line" in c_data
+    assert len(c_data["candlestick"]) == 1
+
+    # 2. Test /internal/supertrend/evaluate-now
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823,
+        "exch_seg": "MCXFO",
+        "lot_size": 1,
+        "freeze_qty": 1000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=25)
+    })
+    synthetic_feed = generate_synthetic_candles([100, 102, 105, 108, 110, 112, 115, 118, 120, 122, 125, 128, 130, 135])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: synthetic_feed)
+
+    res_eval = client.post("/internal/supertrend/evaluate-now")
+    assert res_eval.status_code == 200
+    eval_json = res_eval.json()
+    assert eval_json["status"] == "OK"
+    assert eval_json["trend"] == "BULLISH"
+    assert eval_json["calculated_atr"] > 0
+
+@pytest.mark.anyio
+async def test_supertrend_freeze_quantity_auto_slicing(monkeypatch):
+    dispatched_orders = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched_orders.append((sig_id, payload))
+
+    engine = SuperTrendEngine(dispatch_fn=mock_dispatch)
+    engine.update_config({
+        "is_enabled": True,
+        "symbol": "SILVER100",
+        "exchange_segment": "MCXFO",
+        "timeframe": "5m",
+        "quantity": 25,  # Order total 25 lots
+        "product_type": "NRML",
+        "execution_mode": "PAPER"
+    })
+
+    # Mock freeze quantity = 10 lots max per order slice
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823,
+        "exch_seg": "MCXFO",
+        "lot_size": 1,
+        "freeze_qty": 10,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    # Synthetic candles producing Bullish Flip on the last candle
+    candles_bullish = generate_synthetic_candles([
+        130, 128, 126, 124, 122, 120, 118, 116, 114, 112,
+        110, 100, 50, 40, 30,
+        150
+    ])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: candles_bullish)
+
+    await engine.evaluate_cycle(xts_api, client_main)
+
+    # Total quantity 25 with freeze cap 10 must be sliced into: 10, 10, 5 = 3 slices
+    assert len(dispatched_orders) == 3
+    assert dispatched_orders[0][1]["quantity"] == 10
+    assert dispatched_orders[1][1]["quantity"] == 10
+    assert dispatched_orders[2][1]["quantity"] == 5
+    assert dispatched_orders[0][1]["is_paper"] is True
+

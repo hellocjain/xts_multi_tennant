@@ -4,10 +4,12 @@ Part of the XTS Multi-Tenant Algorithmic Trading Platform.
 
 Features:
 - Pure Python Wilder's Smoothing ATR & SuperTrend calculation (zero heavy C/Pandas dependencies).
-- Aligned candle-close REST polling against Symphony XTS Market Data API.
+- 100% Mathematical parity with TradingView Pine Script strategy (KivancOzbilgic v4).
+- Aligned candle-close REST polling against Symphony XTS Market Data API (ON_CANDLE_CLOSE rule).
 - Continuous live broker position reconciliation on every cycle.
-- Sequential two-leg reversal execution (Leg 1: Square-Off, Leg 2: Enter Opposite).
-- Pending order suppression & deterministic order_ref generation.
+- Sequential two-leg reversal execution (Leg 1: Square-Off, Leg 2: Enter Opposite) with freeze-quantity slicing.
+- Per-tenant Execution Mode: LIVE Broker Execution vs PAPER Simulation (Dry-Run).
+- Ring buffer cache for TradingView Lightweight Charts v4 candlestick and indicator series.
 - Contract expiry safety cutoff & auto-pause for MCX/NSE derivatives.
 - Direct integration into audited execute_signal() pipeline with source="supertrend_engine".
 """
@@ -80,6 +82,7 @@ def calculate_supertrend(
 ) -> Dict[str, Any]:
     """
     Computes SuperTrend indicator over a chronological list of OHLC candles.
+    Matches TradingView Pine Script v4 (KivancOzbilgic formula).
     Candles format: [{"time": int, "open": float, "high": float, "low": float, "close": float, "volume": int}, ...]
     """
     n = len(candles)
@@ -96,6 +99,7 @@ def calculate_supertrend(
             "prev_trend": 0,
             "is_flip": False,
             "flip_direction": None,
+            "candle_series": [],
             "error": f"Insufficient candles ({n}/{atr_period + 1} required)"
         }
 
@@ -111,9 +115,8 @@ def calculate_supertrend(
             tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
         tr_list.append(tr)
 
-    # 2. Compute Wilder's Smoothing ATR
+    # 2. Compute Wilder's Smoothing ATR (RMA in Pine Script)
     atr_list = [0.0] * n
-    # Initial ATR is simple average of first atr_period TRs
     initial_atr = sum(tr_list[:atr_period]) / float(atr_period)
     atr_list[atr_period - 1] = initial_atr
 
@@ -122,7 +125,7 @@ def calculate_supertrend(
         current_atr = ((prev_atr * (atr_period - 1)) + tr_list[i]) / float(atr_period)
         atr_list[i] = current_atr
 
-    # 3. Compute Basic Bands, Final Bands, and Trend
+    # 3. Compute Basic Bands, Final Ratchet Bands, and Trend
     final_ub = [0.0] * n
     final_lb = [0.0] * n
     trend = [0] * n # +1 for Bullish, -1 for Bearish
@@ -148,19 +151,19 @@ def calculate_supertrend(
             prev_ub = final_ub[i - 1]
             prev_lb = final_lb[i - 1]
 
-            # Final Upper Band Ratchet
+            # Final Upper Band Ratchet (Pine Script dn := close[1] < dn1 ? min(dn, dn1) : dn)
             if basic_ub < prev_ub or prev_close > prev_ub:
                 final_ub[i] = basic_ub
             else:
                 final_ub[i] = prev_ub
 
-            # Final Lower Band Ratchet
+            # Final Lower Band Ratchet (Pine Script up := close[1] > up1 ? max(up, up1) : up)
             if basic_lb > prev_lb or prev_close < prev_lb:
                 final_lb[i] = basic_lb
             else:
                 final_lb[i] = prev_lb
 
-            # Trend Direction
+            # Trend Direction (Pine Script trend := trend == -1 and close > dn1 ? 1 : trend == 1 and close < up1 ? -1 : trend)
             if close > prev_ub:
                 trend[i] = 1
             elif close < prev_lb:
@@ -181,6 +184,30 @@ def calculate_supertrend(
         elif cur_trend == -1 and prev_trend == 1:
             flip_dir = "BEARISH"
 
+    # 4. Generate Enriched Candle Series for Lightweight Charts
+    enriched_series = []
+    for i in range(n):
+        c_time = candles[i].get("time")
+        if c_time is None:
+            c_time = candles[i].get("timestamp", int(time.time()))
+        enriched_series.append({
+            "time": c_time,
+            "open": round(float(candles[i]["open"]), 2),
+            "high": round(float(candles[i]["high"]), 2),
+            "low": round(float(candles[i]["low"]), 2),
+            "close": round(float(candles[i]["close"]), 2),
+            "supertrend": round(supertrend[i], 2),
+            "upper_band": round(final_ub[i], 2),
+            "lower_band": round(final_lb[i], 2),
+            "trend": trend[i],
+            "atr": round(atr_list[i], 2),
+            "volume": int(candles[i].get("volume", 0))
+        })
+
+    last_time = candles[-1].get("time")
+    if last_time is None:
+        last_time = candles[-1].get("timestamp", 0)
+
     return {
         "trend": cur_trend,
         "trend_name": "BULLISH" if cur_trend == 1 else ("BEARISH" if cur_trend == -1 else "INITIALIZING"),
@@ -189,10 +216,11 @@ def calculate_supertrend(
         "lower_band": round(final_lb[-1], 2),
         "atr": round(atr_list[-1], 2),
         "last_close": round(candles[-1]["close"], 2),
-        "last_candle_time": candles[-1]["time"],
+        "last_candle_time": last_time,
         "prev_trend": prev_trend,
         "is_flip": is_flip,
         "flip_direction": flip_dir,
+        "candle_series": enriched_series,
         "error": None
     }
 
@@ -214,9 +242,10 @@ class SuperTrendEngine:
         self.product_type: str = "NRML"
         self.atr_period: int = 10
         self.multiplier: float = 3.0
+        self.execution_mode: str = "LIVE" # LIVE vs PAPER
         
         # Live Strategy Telemetry State
-        self.status: str = "DISABLED" # DISABLED, IDLE, RUNNING, EXPIRED_PAUSED, ERROR
+        self.status: str = "DISABLED" # DISABLED, IDLE, RUNNING, EXPIRED_PAUSED, ERROR, PAUSED
         self.active_trend: str = "INITIALIZING"
         self.strategy_position: str = "FLAT" # FLAT, LONG, SHORT
         self.current_broker_quantity: int = 0
@@ -232,6 +261,10 @@ class SuperTrendEngine:
         self.last_error: Optional[str] = None
         self.next_poll_seconds: int = 0
         
+        # Ring Buffer & Trade Markers for Visual Charting
+        self.cached_candles: List[Dict[str, Any]] = []
+        self.recent_trade_markers: List[Dict[str, Any]] = []
+        
         self._running: bool = False
         self._task: Optional[asyncio.Task] = None
 
@@ -244,6 +277,9 @@ class SuperTrendEngine:
         self.product_type = str(config_dict.get("product_type", "NRML")).strip().upper()
         self.atr_period = max(2, int(config_dict.get("atr_period", 10)))
         self.multiplier = max(0.1, float(config_dict.get("multiplier", 3.0)))
+        self.execution_mode = str(config_dict.get("execution_mode", "LIVE")).strip().upper()
+        if self.execution_mode not in ("LIVE", "PAPER"):
+            self.execution_mode = "LIVE"
         
         is_conf = bool(self.symbol and self.exchange_segment and self.quantity > 0)
         self.is_configured = is_conf
@@ -258,13 +294,14 @@ class SuperTrendEngine:
             self.is_enabled = requested_enabled
             self.status = "RUNNING" if self.is_enabled else "DISABLED"
 
-        logger.info(f"SuperTrend config updated: enabled={self.is_enabled}, configured={self.is_configured}, symbol={self.symbol}, tf={self.timeframe}, qty={self.quantity}")
+        logger.info(f"SuperTrend config updated: enabled={self.is_enabled}, configured={self.is_configured}, mode={self.execution_mode}, symbol={self.symbol}, tf={self.timeframe}, qty={self.quantity}")
 
     def get_telemetry(self) -> dict:
         """Returns instantaneous strategy telemetry for API and HTMX views."""
         return {
             "is_enabled": self.is_enabled,
             "is_configured": self.is_configured,
+            "execution_mode": self.execution_mode,
             "status": self.status,
             "symbol": self.symbol,
             "exchange_segment": self.exchange_segment,
@@ -286,7 +323,132 @@ class SuperTrendEngine:
             "last_signal_action": self.last_signal_action,
             "last_signal_details": self.last_signal_details,
             "next_poll_seconds": self.next_poll_seconds,
+            "cached_candles_count": len(self.cached_candles),
             "last_error": self.last_error,
+        }
+
+    def get_chart_data(self) -> dict:
+        """Returns JSON payload formatted specifically for TradingView Lightweight Charts v4."""
+        candles_out = []
+        st_line_out = []
+        ub_line_out = []
+        lb_line_out = []
+
+        for c in self.cached_candles:
+            ts = c["time"]
+            candles_out.append({
+                "time": ts,
+                "open": c["open"],
+                "high": c["high"],
+                "low": c["low"],
+                "close": c["close"],
+            })
+            if c.get("supertrend") and c["supertrend"] > 0:
+                color = "#10b981" if c.get("trend") == 1 else "#f43f5e"
+                st_line_out.append({
+                    "time": ts,
+                    "value": c["supertrend"],
+                    "color": color
+                })
+            if c.get("upper_band") and c["upper_band"] > 0:
+                ub_line_out.append({"time": ts, "value": c["upper_band"]})
+            if c.get("lower_band") and c["lower_band"] > 0:
+                lb_line_out.append({"time": ts, "value": c["lower_band"]})
+
+        return {
+            "symbol": self.symbol,
+            "exchange_segment": self.exchange_segment,
+            "timeframe": self.timeframe,
+            "timeframe_seconds": parse_timeframe_seconds(self.timeframe),
+            "execution_mode": self.execution_mode,
+            "status": self.status,
+            "current_trend": self.active_trend,
+            "last_close": self.last_close,
+            "atr": self.last_atr,
+            "candlestick": candles_out,
+            "supertrend_line": st_line_out,
+            "upper_band": ub_line_out,
+            "lower_band": lb_line_out,
+            "markers": self.recent_trade_markers[-30:],
+            "next_poll_seconds": self.next_poll_seconds
+        }
+
+    async def evaluate_cycle_diagnostic(self, xts_api_module) -> dict:
+        """
+        Executes on-demand diagnostic evaluation of live OHLC data and returns step-by-step formula trace.
+        Does not mutate trade state or place orders.
+        """
+        sym = self.symbol or "SILVER1001!"
+        tf_seconds = parse_timeframe_seconds(self.timeframe)
+        inst = xts_api_module.resolve_contract(sym)
+        if not inst:
+            return {"status": "ERROR", "error": f"Symbol '{sym}' not found in master cache"}
+
+        inst_id = inst.get("inst_id")
+        exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
+
+        t_start = time.time()
+        candles = await asyncio.to_thread(
+            xts_api_module.fetch_ohlc_candles,
+            exch_seg,
+            inst_id,
+            tf_seconds,
+            50
+        )
+        fetch_ms = int((time.time() - t_start) * 1000)
+
+        if not candles:
+            return {
+                "status": "ERROR",
+                "error": "No candle data returned from broker OHLC API",
+                "symbol": sym,
+                "inst_id": inst_id,
+                "exch_seg": exch_seg
+            }
+
+        st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
+        calc_ms = int((time.time() - t_start) * 1000) - fetch_ms
+
+        last_5 = st_res.get("candle_series", [])[-5:]
+        flip_dir = st_res.get("flip_direction")
+        
+        proposed_action = "NO_ACTION"
+        if flip_dir == "BULLISH":
+            proposed_action = "BUY"
+        elif flip_dir == "BEARISH":
+            proposed_action = "SELL"
+
+        return {
+            "status": "OK",
+            "symbol": sym,
+            "resolved_desc": inst.get("desc"),
+            "inst_id": inst_id,
+            "exch_seg": exch_seg,
+            "timeframe": self.timeframe,
+            "timeframe_seconds": tf_seconds,
+            "execution_mode": self.execution_mode,
+            "atr_period": self.atr_period,
+            "multiplier": self.multiplier,
+            "total_candles": len(candles),
+            "last_close": st_res["last_close"],
+            "current_atr": st_res["atr"],
+            "calculated_atr": st_res["atr"],
+            "upper_band": st_res["upper_band"],
+            "lower_band": st_res["lower_band"],
+            "supertrend": st_res["supertrend"],
+            "current_trend": st_res["trend_name"],
+            "trend": st_res["trend_name"],
+            "prev_trend": "BULLISH" if st_res["prev_trend"] == 1 else ("BEARISH" if st_res["prev_trend"] == -1 else "INITIALIZING"),
+            "is_flip": st_res["is_flip"],
+            "flip_direction": flip_dir,
+            "current_strategy_position": self.strategy_position,
+            "proposed_action": proposed_action,
+            "last_5_candles": last_5,
+            "benchmarks": {
+                "fetch_ms": fetch_ms,
+                "calc_ms": calc_ms,
+                "total_ms": fetch_ms + calc_ms
+            }
         }
 
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:
@@ -311,6 +473,7 @@ class SuperTrendEngine:
         inst_id = inst.get("inst_id")
         exch_seg = inst.get("exch_seg") or self.exchange_segment
         expiry_date = inst.get("expiry")
+        freeze_limit = inst.get("freeze_qty") or 100000
 
         # 2. Expiry Safety Cutoff Check
         if expiry_date:
@@ -323,7 +486,7 @@ class SuperTrendEngine:
                 
                 # Square-off any open position immediately
                 if self.strategy_position != "FLAT":
-                    await self._execute_exit(self.strategy_position, self.current_broker_quantity, "EXPIRY_SAFETY", main_module)
+                    await self._execute_exit(self.strategy_position, self.current_broker_quantity, "EXPIRY_SAFETY", main_module, freeze_limit)
                 
                 self.is_enabled = False
                 self.status = "EXPIRED_PAUSED"
@@ -398,111 +561,156 @@ class SuperTrendEngine:
         self.lower_band = st_res["lower_band"]
         self.last_close = st_res["last_close"]
         self.last_candle_time = st_res["last_candle_time"]
+        self.cached_candles = st_res.get("candle_series", [])
         self.last_error = None
         self.status = "RUNNING"
 
-        # 7. Evaluate Flip & Execute Reversal
+        # 7. Evaluate Flip & Execute Reversal (ON_CANDLE_CLOSE Rule)
         candle_ts = st_res["last_candle_time"]
         is_flip = st_res["is_flip"]
         flip_dir = st_res["flip_direction"]
 
         if is_flip and candle_ts != self.last_processed_candle_time:
-            logger.info(f"🚨 [SUPERTREND FLIP] Detected {flip_dir} flip at candle {candle_ts}. Current Position: {self.strategy_position}")
+            logger.info(f"🚨 [SUPERTREND FLIP] Detected {flip_dir} flip at candle {candle_ts}. Current Position: {self.strategy_position} | Mode: {self.execution_mode}")
             
             if flip_dir == "BULLISH":
                 # If currently SHORT -> Sequential Leg 1: Exit SHORT, Leg 2: Enter LONG
                 if self.strategy_position == "SHORT":
                     exit_qty = self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity
-                    await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module)
+                    await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
                     await asyncio.sleep(0.5) # Brief gap between sequential legs
-                    await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module)
+                    await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
                 elif self.strategy_position == "FLAT":
-                    await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module)
+                    await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
             
             elif flip_dir == "BEARISH":
                 # If currently LONG -> Sequential Leg 1: Exit LONG, Leg 2: Enter SHORT
                 if self.strategy_position == "LONG":
                     exit_qty = self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity
-                    await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module)
+                    await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
                     await asyncio.sleep(0.5)
-                    await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module)
+                    await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
                 elif self.strategy_position == "FLAT":
-                    await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module)
+                    await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
 
             self.last_processed_candle_time = candle_ts
 
-    async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module) -> None:
-        """Dispatches an Exit / Square-Off order via the audited signal pipeline."""
+    async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
+        """Dispatches an Exit / Square-Off order with freeze-quantity slicing via the audited signal pipeline."""
         action = "BUY" if side.upper() == "SHORT" else "SELL"
-        order_ref = f"ST_REV_EXIT_{self.symbol}_{ref_suffix}"
-        sig_id = f"st_exit_{str(uuid.uuid4())[:8]}"
+        is_paper = (self.execution_mode == "PAPER")
         
-        payload = {
-            "action": action,
-            "symbol": self.symbol,
-            "quantity": qty,
-            "price": 0.0, # Marketable limit order
-            "product_type": self.product_type,
-            "order_ref": order_ref,
-            "source": "supertrend_engine"
-        }
-        
-        logger.info(f"SuperTrend: Dispatching Exit Leg: {payload}")
-        if self.dispatch_fn:
-            await self.dispatch_fn(sig_id, payload)
-        elif main_module:
-            if hasattr(main_module, "db_insert_pending"):
-                main_module.db_insert_pending(sig_id, payload)
-            if hasattr(main_module, "_dispatch_and_record"):
-                await asyncio.to_thread(
-                    main_module._dispatch_and_record,
-                    sig_id,
-                    action,
-                    self.symbol,
-                    qty,
-                    0.0,
-                    order_ref
-                )
+        remaining_qty = qty
+        chunk_idx = 1
+        while remaining_qty > 0:
+            chunk_qty = min(remaining_qty, freeze_limit)
+            order_ref = f"ST_REV_EXIT_{self.symbol}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_EXIT_{self.symbol}_{ref_suffix}_{chunk_idx}"
+            sig_id = f"st_exit_{str(uuid.uuid4())[:8]}"
+            
+            payload = {
+                "action": action,
+                "symbol": self.symbol,
+                "quantity": chunk_qty,
+                "price": 0.0, # Marketable limit order
+                "product_type": self.product_type,
+                "order_ref": order_ref,
+                "source": "supertrend_engine",
+                "is_paper": is_paper
+            }
+            
+            logger.info(f"SuperTrend: Dispatching Exit Leg [Chunk {chunk_idx}]: {payload}")
+            if self.dispatch_fn:
+                await self.dispatch_fn(sig_id, payload)
+            elif main_module:
+                if hasattr(main_module, "db_insert_pending"):
+                    main_module.db_insert_pending(sig_id, payload)
+                if hasattr(main_module, "_dispatch_and_record"):
+                    await asyncio.to_thread(
+                        main_module._dispatch_and_record,
+                        sig_id,
+                        action,
+                        self.symbol,
+                        chunk_qty,
+                        0.0,
+                        order_ref,
+                        is_paper
+                    )
+            
+            remaining_qty -= chunk_qty
+            chunk_idx += 1
+            if remaining_qty > 0:
+                await asyncio.sleep(0.2)
 
         self.last_signal_time = time.time()
         self.last_signal_action = f"EXIT_{side}"
         self.last_signal_details = payload
+        
+        # Append trade marker for visual chart
+        self.recent_trade_markers.append({
+            "time": self.last_candle_time or int(time.time()),
+            "position": "aboveBar" if action == "SELL" else "belowBar",
+            "color": "#f43f5e" if action == "SELL" else "#10b981",
+            "shape": "arrowDown" if action == "SELL" else "arrowUp",
+            "text": f"EXIT {side} ({qty})"
+        })
 
-    async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module) -> None:
-        """Dispatches an Entry order via the audited signal pipeline."""
-        order_ref = f"ST_REV_ENTRY_{self.symbol}_{ref_suffix}"
-        sig_id = f"st_entry_{str(uuid.uuid4())[:8]}"
+    async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
+        """Dispatches an Entry order with freeze-quantity slicing via the audited signal pipeline."""
+        is_paper = (self.execution_mode == "PAPER")
         
-        payload = {
-            "action": action.upper(),
-            "symbol": self.symbol,
-            "quantity": qty,
-            "price": 0.0,
-            "product_type": self.product_type,
-            "order_ref": order_ref,
-            "source": "supertrend_engine"
-        }
-        
-        logger.info(f"SuperTrend: Dispatching Entry Leg: {payload}")
-        if self.dispatch_fn:
-            await self.dispatch_fn(sig_id, payload)
-        elif main_module:
-            if hasattr(main_module, "db_insert_pending"):
-                main_module.db_insert_pending(sig_id, payload)
-            if hasattr(main_module, "_dispatch_and_record"):
-                await asyncio.to_thread(
-                    main_module._dispatch_and_record,
-                    sig_id,
-                    action.upper(),
-                    self.symbol,
-                    qty,
-                    0.0,
-                    order_ref
-                )
+        remaining_qty = qty
+        chunk_idx = 1
+        while remaining_qty > 0:
+            chunk_qty = min(remaining_qty, freeze_limit)
+            order_ref = f"ST_REV_ENTRY_{self.symbol}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_ENTRY_{self.symbol}_{ref_suffix}_{chunk_idx}"
+            sig_id = f"st_entry_{str(uuid.uuid4())[:8]}"
+            
+            payload = {
+                "action": action.upper(),
+                "symbol": self.symbol,
+                "quantity": chunk_qty,
+                "price": 0.0,
+                "product_type": self.product_type,
+                "order_ref": order_ref,
+                "source": "supertrend_engine",
+                "is_paper": is_paper
+            }
+            
+            logger.info(f"SuperTrend: Dispatching Entry Leg [Chunk {chunk_idx}]: {payload}")
+            if self.dispatch_fn:
+                await self.dispatch_fn(sig_id, payload)
+            elif main_module:
+                if hasattr(main_module, "db_insert_pending"):
+                    main_module.db_insert_pending(sig_id, payload)
+                if hasattr(main_module, "_dispatch_and_record"):
+                    await asyncio.to_thread(
+                        main_module._dispatch_and_record,
+                        sig_id,
+                        action.upper(),
+                        self.symbol,
+                        chunk_qty,
+                        0.0,
+                        order_ref,
+                        is_paper
+                    )
+
+            remaining_qty -= chunk_qty
+            chunk_idx += 1
+            if remaining_qty > 0:
+                await asyncio.sleep(0.2)
 
         self.last_signal_time = time.time()
         self.last_signal_action = f"ENTRY_{action}"
         self.last_signal_details = payload
+
+        # Append trade marker for visual chart
+        self.recent_trade_markers.append({
+            "time": self.last_candle_time or int(time.time()),
+            "position": "belowBar" if action.upper() == "BUY" else "aboveBar",
+            "color": "#10b981" if action.upper() == "BUY" else "#f43f5e",
+            "shape": "arrowUp" if action.upper() == "BUY" else "arrowDown",
+            "text": f"{action.upper()} {qty}"
+        })
 
     async def run_loop(self, xts_api_module, main_module) -> None:
         """Background loop aligned to candle close timestamps with 3s grace period."""
@@ -512,6 +720,13 @@ class SuperTrendEngine:
         # Wait for startup reconciliation watchdog to complete
         await asyncio.sleep(2.0)
         
+        # Initial cold startup reconciliation & buffer fill
+        try:
+            if self.is_enabled and self.is_configured:
+                await self.evaluate_cycle(xts_api_module, main_module)
+        except Exception as e:
+            logger.warning(f"SuperTrend startup cycle evaluation: {e}")
+
         while self._running:
             try:
                 if self.is_enabled and self.is_configured:

@@ -232,11 +232,11 @@ def send_execution_notification(action: str, symbol: str, quantity: int, price: 
 
     threading.Thread(target=_post, daemon=True, name=f"notify_{symbol}").start()
 
-def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref):
+def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref, is_paper=False):
     db_update_status(sig_id, "processing")
     try:
-        result = xts_api.execute_trade_with_retry(action, symbol, quantity, price, order_ref)
-        is_paper_trade = bool((result.get("result") or {}).get("IsPaperTrade"))
+        result = xts_api.execute_trade_with_retry(action, symbol, quantity, price, order_ref, is_paper=is_paper)
+        is_paper_trade = is_paper or bool((result.get("result") or {}).get("IsPaperTrade")) or getattr(config, "PAPER_TRADE_MODE", False)
 
         if result.get("type") == "success":
             status = "paper_done" if is_paper_trade else "done"
@@ -522,6 +522,28 @@ async def get_supertrend_status(request: Request):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
     return supertrend_engine.get_telemetry()
+
+@app.get("/internal/supertrend/candles")
+async def get_supertrend_candles(request: Request):
+    """Returns candlestick and indicator series for TradingView Lightweight Charts."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    return supertrend_engine.get_chart_data()
+
+@app.post("/internal/supertrend/evaluate-now")
+async def evaluate_supertrend_now(request: Request):
+    """Executes on-demand diagnostic cycle evaluation and returns full formula trace."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    return await supertrend_engine.evaluate_cycle_diagnostic(xts_api)
 
 @app.get("/internal/validate-symbol")
 async def validate_symbol_endpoint(request: Request, symbol: str = ""):

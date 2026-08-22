@@ -93,9 +93,14 @@ def init_portal_db():
                     product_type TEXT DEFAULT 'NRML',
                     atr_period INTEGER DEFAULT 10,
                     multiplier REAL DEFAULT 3.0,
+                    execution_mode TEXT DEFAULT 'LIVE',
                     updated_at REAL NOT NULL
                 )
             """)
+
+            st_cols = [row[1] for row in conn.execute("PRAGMA table_info(tenant_supertrend_configs)").fetchall()]
+            if "execution_mode" not in st_cols:
+                conn.execute("ALTER TABLE tenant_supertrend_configs ADD COLUMN execution_mode TEXT DEFAULT 'LIVE'")
 
             # 5. Admin Users & 2FA State
             conn.execute("""

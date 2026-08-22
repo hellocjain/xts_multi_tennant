@@ -539,7 +539,10 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         "product_type": "NRML",
         "atr_period": 10,
         "multiplier": 3.0,
+        "execution_mode": "LIVE",
     }
+    if "execution_mode" not in supertrend_config:
+        supertrend_config["execution_mode"] = "LIVE"
 
     logs = docker_manager.get_container_logs(tenant_id, tail=100)
 
@@ -851,6 +854,7 @@ async def save_supertrend_config(
     product_type: str = Form("NRML"),
     atr_period: int = Form(10),
     multiplier: float = Form(3.0),
+    execution_mode: str = Form("LIVE"),
     user: dict = Depends(require_auth)
 ):
     clean_sym = symbol.strip().upper()
@@ -859,6 +863,7 @@ async def save_supertrend_config(
     clean_qty = max(1, quantity)
     clean_atr = max(2, atr_period)
     clean_mult = max(0.1, multiplier)
+    clean_mode = "PAPER" if execution_mode.strip().upper() == "PAPER" else "LIVE"
 
     # Process custom or preset timeframe
     if timeframe_select == "custom" and custom_minutes.strip().isdigit():
@@ -882,8 +887,8 @@ async def save_supertrend_config(
         with conn:
             conn.execute("""
                 INSERT OR REPLACE INTO tenant_supertrend_configs
-                (tenant_id, is_enabled, is_configured, symbol, exchange_segment, timeframe, quantity, product_type, atr_period, multiplier, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (tenant_id, is_enabled, is_configured, symbol, exchange_segment, timeframe, quantity, product_type, atr_period, multiplier, execution_mode, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 tenant_id,
                 1 if is_enabled else 0,
@@ -895,6 +900,7 @@ async def save_supertrend_config(
                 clean_prod,
                 clean_atr,
                 clean_mult,
+                clean_mode,
                 now
             ))
 
@@ -903,7 +909,8 @@ async def save_supertrend_config(
         "symbol": clean_sym,
         "exchange_segment": clean_seg,
         "timeframe": clean_tf,
-        "quantity": clean_qty
+        "quantity": clean_qty,
+        "execution_mode": clean_mode
     }, tenant_id)
 
     # Push config to client container
@@ -925,7 +932,8 @@ async def save_supertrend_config(
         "quantity": clean_qty,
         "product_type": clean_prod,
         "atr_period": clean_atr,
-        "multiplier": clean_mult
+        "multiplier": clean_mult,
+        "execution_mode": clean_mode
     }
 
     async with httpx.AsyncClient() as client:
@@ -938,6 +946,71 @@ async def save_supertrend_config(
                 pass
 
     return RedirectResponse(url=f"/admin/clients/{tenant_id}?tab=supertrend&saved=1", status_code=303)
+
+@app.get("/admin/clients/{tenant_id}/supertrend/chart-data")
+async def get_supertrend_chart_data(
+    tenant_id: str,
+    timeframe: Optional[str] = None,
+    user: dict = Depends(require_auth)
+):
+    """Proxies candlestick and SuperTrend series data for TradingView Lightweight Charts v4."""
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/candles"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/candles"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/candles"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    params = {"timeframe": timeframe} if timeframe else {}
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.get(target_url, headers=headers, params=params, timeout=4.0)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                pass
+
+    return {
+        "symbol": "",
+        "status": "UNAVAILABLE",
+        "candlestick": [],
+        "supertrend_line": [],
+        "upper_band": [],
+        "lower_band": [],
+        "markers": []
+    }
+
+@app.post("/admin/clients/{tenant_id}/supertrend/evaluate-now")
+async def evaluate_supertrend_now_portal(
+    tenant_id: str,
+    user: dict = Depends(require_auth)
+):
+    """Proxies on-demand diagnostic evaluation request and returns calculation trace."""
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/evaluate-now"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/evaluate-now"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/evaluate-now"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, timeout=6.0)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                pass
+
+    return {"status": "ERROR", "error": "Client container unreachable"}
 
 # =====================================================================
 # EMERGENCY PANIC SWITCHES
