@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 INTERACTIVE_TOKEN = None
 MARKET_DATA_TOKEN = None
 VALID_MD_BASE_URL = None
+INTERACTIVE_TOKEN_ACQUIRED_AT = 0
+MARKET_DATA_TOKEN_ACQUIRED_AT = 0
+TOKEN_MAX_LIFESPAN_SECONDS = 72000 # 20 hours proactive renewal (XTS max is 24h)
 
 FUT_MASTER = {}
 CASH_MASTER = {}
@@ -134,12 +137,14 @@ def send_ops_alert(message):
         pass
 
 def clear_tokens():
-    global INTERACTIVE_TOKEN, MARKET_DATA_TOKEN, LAST_INTERACTIVE_AUTH_ATTEMPT
+    global INTERACTIVE_TOKEN, MARKET_DATA_TOKEN, LAST_INTERACTIVE_AUTH_ATTEMPT, INTERACTIVE_TOKEN_ACQUIRED_AT, MARKET_DATA_TOKEN_ACQUIRED_AT
     with INTERACTIVE_REFRESH_CV:
         INTERACTIVE_TOKEN = None
+        INTERACTIVE_TOKEN_ACQUIRED_AT = 0
         LAST_INTERACTIVE_AUTH_ATTEMPT = 0
     with MD_REFRESH_CV:
         MARKET_DATA_TOKEN = None
+        MARKET_DATA_TOKEN_ACQUIRED_AT = 0
     logger.info("Session tokens cleared.")
 
 LAST_INTERACTIVE_AUTH_ATTEMPT = 0
@@ -150,14 +155,19 @@ def get_last_auth_error():
     return LAST_INTERACTIVE_AUTH_ERROR
 
 def get_interactive_token(force_refresh=False):
-    global INTERACTIVE_TOKEN, REFRESHING_INTERACTIVE, LAST_INTERACTIVE_AUTH_ATTEMPT, LAST_INTERACTIVE_AUTH_ERROR
+    global INTERACTIVE_TOKEN, REFRESHING_INTERACTIVE, LAST_INTERACTIVE_AUTH_ATTEMPT, LAST_INTERACTIVE_AUTH_ERROR, INTERACTIVE_TOKEN_ACQUIRED_AT
     wait_timeout = getattr(config, "TOKEN_REFRESH_WAIT_TIMEOUT", 8.0)
+    now = time.time()
+
+    # Proactive expiry: If token older than 20 hours, force refresh
+    if INTERACTIVE_TOKEN and (now - INTERACTIVE_TOKEN_ACQUIRED_AT > TOKEN_MAX_LIFESPAN_SECONDS):
+        logger.info("INTERACTIVE token exceeded 20h proactive lifespan. Refreshing...")
+        force_refresh = True
 
     if not force_refresh and INTERACTIVE_TOKEN:
         return INTERACTIVE_TOKEN
 
     # Cooldown guard only when there was an auth failure and not forced
-    now = time.time()
     if not force_refresh and LAST_INTERACTIVE_AUTH_ERROR and (now - LAST_INTERACTIVE_AUTH_ATTEMPT < INTERACTIVE_COOLDOWN_SECONDS) and not INTERACTIVE_TOKEN:
         return None
 
@@ -183,6 +193,7 @@ def get_interactive_token(force_refresh=False):
         if data.get('type') == 'success':
             with INTERACTIVE_REFRESH_CV:
                 INTERACTIVE_TOKEN = data['result']['token']
+                INTERACTIVE_TOKEN_ACQUIRED_AT = time.time()
                 LAST_INTERACTIVE_AUTH_ERROR = None
             return INTERACTIVE_TOKEN
         else:
@@ -200,8 +211,14 @@ def get_interactive_token(force_refresh=False):
     return None
 
 def get_marketdata_token():
-    global MARKET_DATA_TOKEN, VALID_MD_BASE_URL, REFRESHING_MD
+    global MARKET_DATA_TOKEN, VALID_MD_BASE_URL, REFRESHING_MD, MARKET_DATA_TOKEN_ACQUIRED_AT
     wait_timeout = getattr(config, "TOKEN_REFRESH_WAIT_TIMEOUT", 8.0)
+    now = time.time()
+
+    if MARKET_DATA_TOKEN and (now - MARKET_DATA_TOKEN_ACQUIRED_AT > TOKEN_MAX_LIFESPAN_SECONDS):
+        logger.info("MARKET_DATA token exceeded 20h proactive lifespan. Refreshing...")
+        with MD_REFRESH_CV:
+            MARKET_DATA_TOKEN = None
 
     with MD_REFRESH_CV:
         if MARKET_DATA_TOKEN and VALID_MD_BASE_URL:
@@ -234,6 +251,7 @@ def get_marketdata_token():
                     if response.status_code == 200 and response.json().get('type') == 'success':
                         with MD_REFRESH_CV:
                             MARKET_DATA_TOKEN = response.json()['result']['token']
+                            MARKET_DATA_TOKEN_ACQUIRED_AT = time.time()
                             VALID_MD_BASE_URL = base_md.rstrip('/')
                         return MARKET_DATA_TOKEN, VALID_MD_BASE_URL
                 except requests.exceptions.RequestException:
@@ -252,12 +270,19 @@ def start_token_keepalive():
         while True:
             time.sleep(interval)
             try:
-                t_int = get_interactive_token()
-                t_md, _ = get_marketdata_token()
-                if t_int:
-                    safe_url = get_safe_base_url()
-                    api_session.get(f"{safe_url}/portfolio/positions?dayOrNet=DayWise", 
-                                    headers={"authorization": t_int}, timeout=4)
+                # Proactive refresh if token approaching 20h
+                now = time.time()
+                if INTERACTIVE_TOKEN and (now - INTERACTIVE_TOKEN_ACQUIRED_AT > TOKEN_MAX_LIFESPAN_SECONDS):
+                    get_interactive_token(force_refresh=True)
+                else:
+                    t_int = get_interactive_token()
+                    if t_int:
+                        safe_url = get_safe_base_url()
+                        api_session.get(f"{safe_url}/portfolio/positions?dayOrNet=DayWise", 
+                                        headers={"authorization": t_int}, timeout=4)
+                
+                if MARKET_DATA_TOKEN and (now - MARKET_DATA_TOKEN_ACQUIRED_AT > TOKEN_MAX_LIFESPAN_SECONDS):
+                    get_marketdata_token()
             except Exception:
                 pass
     threading.Thread(target=_heartbeat, name="token-keepalive", daemon=True).start()

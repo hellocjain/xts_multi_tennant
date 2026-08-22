@@ -3,6 +3,7 @@ import sys
 import tempfile
 import json
 import pytest
+import time
 from decimal import Decimal
 from fastapi.testclient import TestClient
 
@@ -265,3 +266,24 @@ def test_deterministic_order_ref():
     ref3_a = client_main.generate_order_ref({}, "SELL", "GOLD", 1, 75000.0, 1700000001.0)
     ref3_b = client_main.generate_order_ref({}, "SELL", "GOLD", 1, 75000.0, 1700000003.0)
     assert ref3_a == ref3_b
+
+def test_proactive_token_renewal(monkeypatch):
+    xts_api.INTERACTIVE_TOKEN = "old_token_123"
+    xts_api.INTERACTIVE_TOKEN_ACQUIRED_AT = time.time() - 80000 # 22 hours old (> 20h TTL)
+
+    refreshed = False
+    def mock_post(url, json=None, timeout=None):
+        nonlocal refreshed
+        refreshed = True
+        class MockResp:
+            status_code = 200
+            def json(self):
+                return {"type": "success", "result": {"token": "new_fresh_token_456"}}
+        return MockResp()
+
+    monkeypatch.setattr(xts_api.api_session, "post", mock_post)
+    token = xts_api.get_interactive_token()
+    assert refreshed is True
+    assert token == "new_fresh_token_456"
+    assert xts_api.INTERACTIVE_TOKEN == "new_fresh_token_456"
+    assert time.time() - xts_api.INTERACTIVE_TOKEN_ACQUIRED_AT < 5
