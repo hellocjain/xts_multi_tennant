@@ -102,6 +102,61 @@ def init_portal_db():
             if "execution_mode" not in st_cols:
                 conn.execute("ALTER TABLE tenant_supertrend_configs ADD COLUMN execution_mode TEXT DEFAULT 'LIVE'")
 
+            # 4. Multi-Symbol Tenant SuperTrend Auto-Trading Strategies (Max 6 per tenant)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tenant_supertrend_strategies (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    symbol TEXT NOT NULL,
+                    exchange_segment TEXT NOT NULL DEFAULT 'MCXFO',
+                    timeframe TEXT NOT NULL DEFAULT '5m',
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    product_type TEXT NOT NULL DEFAULT 'NRML',
+                    atr_period INTEGER NOT NULL DEFAULT 10,
+                    multiplier REAL NOT NULL DEFAULT 3.0,
+                    execution_mode TEXT NOT NULL DEFAULT 'LIVE',
+                    is_enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(tenant_id, symbol)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_st_strat_tenant ON tenant_supertrend_strategies(tenant_id)")
+
+            # Auto-migrate legacy single-symbol config rows
+            try:
+                legacy_configs = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE is_configured=1 AND symbol != ''").fetchall()
+                for l_cfg in legacy_configs:
+                    tid = l_cfg["tenant_id"]
+                    sym = l_cfg["symbol"]
+                    existing_strat = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=?", (tid, sym)).fetchone()
+                    if not existing_strat:
+                        import uuid
+                        strat_id = f"st_{uuid.uuid4().hex[:12]}"
+                        conn.execute("""
+                            INSERT INTO tenant_supertrend_strategies (
+                                id, tenant_id, symbol, exchange_segment, timeframe, quantity,
+                                product_type, atr_period, multiplier, execution_mode, is_enabled,
+                                created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            strat_id,
+                            tid,
+                            sym,
+                            l_cfg["exchange_segment"] or "MCXFO",
+                            l_cfg["timeframe"] or "5m",
+                            int(l_cfg["quantity"] or 1),
+                            l_cfg["product_type"] or "NRML",
+                            int(l_cfg["atr_period"] or 10),
+                            float(l_cfg["multiplier"] or 3.0),
+                            l_cfg["execution_mode"] or "LIVE",
+                            int(l_cfg["is_enabled"] or 0),
+                            time.time(),
+                            l_cfg["updated_at"] or time.time()
+                        ))
+            except Exception as e:
+                logger.warning(f"Legacy SuperTrend migration note: {e}")
+
             # 5. Admin Users & 2FA State
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS admin_users (

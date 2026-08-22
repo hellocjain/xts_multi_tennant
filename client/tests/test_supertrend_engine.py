@@ -377,3 +377,87 @@ async def test_supertrend_freeze_quantity_auto_slicing(monkeypatch):
     assert dispatched_orders[2][1]["quantity"] == 5
     assert dispatched_orders[0][1]["is_paper"] is True
 
+@pytest.mark.anyio
+async def test_multi_supertrend_engine_cap_and_concurrent_execution(monkeypatch):
+    from supertrend_engine import MultiSuperTrendEngine
+    dispatched = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched.append((sig_id, payload))
+
+    engine = MultiSuperTrendEngine(dispatch_fn=mock_dispatch)
+
+    # 1. Enforce max 6 strategies cap
+    for i in range(6):
+        sym = f"SYM{i+1}"
+        engine.add_or_update_strategy({
+            "symbol": sym,
+            "exchange_segment": "MCXFO",
+            "timeframe": "5m",
+            "quantity": 1,
+            "is_enabled": True
+        })
+    assert len(engine.strategies) == 6
+
+    # 7th strategy must raise ValueError
+    with pytest.raises(ValueError, match="limit of 6 symbols reached"):
+        engine.add_or_update_strategy({
+            "symbol": "SYM7",
+            "exchange_segment": "MCXFO",
+            "timeframe": "5m",
+            "quantity": 1,
+            "is_enabled": True
+        })
+    assert len(engine.strategies) == 6
+
+    # 2. Test concurrent evaluation
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 12345,
+        "exch_seg": "MCXFO",
+        "lot_size": 1,
+        "freeze_qty": 1000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+    synthetic = generate_synthetic_candles([100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: synthetic)
+
+    await engine.evaluate_cycle(xts_api, client_main)
+    # Check that runners evaluated cleanly without cross-symbol interference
+    summary = engine.get_telemetry()
+    assert summary["total_strategies"] == 6
+    assert summary["active_strategies_count"] == 6
+
+def test_multi_supertrend_client_crud_routes():
+    client = TestClient(app)
+
+    # 1. Save new strategy
+    save_res = client.post("/internal/supertrend/strategy/save", json={
+        "symbol": "GOLDPETAL1!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "15m",
+        "quantity": 8,
+        "execution_mode": "PAPER",
+        "is_enabled": True
+    })
+    assert save_res.status_code == 200
+    assert save_res.json()["status"] == "success"
+
+    # 2. List strategies
+    list_res = client.get("/internal/supertrend/strategies")
+    assert list_res.status_code == 200
+    strats = list_res.json()["strategies"]
+    assert any(s["symbol"] == "GOLDPETAL1!" for s in strats)
+
+    # 3. Toggle strategy
+    toggle_res = client.post("/internal/supertrend/strategy/GOLDPETAL1!/toggle")
+    assert toggle_res.status_code == 200
+    assert toggle_res.json()["strategy"]["is_enabled"] is False
+
+    # 4. Delete strategy
+    del_res = client.delete("/internal/supertrend/strategy/GOLDPETAL1!")
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "success"
+
+

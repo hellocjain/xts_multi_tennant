@@ -922,107 +922,133 @@
             </div>
         </div>
 
-        <!-- Strategy Active Status & Symbol Callout Banner -->
-        {% if supertrend.is_enabled and supertrend.is_configured %}
-        <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex items-center justify-between shadow-lg">
+        <!-- Portfolio Overview & Capacity Banner (Max 6 Symbols) -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div class="flex items-center space-x-3.5">
-                <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                    <i data-lucide="play" class="w-5 h-5 fill-current"></i>
+                <div class="w-11 h-11 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 flex-shrink-0">
+                    <i data-lucide="layers" class="w-6 h-6"></i>
                 </div>
                 <div>
-                    <div class="flex items-center gap-2">
-                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-                        <span class="text-sm font-bold text-slate-100 font-mono">AUTONOMOUS STRATEGY ACTIVE</span>
-                        <span class="text-xs bg-emerald-500/20 text-emerald-300 font-mono px-2.5 py-0.5 rounded-md border border-emerald-500/30 font-bold">{{ supertrend.symbol }} ({{ supertrend.timeframe }})</span>
+                    <div class="flex items-center gap-2.5">
+                        <h3 class="font-bold text-base text-slate-100 uppercase tracking-wider">Multi-Symbol SuperTrend Portfolio</h3>
+                        {% set total_strats = supertrend_strategies|length %}
+                        {% set active_strats = supertrend_strategies|selectattr('is_enabled')|list|length %}
+                        <span class="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border {% if active_strats > 0 %}bg-emerald-500/20 text-emerald-300 border-emerald-500/40{% else %}bg-slate-800 text-slate-400 border-bordercolor{% endif %}">
+                            {{ active_strats }}/{{ total_strats }} Active (Max 6)
+                        </span>
                     </div>
-                    <p class="text-xs text-slate-400 font-mono mt-0.5">Running on <strong>{{ supertrend.exchange_segment }}</strong> &bull; Next Candle Polling in <strong class="text-emerald-400">{{ client.supertrend.next_poll_seconds|default(0) if client and client.supertrend else 0 }}s</strong></p>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5">Autonomous concurrent execution with independent timeframes, lot sizing, and execution modes.</p>
                 </div>
             </div>
-            <div class="text-right font-mono text-xs space-y-0.5 border-l border-emerald-500/20 pl-4">
-                <div class="text-slate-400">Trend: <strong class="{% if client.supertrend and client.supertrend.current_trend == 'BULLISH' %}text-emerald-400{% elif client.supertrend and client.supertrend.current_trend == 'BEARISH' %}text-rose-400{% else %}text-slate-300{% endif %}">{{ client.supertrend.current_trend|default('INITIALIZING') if client and client.supertrend else 'INITIALIZING' }}</strong></div>
-                <div class="text-slate-400">Position: <strong class="text-slate-200">{{ client.supertrend.strategy_position|default('FLAT') if client and client.supertrend else 'FLAT' }} ({{ client.supertrend.current_broker_quantity|default(0) if client and client.supertrend else 0 }} Qty)</strong></div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center gap-2.5 w-full md:w-auto justify-end">
+                <button type="button" onclick="openEvaluateModal()"
+                    class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3.5 py-2 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i>
+                    <span>Force Evaluate All</span>
+                </button>
+
+                <button type="button" onclick="openAddStrategyModal()" {% if total_strats >= 6 %}disabled title="Maximum 6 strategies reached"{% endif %}
+                    class="{% if total_strats >= 6 %}bg-slate-800 text-slate-500 border border-bordercolor cursor-not-allowed{% else %}bg-brand-600 hover:bg-brand-500 text-white shadow-lg shadow-brand-600/30{% endif %} px-4 py-2 rounded-xl text-xs font-mono font-bold transition flex items-center gap-2">
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                    <span>Add Strategy ({{ total_strats }}/6)</span>
+                </button>
             </div>
         </div>
-        {% else %}
-        <div class="bg-slate-900/60 border border-bordercolor rounded-2xl p-4 flex items-center justify-between">
-            <div class="flex items-center space-x-3 text-slate-400">
-                <div class="w-10 h-10 rounded-xl bg-slate-800 border border-bordercolor flex items-center justify-center text-slate-500">
-                    <i data-lucide="power-off" class="w-5 h-5"></i>
+
+        <!-- Multi-Strategy Cards Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {% for s in supertrend_strategies %}
+            <div class="bg-cardbg border {% if s.is_enabled %}border-emerald-500/30 shadow-emerald-500/5{% else %}border-bordercolor{% endif %} rounded-2xl p-5 shadow-xl space-y-4 flex flex-col justify-between relative transition hover:border-slate-600">
+                <!-- Card Header -->
+                <div class="space-y-2">
+                    <div class="flex items-start justify-between gap-2">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h4 class="font-bold text-sm text-slate-100 font-mono">{{ s.symbol }}</h4>
+                                <span class="text-[10px] font-mono px-2 py-0.5 rounded border font-bold {% if s.execution_mode == 'PAPER' %}bg-amber-500/10 text-amber-300 border-amber-500/30{% else %}bg-emerald-500/10 text-emerald-300 border-emerald-500/30{% endif %}">
+                                    {{ s.execution_mode }}
+                                </span>
+                            </div>
+                            <div class="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center gap-2">
+                                <span>{{ s.exchange_segment }}</span>
+                                <span>&bull;</span>
+                                <span class="text-brand-400 font-bold">{{ s.timeframe }}</span>
+                                <span>&bull;</span>
+                                <span>{{ s.quantity }} Lots ({{ s.product_type }})</span>
+                            </div>
+                        </div>
+
+                        <!-- Toggle Form -->
+                        <form method="POST" action="/admin/clients/{{ client.id }}/supertrend/strategy/{{ s.id }}/toggle">
+                            <button type="submit" title="{% if s.is_enabled %}Pause Strategy{% else %}Activate Strategy{% endif %}"
+                                class="p-2 rounded-xl border transition {% if s.is_enabled %}bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30{% else %}bg-slate-800 text-slate-500 border-bordercolor hover:text-slate-300{% endif %}">
+                                <i data-lucide="power" class="w-4 h-4"></i>
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Indicator Parameters -->
+                    <div class="grid grid-cols-2 gap-2 bg-slate-900/80 rounded-xl p-2.5 text-[11px] font-mono border border-bordercolor/50">
+                        <div>
+                            <span class="text-slate-400">ATR({{ s.atr_period }}):</span>
+                            <span class="text-slate-200 font-bold ml-1">Mult {{ s.multiplier }}x</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-slate-400">Status:</span>
+                            <span class="font-bold ml-1 {% if s.is_enabled %}text-emerald-400{% else %}text-slate-500{% endif %}">
+                                {% if s.is_enabled %}RUNNING{% else %}PAUSED{% endif %}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Footer -->
+                <div class="flex items-center justify-between pt-3 border-t border-bordercolor/60 text-xs font-mono">
+                    <button type="button" onclick="switchChartSymbol('{{ s.symbol }}')"
+                        class="text-brand-400 hover:text-brand-300 flex items-center gap-1 font-bold">
+                        <i data-lucide="candlestick-chart" class="w-3.5 h-3.5"></i>
+                        <span>View Chart</span>
+                    </button>
+
+                    <div class="flex items-center gap-2">
+                        <button type="button" onclick="openEvaluateModal('{{ s.symbol }}')" title="Evaluate Single Strategy"
+                            class="p-1.5 bg-slate-900 hover:bg-slate-800 text-amber-400 rounded-lg border border-bordercolor transition">
+                            <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+                        </button>
+
+                        <button type="button" onclick='openEditStrategyModal({{ s|tojson }})' title="Edit Strategy Parameters"
+                            class="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-bordercolor transition">
+                            <i data-lucide="edit" class="w-3.5 h-3.5"></i>
+                        </button>
+
+                        <form method="POST" action="/admin/clients/{{ client.id }}/supertrend/strategy/{{ s.id }}/delete" onsubmit="return confirm('Remove strategy for {{ s.symbol }}?');">
+                            <button type="submit" title="Delete Strategy"
+                                class="p-1.5 bg-slate-900 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-bordercolor hover:border-rose-500/40 transition">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="col-span-full bg-slate-900/60 border border-dashed border-bordercolor rounded-2xl p-8 text-center space-y-3">
+                <div class="w-12 h-12 rounded-2xl bg-slate-800 border border-bordercolor flex items-center justify-center text-slate-500 mx-auto">
+                    <i data-lucide="layers" class="w-6 h-6"></i>
                 </div>
                 <div>
-                    <div class="text-sm font-bold text-slate-300 font-mono">STRATEGY CURRENTLY INACTIVE</div>
-                    <p class="text-xs text-slate-500">Configure parameters and enable the toggle below to activate live auto-trading</p>
+                    <h4 class="font-bold text-slate-200 text-sm">No SuperTrend Strategies Configured</h4>
+                    <p class="text-xs text-slate-500 mt-0.5">Click "Add Strategy" above to add up to 6 autonomous symbol runners.</p>
                 </div>
+                <button type="button" onclick="openAddStrategyModal()"
+                    class="bg-brand-600 hover:bg-brand-500 text-white text-xs font-mono font-bold px-4 py-2 rounded-xl transition inline-flex items-center gap-2 shadow-lg shadow-brand-600/30">
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                    <span>Add First Strategy</span>
+                </button>
             </div>
-            <div class="text-xs font-mono text-slate-500">
-                Status: <span class="bg-slate-800 text-slate-400 px-2.5 py-1 rounded-md border border-bordercolor">DISABLED</span>
-            </div>
+            {% endfor %}
         </div>
-        {% endif %}
-
-        <!-- Telemetry Summary Cards Grid -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
-                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Strategy Status</span>
-                <div class="flex items-center space-x-1.5 mt-1">
-                    {% set st_stat = client.supertrend.status|default('DISABLED') if client and client.supertrend else ('RUNNING' if supertrend.is_enabled else 'DISABLED') %}
-                    {% if st_stat == 'RUNNING' %}
-                    <span class="inline-flex items-center text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/30 font-mono">
-                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span> Active Engine
-                    </span>
-                    {% elif st_stat == 'EXPIRED_PAUSED' %}
-                    <span class="inline-flex items-center text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/30 font-mono">
-                        <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1"></i> Expired Paused
-                    </span>
-                    {% elif st_stat == 'PAUSED' %}
-                    <span class="inline-flex items-center text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/30 font-mono">
-                        <i data-lucide="pause-circle" class="w-3.5 h-3.5 mr-1"></i> Bot Paused
-                    </span>
-                    {% else %}
-                    <span class="inline-flex items-center text-xs font-bold text-slate-400 bg-slate-800 px-2.5 py-1 rounded-md border border-bordercolor font-mono">
-                        <i data-lucide="power-off" class="w-3.5 h-3.5 mr-1"></i> Disabled
-                    </span>
-                    {% endif %}
-                </div>
-            </div>
-
-            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
-                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active SuperTrend</span>
-                {% set cur_trend = client.supertrend.current_trend|default('INITIALIZING') if client and client.supertrend else 'INITIALIZING' %}
-                <div class="text-lg font-bold font-mono {% if cur_trend == 'BULLISH' %}text-emerald-400{% elif cur_trend == 'BEARISH' %}text-rose-400{% else %}text-slate-400{% endif %}">
-                    {% if cur_trend == 'BULLISH' %}▲ BULLISH{% elif cur_trend == 'BEARISH' %}▼ BEARISH{% else %}⏳ INITIALIZING{% endif %}
-                </div>
-                <div class="text-[11px] font-mono text-slate-400">
-                    ATR({{ supertrend.atr_period }}): <strong class="text-slate-200">₹{{ client.supertrend.atr|default(0.0) if client and client.supertrend else 0.0 }}</strong>
-                </div>
-            </div>
-
-            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
-                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Strategy Position</span>
-                {% set st_pos = client.supertrend.strategy_position|default('FLAT') if client and client.supertrend else 'FLAT' %}
-                <div class="text-lg font-bold font-mono {% if st_pos == 'LONG' %}text-emerald-400{% elif st_pos == 'SHORT' %}text-rose-400{% else %}text-slate-300{% endif %}">
-                    {{ st_pos }}
-                </div>
-                <div class="text-[11px] font-mono text-slate-400">
-                    Broker Net Qty: <strong class="text-slate-200">{{ client.supertrend.current_broker_quantity|default(0) if client and client.supertrend else 0 }}</strong>
-                </div>
-            </div>
-
-            <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1">
-                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Indicator Levels</span>
-                <div class="text-[11px] font-mono space-y-0.5 mt-0.5">
-                    <div class="text-emerald-400">Lower Band: ₹{{ client.supertrend.lower_band|default(0.0) if client and client.supertrend else 0.0 }}</div>
-                    <div class="text-rose-400">Upper Band: ₹{{ client.supertrend.upper_band|default(0.0) if client and client.supertrend else 0.0 }}</div>
-                </div>
-            </div>
-        </div>
-
-        {% if client.supertrend and client.supertrend.last_error %}
-        <div class="bg-rose-500/10 border border-rose-500/30 text-rose-300 p-3.5 rounded-xl text-xs flex items-center gap-2">
-            <i data-lucide="alert-octagon" class="w-4 h-4 text-rose-400 flex-shrink-0"></i>
-            <span><strong>Engine Warning:</strong> {{ client.supertrend.last_error }}</span>
-        </div>
-        {% endif %}
 
         <!-- Live Candlestick & SuperTrend Indicator Chart Card (TradingView Lightweight Charts v4) -->
         <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl space-y-4">
@@ -1033,8 +1059,19 @@
                     </div>
                     <div>
                         <div class="flex items-center gap-2">
-                            <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Live Candlestick &amp; SuperTrend Chart</h3>
+                            <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">TradingView Live Candlestick Chart</h3>
+                            
+                            <!-- Multi-Symbol Switcher Dropdown -->
+                            {% if supertrend_strategies %}
+                            <select id="st-chart-symbol-select" onchange="switchChartSymbol(this.value)"
+                                class="bg-slate-900 border border-brand-500/40 text-brand-300 text-xs font-mono font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:border-brand-400 transition cursor-pointer">
+                                {% for s in supertrend_strategies %}
+                                <option value="{{ s.symbol }}">{{ s.symbol }} ({{ s.timeframe }}) - {{ s.execution_mode }}</option>
+                                {% endfor %}
+                            </select>
+                            {% else %}
                             <span id="st-chart-symbol-badge" class="text-[10px] font-mono bg-brand-500/20 text-brand-300 px-2 py-0.5 rounded border border-brand-500/30">{{ supertrend.symbol|default('NO SYMBOL') }}</span>
+                            {% endif %}
                         </div>
                         <p class="text-xs text-slate-400 font-mono">Real-time OHLC &amp; Wilder's ATR SuperTrend with trade entry/exit markers</p>
                     </div>
@@ -1059,7 +1096,7 @@
                     <button type="button" onclick="openEvaluateModal()"
                         class="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition flex items-center gap-1.5 shadow-sm">
                         <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i>
-                        <span>Force Evaluate Cycle</span>
+                        <span>Force Evaluate</span>
                     </button>
                 </div>
             </div>
@@ -1087,176 +1124,172 @@
             </div>
         </div>
 
-        <!-- SuperTrend Configuration Form -->
-        <div class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-6">
-            <div class="flex items-center justify-between border-b border-bordercolor pb-4">
-                <div class="flex items-center space-x-3">
-                    <div class="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                        <i data-lucide="trending-up" class="w-5 h-5 text-emerald-400"></i>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-base text-slate-100">SuperTrend Strategy Configuration</h3>
-                        <p class="text-xs text-slate-400">Automated in-process SuperTrend signal generation with sequential reversal order routing</p>
-                    </div>
-                </div>
-                <div class="text-xs font-mono text-slate-400">
-                    Client: <strong class="text-emerald-400">{{ client.id }}</strong>
-                </div>
-            </div>
-
-            <form method="POST" action="/admin/clients/{{ client.id }}/supertrend/config" class="space-y-6">
-                <!-- Master Toggle Switch -->
-                <div class="flex items-center justify-between p-4 bg-slate-900/80 rounded-xl border border-bordercolor">
-                    <div class="space-y-0.5">
-                        <label for="st-enable-toggle" class="text-xs font-bold text-slate-200 cursor-pointer flex items-center gap-2">
-                            <span>Enable SuperTrend Auto-Trading</span>
-                        </label>
-                        <p class="text-[11px] text-slate-400">When enabled, the engine evaluates closed candles and autonomously reverses positions on trend flips.</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" id="st-enable-toggle" name="is_enabled" value="true" class="sr-only peer" {% if supertrend.is_enabled %}checked{% endif %}>
-                        <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                    </label>
-                </div>
-
-                <!-- Execution Mode Selector (LIVE vs PAPER) -->
-                <div class="space-y-2">
-                    <label class="text-xs font-bold text-slate-200">Execution Mode <span class="text-rose-400">*</span></label>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <label id="exec-mode-label-live" class="relative flex items-start p-3.5 rounded-xl border cursor-pointer transition {% if supertrend.execution_mode == 'LIVE' or not supertrend.execution_mode %}bg-emerald-500/10 border-emerald-500/40 text-slate-100{% else %}bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700{% endif %}">
-                            <input type="radio" name="execution_mode" value="LIVE" class="sr-only" {% if supertrend.execution_mode == 'LIVE' or not supertrend.execution_mode %}checked{% endif %} onchange="updateExecutionModeUI(this.value)">
-                            <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
-                                    <i data-lucide="shield-alert" class="w-4 h-4"></i>
-                                </div>
-                                <div class="space-y-0.5">
-                                    <div class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                                        <span>LIVE Broker Trading</span>
-                                        <span class="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded font-mono font-bold">REAL CAPITAL</span>
-                                    </div>
-                                    <p class="text-[10px] text-slate-400">Routes real marketable limit orders to Symphony XTS broker terminal with instant risk controls.</p>
-                                </div>
-                            </div>
-                        </label>
-
-                        <label id="exec-mode-label-paper" class="relative flex items-start p-3.5 rounded-xl border cursor-pointer transition {% if supertrend.execution_mode == 'PAPER' %}bg-amber-500/10 border-amber-500/40 text-slate-100{% else %}bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700{% endif %}">
-                            <input type="radio" name="execution_mode" value="PAPER" class="sr-only" {% if supertrend.execution_mode == 'PAPER' %}checked{% endif %} onchange="updateExecutionModeUI(this.value)">
-                            <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0">
-                                    <i data-lucide="test-tube-2" class="w-4 h-4"></i>
-                                </div>
-                                <div class="space-y-0.5">
-                                    <div class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                                        <span>PAPER Simulation (Dry Run)</span>
-                                        <span class="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-mono font-bold">RISK-FREE</span>
-                                    </div>
-                                    <p class="text-[10px] text-slate-400">Fetches live broker candles and generates signals, simulating full fills and MTM with zero broker orders.</p>
-                                </div>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Parameters Grid -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-                    <!-- Symbol with Live Validation -->
-                    <div class="space-y-1.5 md:col-span-1">
-                        <label class="text-xs font-semibold text-slate-300">Trading Symbol / Root <span class="text-rose-400">*</span></label>
-                        <input type="text" id="st-symbol-input" name="symbol" value="{{ supertrend.symbol|default('') }}" 
-                            placeholder="e.g. SILVER1001!, CRUDEOIL1!, RELIANCE, NIFTY1!" required
-                            hx-get="/admin/clients/{{ client.id }}/supertrend/validate-symbol"
-                            hx-trigger="load, keyup changed delay:300ms, change"
-                            hx-target="#st-symbol-validation-result"
-                            hx-include="[name='symbol']"
-                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                        <p class="text-[10px] text-slate-400">Accepts TradingView symbols (<code>SILVER1001!</code>, <code>CRUDEOIL1!</code>) or standard roots.</p>
-                        <div id="st-symbol-validation-result" class="pt-1">
-                            <!-- Dynamic HTMX Validation Container -->
+        <!-- Add / Edit Strategy Modal -->
+        <div id="st-strategy-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-cardbg border border-bordercolor w-full max-w-2xl rounded-2xl p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+                <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                    <div class="flex items-center space-x-3 text-emerald-400">
+                        <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+                            <i data-lucide="plus-circle" class="w-5 h-5 text-emerald-400"></i>
+                        </div>
+                        <div>
+                            <h3 id="st-modal-title" class="font-bold text-base text-slate-100">Configure Symbol Strategy</h3>
+                            <p class="text-xs text-slate-400 font-mono">Independent SuperTrend execution parameters for this contract</p>
                         </div>
                     </div>
-
-                    <!-- Exchange Segment -->
-                    <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">Exchange Segment <span class="text-rose-400">*</span></label>
-                        <select name="exchange_segment" required
-                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                            <option value="MCXFO" {% if supertrend.exchange_segment == 'MCXFO' %}selected{% endif %}>MCXFO (Commodities Futures)</option>
-                            <option value="NSEFO" {% if supertrend.exchange_segment == 'NSEFO' %}selected{% endif %}>NSEFO (Equity Derivatives)</option>
-                            <option value="NSECM" {% if supertrend.exchange_segment == 'NSECM' %}selected{% endif %}>NSECM (Equity Cash / Intraday)</option>
-                            <option value="NSECD" {% if supertrend.exchange_segment == 'NSECD' %}selected{% endif %}>NSECD (Currency Derivatives)</option>
-                        </select>
-                    </div>
-
-                    <!-- Timeframe (Presets + Custom Minutes) -->
-                    <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">Candle Timeframe</label>
-                        <div class="space-y-2">
-                            {% set cur_tf = supertrend.timeframe|default('5m') %}
-                            <select id="st-timeframe-select" name="timeframe_select" onchange="toggleCustomTimeframe(this.value)"
-                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                                <option value="1m" {% if cur_tf == '1m' %}selected{% endif %}>1 Minute (60s)</option>
-                                <option value="3m" {% if cur_tf == '3m' %}selected{% endif %}>3 Minutes (180s)</option>
-                                <option value="5m" {% if cur_tf == '5m' or not cur_tf %}selected{% endif %}>5 Minutes (300s - Standard)</option>
-                                <option value="15m" {% if cur_tf == '15m' %}selected{% endif %}>15 Minutes (900s)</option>
-                                <option value="20m" {% if cur_tf == '20m' %}selected{% endif %}>20 Minutes (1200s)</option>
-                                <option value="25m" {% if cur_tf == '25m' %}selected{% endif %}>25 Minutes (1500s)</option>
-                                <option value="30m" {% if cur_tf == '30m' %}selected{% endif %}>30 Minutes (1800s)</option>
-                                <option value="45m" {% if cur_tf == '45m' %}selected{% endif %}>45 Minutes (2700s)</option>
-                                <option value="1h" {% if cur_tf == '1h' %}selected{% endif %}>1 Hour (3600s)</option>
-                                <option value="2h" {% if cur_tf == '2h' %}selected{% endif %}>2 Hours (7200s)</option>
-                                <option value="custom" {% if cur_tf not in ['1m','3m','5m','15m','20m','25m','30m','45m','1h','2h'] %}selected{% endif %}>Custom Minutes...</option>
-                            </select>
-                            
-                            <div id="st-custom-timeframe-wrap" class="{% if cur_tf in ['1m','3m','5m','15m','20m','25m','30m','45m','1h','2h'] %}hidden{% endif %} flex items-center gap-2">
-                                <input type="number" id="st-custom-minutes-input" name="custom_minutes" min="1" max="1440" 
-                                    value="{{ cur_tf|replace('m', '') if (cur_tf not in ['1m','3m','5m','15m','20m','25m','30m','45m','1h','2h'] and 'm' in cur_tf) else '' }}" 
-                                    placeholder="e.g. 20, 25, 75"
-                                    class="w-full bg-slate-900 border border-brand-500/50 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                                <span class="text-xs text-slate-400 font-mono">minutes</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Quantity -->
-                    <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">Order Quantity (Lots / Shares) <span class="text-rose-400">*</span></label>
-                        <input type="number" name="quantity" min="1" max="100000" value="{{ supertrend.quantity|default(1) }}" required
-                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                    </div>
-
-                    <!-- Product Type -->
-                    <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">Product Type</label>
-                        <select name="product_type"
-                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                            <option value="NRML" {% if supertrend.product_type == 'NRML' or not supertrend.product_type %}selected{% endif %}>NRML (Normal Margin - F&amp;O)</option>
-                            <option value="MIS" {% if supertrend.product_type == 'MIS' %}selected{% endif %}>MIS (Intraday Square-off)</option>
-                            <option value="CNC" {% if supertrend.product_type == 'CNC' %}selected{% endif %}>CNC (Cash &amp; Carry Delivery)</option>
-                        </select>
-                    </div>
-
-                    <!-- ATR Period -->
-                    <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">ATR Period</label>
-                        <input type="number" name="atr_period" min="2" max="100" value="{{ supertrend.atr_period|default(10) }}"
-                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                    </div>
-
-                    <!-- Multiplier -->
-                    <div class="space-y-1.5">
-                        <label class="text-xs font-semibold text-slate-300">ATR Multiplier</label>
-                        <input type="number" step="0.1" name="multiplier" min="0.1" max="20.0" value="{{ supertrend.multiplier|default(3.0) }}"
-                            class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
-                    </div>
-                </div>
-
-                <div class="flex items-center justify-end space-x-3 pt-4 border-t border-bordercolor">
-                    <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs px-6 py-2.5 rounded-xl transition shadow-lg shadow-brand-600/30 flex items-center gap-2">
-                        <i data-lucide="save" class="w-4 h-4"></i>
-                        <span>Save SuperTrend Settings</span>
+                    <button type="button" onclick="closeStrategyModal()" class="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg bg-slate-800 transition">
+                        <i data-lucide="x" class="w-4 h-4"></i>
                     </button>
                 </div>
-            </form>
+
+                <form method="POST" action="/admin/clients/{{ client.id }}/supertrend/strategy/save" class="space-y-5">
+                    <input type="hidden" id="st-modal-strat-id" name="id" value="">
+
+                    <!-- Execution Mode Selector -->
+                    <div class="space-y-2">
+                        <label class="text-xs font-bold text-slate-200">Execution Mode <span class="text-rose-400">*</span></label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <label id="modal-exec-mode-live" class="relative flex items-start p-3 rounded-xl border cursor-pointer transition bg-emerald-500/10 border-emerald-500/40 text-slate-100">
+                                <input type="radio" name="execution_mode" value="LIVE" class="sr-only" checked onchange="updateModalExecutionModeUI(this.value)">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
+                                        <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+                                    </div>
+                                    <div class="space-y-0.5">
+                                        <div class="text-xs font-bold text-slate-200 flex items-center gap-1">
+                                            <span>LIVE Broker</span>
+                                            <span class="text-[8px] bg-emerald-500/20 text-emerald-300 px-1 py-0.2 rounded font-mono font-bold">REAL ORDERS</span>
+                                        </div>
+                                        <p class="text-[10px] text-slate-400">Places real orders with XTS broker.</p>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <label id="modal-exec-mode-paper" class="relative flex items-start p-3 rounded-xl border cursor-pointer transition bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700">
+                                <input type="radio" name="execution_mode" value="PAPER" class="sr-only" onchange="updateModalExecutionModeUI(this.value)">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0">
+                                        <i data-lucide="test-tube-2" class="w-3.5 h-3.5"></i>
+                                    </div>
+                                    <div class="space-y-0.5">
+                                        <div class="text-xs font-bold text-slate-200 flex items-center gap-1">
+                                            <span>PAPER Sim</span>
+                                            <span class="text-[8px] bg-amber-500/20 text-amber-300 px-1 py-0.2 rounded font-mono font-bold">RISK-FREE</span>
+                                        </div>
+                                        <p class="text-[10px] text-slate-400">Simulates signals with zero orders.</p>
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Parameters Grid -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <!-- Symbol with Live Autocomplete / Validation -->
+                        <div class="space-y-1.5 sm:col-span-2">
+                            <label class="text-xs font-semibold text-slate-300">Trading Symbol / Root <span class="text-rose-400">*</span></label>
+                            <input type="text" id="modal-st-symbol-input" name="symbol" value="" placeholder="e.g. SILVER1001!, GOLDPETAL1!, CRUDEOIL1!, NIFTY1!" required
+                                hx-get="/admin/clients/{{ client.id }}/supertrend/validate-symbol"
+                                hx-trigger="keyup changed delay:300ms, change"
+                                hx-target="#modal-st-symbol-validation"
+                                hx-include="[name='symbol']"
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                            <div id="modal-st-symbol-validation" class="pt-1"></div>
+                        </div>
+
+                        <!-- Exchange Segment -->
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-semibold text-slate-300">Exchange Segment <span class="text-rose-400">*</span></label>
+                            <select id="modal-st-exchange-seg" name="exchange_segment" required
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                                <option value="MCXFO">MCXFO (Commodities Futures)</option>
+                                <option value="NSEFO">NSEFO (Equity Derivatives)</option>
+                                <option value="NSECM">NSECM (Equity Cash / Intraday)</option>
+                                <option value="NSECD">NSECD (Currency Derivatives)</option>
+                            </select>
+                        </div>
+
+                        <!-- Timeframe -->
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-semibold text-slate-300">Timeframe</label>
+                            <select id="modal-st-timeframe" name="timeframe_select" onchange="toggleModalCustomTimeframe(this.value)"
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                                <option value="1m">1 Minute (60s)</option>
+                                <option value="3m">3 Minutes (180s)</option>
+                                <option value="5m" selected>5 Minutes (300s - Standard)</option>
+                                <option value="15m">15 Minutes (900s)</option>
+                                <option value="20m">20 Minutes (1200s)</option>
+                                <option value="25m">25 Minutes (1500s)</option>
+                                <option value="30m">30 Minutes (1800s)</option>
+                                <option value="45m">45 Minutes (2700s)</option>
+                                <option value="1h">1 Hour (3600s)</option>
+                                <option value="custom">Custom Minutes...</option>
+                            </select>
+                            <div id="modal-st-custom-tf-wrap" class="hidden flex items-center gap-2 pt-1">
+                                <input type="number" id="modal-st-custom-minutes" name="custom_minutes" min="1" max="1440" placeholder="e.g. 20, 25"
+                                    class="w-full bg-slate-900 border border-brand-500/50 rounded-xl px-3 py-1.5 text-xs text-slate-100 font-mono">
+                                <span class="text-xs text-slate-400 font-mono">min</span>
+                            </div>
+                        </div>
+
+                        <!-- Order Quantity -->
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-semibold text-slate-300">Quantity (Lots / Shares) <span class="text-rose-400">*</span></label>
+                            <input type="number" id="modal-st-qty" name="quantity" min="1" max="100000" value="1" required
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                        </div>
+
+                        <!-- Product Type -->
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-semibold text-slate-300">Product Type</label>
+                            <select id="modal-st-prod-type" name="product_type"
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                                <option value="NRML">NRML (Normal Margin - F&amp;O)</option>
+                                <option value="MIS">MIS (Intraday)</option>
+                                <option value="CNC">CNC (Cash &amp; Carry Delivery)</option>
+                            </select>
+                        </div>
+
+                        <!-- ATR Period -->
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-semibold text-slate-300">ATR Period</label>
+                            <input type="number" id="modal-st-atr" name="atr_period" min="2" max="100" value="10"
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                        </div>
+
+                        <!-- Multiplier -->
+                        <div class="space-y-1.5">
+                            <label class="text-xs font-semibold text-slate-300">ATR Multiplier</label>
+                            <input type="number" step="0.1" id="modal-st-mult" name="multiplier" min="0.1" max="20.0" value="3.0"
+                                class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- Activate Toggle -->
+                    <div class="flex items-center justify-between p-3.5 bg-slate-900/80 rounded-xl border border-bordercolor">
+                        <div class="space-y-0.5">
+                            <label for="modal-st-enable-toggle" class="text-xs font-bold text-slate-200 cursor-pointer">
+                                Enable Autonomous Auto-Trading
+                            </label>
+                            <p class="text-[10px] text-slate-400">Activate live evaluation loop and automatic reversal order placement.</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="modal-st-enable-toggle" name="is_enabled" value="true" class="sr-only peer" checked>
+                            <div class="w-10 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center justify-end space-x-3 pt-3 border-t border-bordercolor">
+                        <button type="button" onclick="closeStrategyModal()" class="px-4 py-2 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition">
+                            Cancel
+                        </button>
+                        <button type="submit" class="bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs px-6 py-2.5 rounded-xl transition shadow-lg shadow-brand-600/30 flex items-center gap-2">
+                            <i data-lucide="save" class="w-4 h-4"></i>
+                            <span>Save Strategy</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
 
         <!-- SuperTrend Execution Orders Log Table -->
@@ -1555,10 +1588,67 @@
         document.getElementById('client-delete-modal').classList.add('hidden');
     }
 
-    // SuperTrend Custom Timeframe Toggle
-    function toggleCustomTimeframe(val) {
-        const wrap = document.getElementById('st-custom-timeframe-wrap');
-        const input = document.getElementById('st-custom-minutes-input');
+    // =========================================================================
+    // SUPERTREND MULTI-STRATEGY MODAL & UI HANDLERS
+    // =========================================================================
+    function openAddStrategyModal() {
+        const modal = document.getElementById('st-strategy-modal');
+        if (!modal) return;
+        document.getElementById('st-modal-title').innerText = 'Add Symbol Strategy';
+        document.getElementById('st-modal-strat-id').value = '';
+        document.getElementById('modal-st-symbol-input').value = '';
+        document.getElementById('modal-st-symbol-input').readOnly = false;
+        document.getElementById('modal-st-symbol-validation').innerHTML = '';
+        document.getElementById('modal-st-qty').value = '1';
+        document.getElementById('modal-st-atr').value = '10';
+        document.getElementById('modal-st-mult').value = '3.0';
+        document.getElementById('modal-st-timeframe').value = '5m';
+        toggleModalCustomTimeframe('5m');
+        updateModalExecutionModeUI('LIVE');
+        document.getElementById('modal-st-enable-toggle').checked = true;
+        modal.classList.remove('hidden');
+        lucide.createIcons();
+    }
+
+    function openEditStrategyModal(strategy) {
+        const modal = document.getElementById('st-strategy-modal');
+        if (!modal || !strategy) return;
+        document.getElementById('st-modal-title').innerText = `Edit Strategy: ${strategy.symbol}`;
+        document.getElementById('st-modal-strat-id').value = strategy.id || '';
+        document.getElementById('modal-st-symbol-input').value = strategy.symbol || '';
+        document.getElementById('modal-st-symbol-validation').innerHTML = '';
+        document.getElementById('modal-st-exchange-seg').value = strategy.exchange_segment || 'MCXFO';
+        document.getElementById('modal-st-qty').value = strategy.quantity || 1;
+        document.getElementById('modal-st-prod-type').value = strategy.product_type || 'NRML';
+        document.getElementById('modal-st-atr').value = strategy.atr_period || 10;
+        document.getElementById('modal-st-mult').value = strategy.multiplier || 3.0;
+        
+        const tf = strategy.timeframe || '5m';
+        const tfSelect = document.getElementById('modal-st-timeframe');
+        const customInput = document.getElementById('modal-st-custom-minutes');
+        if (['1m','3m','5m','15m','20m','25m','30m','45m','1h'].includes(tf)) {
+            tfSelect.value = tf;
+            toggleModalCustomTimeframe(tf);
+        } else {
+            tfSelect.value = 'custom';
+            toggleModalCustomTimeframe('custom');
+            if (customInput) customInput.value = tf.replace('m', '');
+        }
+
+        updateModalExecutionModeUI(strategy.execution_mode || 'LIVE');
+        document.getElementById('modal-st-enable-toggle').checked = !!strategy.is_enabled;
+        modal.classList.remove('hidden');
+        lucide.createIcons();
+    }
+
+    function closeStrategyModal() {
+        const modal = document.getElementById('st-strategy-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    function toggleModalCustomTimeframe(val) {
+        const wrap = document.getElementById('modal-st-custom-tf-wrap');
+        const input = document.getElementById('modal-st-custom-minutes');
         if (!wrap) return;
         if (val === 'custom') {
             wrap.classList.remove('hidden');
@@ -1568,16 +1658,20 @@
         }
     }
 
-    function updateExecutionModeUI(mode) {
-        const liveLabel = document.getElementById('exec-mode-label-live');
-        const paperLabel = document.getElementById('exec-mode-label-paper');
-        if (!liveLabel || !paperLabel) return;
+    function updateModalExecutionModeUI(mode) {
+        const liveLabel = document.getElementById('modal-exec-mode-live');
+        const paperLabel = document.getElementById('modal-exec-mode-paper');
+        const liveRadio = liveLabel ? liveLabel.querySelector('input') : null;
+        const paperRadio = paperLabel ? paperLabel.querySelector('input') : null;
+
         if (mode === 'LIVE') {
-            liveLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-emerald-500/10 border-emerald-500/40 text-slate-100";
-            paperLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700";
+            if (liveRadio) liveRadio.checked = true;
+            if (liveLabel) liveLabel.className = "relative flex items-start p-3 rounded-xl border cursor-pointer transition bg-emerald-500/10 border-emerald-500/40 text-slate-100";
+            if (paperLabel) paperLabel.className = "relative flex items-start p-3 rounded-xl border cursor-pointer transition bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700";
         } else {
-            paperLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-amber-500/10 border-amber-500/40 text-slate-100";
-            liveLabel.className = "relative flex items-start p-3.5 rounded-xl border cursor-pointer transition bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700";
+            if (paperRadio) paperRadio.checked = true;
+            if (paperLabel) paperLabel.className = "relative flex items-start p-3 rounded-xl border cursor-pointer transition bg-amber-500/10 border-amber-500/40 text-slate-100";
+            if (liveLabel) liveLabel.className = "relative flex items-start p-3 rounded-xl border cursor-pointer transition bg-slate-900 border-bordercolor text-slate-400 hover:border-slate-700";
         }
     }
 
@@ -1587,7 +1681,8 @@
     let stChartInstance = null;
     let stCandleSeries = null;
     let stLineSeries = null;
-    let stActiveTimeframe = "{{ supertrend.timeframe|default('5m') }}";
+    let stActiveSymbol = "{% if supertrend_strategies and supertrend_strategies|length > 0 %}{{ supertrend_strategies[0].symbol }}{% else %}{{ supertrend.symbol|default('') }}{% endif %}";
+    let stActiveTimeframe = "{% if supertrend_strategies and supertrend_strategies|length > 0 %}{{ supertrend_strategies[0].timeframe }}{% else %}{{ supertrend.timeframe|default('5m') }}{% endif %}";
     let stChartRefreshTimer = null;
 
     function initSuperTrendChart() {
@@ -1657,7 +1752,8 @@
         if (!tenantId) return;
 
         try {
-            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/chart-data?timeframe=${encodeURIComponent(stActiveTimeframe)}`);
+            const symParam = stActiveSymbol ? `&symbol=${encodeURIComponent(stActiveSymbol)}` : '';
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/chart-data?timeframe=${encodeURIComponent(stActiveTimeframe)}${symParam}`);
             if (!resp.ok) return;
             const data = await resp.json();
 
@@ -1685,7 +1781,22 @@
                     const ltpEl = document.getElementById('chart-ltp-val');
                     if (ltpEl) ltpEl.innerText = '₹' + Number(lastCandle.close).toFixed(2);
                 }
+                if (data.atr) {
+                    const atrEl = document.getElementById('chart-atr-val');
+                    if (atrEl) atrEl.innerText = '₹' + Number(data.atr).toFixed(2);
+                }
+                if (data.lower_band) {
+                    const upEl = document.getElementById('chart-up-val');
+                    if (upEl) upEl.innerText = '₹' + Number(data.lower_band).toFixed(2);
+                }
+                if (data.upper_band) {
+                    const dnEl = document.getElementById('chart-dn-val');
+                    if (dnEl) dnEl.innerText = '₹' + Number(data.upper_band).toFixed(2);
+                }
                 if (data.symbol) {
+                    stActiveSymbol = data.symbol;
+                    const selectEl = document.getElementById('st-chart-symbol-select');
+                    if (selectEl && selectEl.value !== data.symbol) selectEl.value = data.symbol;
                     const badge = document.getElementById('st-chart-symbol-badge');
                     if (badge) badge.innerText = `${data.symbol} (${stActiveTimeframe})`;
                 }
@@ -1693,6 +1804,14 @@
         } catch (e) {
             console.error('Failed to load SuperTrend chart data:', e);
         }
+    }
+
+    function switchChartSymbol(sym) {
+        if (!sym) return;
+        stActiveSymbol = sym;
+        const selectEl = document.getElementById('st-chart-symbol-select');
+        if (selectEl && selectEl.value !== sym) selectEl.value = sym;
+        refreshSuperTrendChart();
     }
 
     function switchChartTimeframe(tf) {
@@ -1707,26 +1826,28 @@
         refreshSuperTrendChart();
     }
 
-    // Modal: Force Evaluate Strategy Cycle
-    async function openEvaluateModal() {
+    // Modal: Force Evaluate Strategy Cycle (Single or All)
+    async function openEvaluateModal(symbol) {
         const modal = document.getElementById('st-evaluate-modal');
         const body = document.getElementById('st-evaluate-modal-body');
         if (!modal || !body) return;
 
+        const targetSym = symbol || stActiveSymbol || '';
         modal.classList.remove('hidden');
         lucide.createIcons();
 
         body.innerHTML = `
             <div class="text-center py-8 space-y-3">
                 <i data-lucide="loader-2" class="w-8 h-8 animate-spin text-brand-400 mx-auto"></i>
-                <div class="text-slate-300 text-xs font-mono">Querying live broker OHLC &amp; evaluating SuperTrend Pine Script formula...</div>
+                <div class="text-slate-300 text-xs font-mono">Querying live broker OHLC &amp; evaluating SuperTrend Pine Script formula for ${targetSym || 'all strategies'}...</div>
             </div>
         `;
         lucide.createIcons();
 
         try {
             const tenantId = "{{ client.id }}";
-            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/evaluate-now`, {
+            const symParam = targetSym ? `?symbol=${encodeURIComponent(targetSym)}` : '';
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/evaluate-now${symParam}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });

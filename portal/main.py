@@ -499,6 +499,8 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
         r_row = conn.execute("SELECT * FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
         st_row = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE tenant_id=?", (tenant_id,)).fetchone()
+        st_strat_rows = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id=? ORDER BY created_at ASC", (tenant_id,)).fetchall()
+        st_strategies = [dict(r) for r in st_strat_rows]
         if not t_row:
             raise HTTPException(status_code=404, detail="Client not found")
 
@@ -551,6 +553,7 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         "client": tel_data,
         "risk": dict(r_row) if r_row else {},
         "supertrend": supertrend_config,
+        "supertrend_strategies": st_strategies,
         "logs": logs,
         "domain": DOMAIN_NAME,
         "webhook_url": wb_data["webhook_url"],
@@ -841,6 +844,219 @@ async def get_supertrend_readiness_partial(
         "tenant_id": tenant_id
     })
 
+@app.post("/admin/clients/{tenant_id}/supertrend/strategy/save")
+async def save_supertrend_strategy_action(
+    tenant_id: str,
+    request: Request,
+    id: str = Form(""),
+    symbol: str = Form(...),
+    exchange_segment: str = Form("MCXFO"),
+    timeframe: str = Form("5m"),
+    timeframe_select: str = Form("5m"),
+    custom_minutes: str = Form(""),
+    quantity: int = Form(1),
+    product_type: str = Form("NRML"),
+    atr_period: int = Form(10),
+    multiplier: float = Form(3.0),
+    execution_mode: str = Form("LIVE"),
+    is_enabled: bool = Form(True),
+    user: dict = Depends(require_auth)
+):
+    """Saves or updates a symbol strategy for a client account (Max 6 concurrent strategies)."""
+    clean_sym = symbol.strip().upper()
+    clean_seg = exchange_segment.strip().upper() or "MCXFO"
+    clean_prod = product_type.strip().upper() or "NRML"
+    clean_qty = max(1, quantity)
+    clean_atr = max(2, atr_period)
+    clean_mult = max(0.1, multiplier)
+    clean_mode = "PAPER" if execution_mode.strip().upper() == "PAPER" else "LIVE"
+
+    if timeframe_select == "custom" and custom_minutes.strip().isdigit():
+        clean_tf = f"{int(custom_minutes.strip())}m"
+    elif timeframe.strip():
+        clean_tf = timeframe.strip().lower()
+    else:
+        clean_tf = timeframe_select.strip().lower() or "5m"
+
+    if not clean_sym:
+        raise HTTPException(status_code=400, detail="Trading symbol is required.")
+
+    now = time.time()
+    strat_id = id.strip() if id.strip() else f"st_{uuid.uuid4().hex[:12]}"
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            # Check capacity limit if inserting a new symbol
+            existing_sym = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=?", (tenant_id, clean_sym)).fetchone()
+            if not existing_sym:
+                cur_count = conn.execute("SELECT COUNT(*) FROM tenant_supertrend_strategies WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+                if cur_count >= 6:
+                    raise HTTPException(status_code=400, detail="Maximum strategy limit (6 symbols) reached for this account. Remove an existing strategy first.")
+
+            conn.execute("""
+                INSERT INTO tenant_supertrend_strategies (
+                    id, tenant_id, symbol, exchange_segment, timeframe, quantity,
+                    product_type, atr_period, multiplier, execution_mode, is_enabled,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tenant_id, symbol) DO UPDATE SET
+                    exchange_segment=excluded.exchange_segment,
+                    timeframe=excluded.timeframe,
+                    quantity=excluded.quantity,
+                    product_type=excluded.product_type,
+                    atr_period=excluded.atr_period,
+                    multiplier=excluded.multiplier,
+                    execution_mode=excluded.execution_mode,
+                    is_enabled=excluded.is_enabled,
+                    updated_at=excluded.updated_at
+            """, (
+                strat_id,
+                tenant_id,
+                clean_sym,
+                clean_seg,
+                clean_tf,
+                clean_qty,
+                clean_prod,
+                clean_atr,
+                clean_mult,
+                clean_mode,
+                1 if is_enabled else 0,
+                now,
+                now
+            ))
+
+    # Re-generate client config.json
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception as e:
+        logger.warning(f"Error updating config.json: {e}")
+
+    # Dispatch to live client container
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/strategy/save"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/strategy/save"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/strategy/save"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    payload = {
+        "id": strat_id,
+        "symbol": clean_sym,
+        "exchange_segment": clean_seg,
+        "timeframe": clean_tf,
+        "quantity": clean_qty,
+        "product_type": clean_prod,
+        "atr_period": clean_atr,
+        "multiplier": clean_mult,
+        "execution_mode": clean_mode,
+        "is_enabled": is_enabled
+    }
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, json=payload, timeout=5.0)
+                if resp.status_code == 200:
+                    break
+            except Exception:
+                pass
+
+    database.record_audit(user["username"], "SAVE_SUPERTREND_STRATEGY", payload, tenant_id)
+    return RedirectResponse(url=f"/admin/clients/{tenant_id}?tab=supertrend&saved=1", status_code=303)
+
+@app.post("/admin/clients/{tenant_id}/supertrend/strategy/{strategy_id}/toggle")
+async def toggle_supertrend_strategy_action(
+    tenant_id: str,
+    strategy_id: str,
+    request: Request,
+    user: dict = Depends(require_auth)
+):
+    """Toggles enable/disable state for a single symbol strategy."""
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id=? AND id=?", (tenant_id, strategy_id)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            
+            strat = dict(row)
+            new_state = 0 if strat.get("is_enabled") else 1
+            conn.execute("UPDATE tenant_supertrend_strategies SET is_enabled=?, updated_at=? WHERE id=?", (new_state, time.time(), strategy_id))
+
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception:
+        pass
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    sym = strat["symbol"]
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/strategy/{sym}/toggle"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/strategy/{sym}/toggle"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/strategy/{sym}/toggle"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, json={"is_enabled": bool(new_state)}, timeout=5.0)
+                if resp.status_code == 200:
+                    break
+            except Exception:
+                pass
+
+    database.record_audit(user["username"], "TOGGLE_SUPERTREND_STRATEGY", {"strategy_id": strategy_id, "symbol": sym, "is_enabled": bool(new_state)}, tenant_id)
+    return RedirectResponse(url=f"/admin/clients/{tenant_id}?tab=supertrend&toggled=1", status_code=303)
+
+@app.post("/admin/clients/{tenant_id}/supertrend/strategy/{strategy_id}/delete")
+async def delete_supertrend_strategy_action(
+    tenant_id: str,
+    strategy_id: str,
+    request: Request,
+    user: dict = Depends(require_auth)
+):
+    """Removes a symbol strategy from database and client container."""
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id=? AND id=?", (tenant_id, strategy_id)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            strat = dict(row)
+            conn.execute("DELETE FROM tenant_supertrend_strategies WHERE id=?", (strategy_id,))
+
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception:
+        pass
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    sym = strat["symbol"]
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/strategy/{sym}"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/strategy/{sym}"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/strategy/{sym}"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.delete(target_url, headers=headers, timeout=5.0)
+                if resp.status_code == 200:
+                    break
+            except Exception:
+                pass
+
+    database.record_audit(user["username"], "DELETE_SUPERTREND_STRATEGY", {"strategy_id": strategy_id, "symbol": sym}, tenant_id)
+    return RedirectResponse(url=f"/admin/clients/{tenant_id}?tab=supertrend&deleted=1", status_code=303)
+
 @app.post("/admin/clients/{tenant_id}/supertrend/config")
 async def save_supertrend_config(
     tenant_id: str,
@@ -866,7 +1082,6 @@ async def save_supertrend_config(
     clean_mult = max(0.1, multiplier)
     clean_mode = "PAPER" if execution_mode.strip().upper() == "PAPER" else "LIVE"
 
-    # Process custom or preset timeframe
     if timeframe_select == "custom" and custom_minutes.strip().isdigit():
         clean_tf = f"{int(custom_minutes.strip())}m"
     elif timeframe.strip():
@@ -876,7 +1091,6 @@ async def save_supertrend_config(
 
     is_conf = bool(clean_sym and clean_seg and clean_qty > 0)
     
-    # UI-level validation guard: Cannot enable if unconfigured
     if is_enabled and not is_conf:
         raise HTTPException(
             status_code=400,
@@ -914,7 +1128,6 @@ async def save_supertrend_config(
         "execution_mode": clean_mode
     }, tenant_id)
 
-    # Push config to client container
     port = docker_manager.get_tenant_port(tenant_id)
     url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/config"
     url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/config"
@@ -958,9 +1171,10 @@ async def get_supertrend_chart_data(
     """Proxies candlestick and SuperTrend series data for TradingView Lightweight Charts v4."""
     with closing(database.get_db_connection()) as conn:
         st_row = conn.execute("SELECT * FROM tenant_supertrend_configs WHERE tenant_id=?", (tenant_id,)).fetchone()
+        strat_rows = conn.execute("SELECT symbol, timeframe FROM tenant_supertrend_strategies WHERE tenant_id=?", (tenant_id,)).fetchall()
 
-    cfg_sym = symbol or (st_row["symbol"] if st_row and st_row["symbol"] else "")
-    cfg_tf = timeframe or (st_row["timeframe"] if st_row and st_row["timeframe"] else "5m")
+    cfg_sym = symbol or (strat_rows[0]["symbol"] if strat_rows else (st_row["symbol"] if st_row and st_row["symbol"] else ""))
+    cfg_tf = timeframe or (strat_rows[0]["timeframe"] if strat_rows else (st_row["timeframe"] if st_row and st_row["timeframe"] else "5m"))
 
     port = docker_manager.get_tenant_port(tenant_id)
     url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/candles"
@@ -1000,6 +1214,7 @@ async def get_supertrend_chart_data(
 @app.post("/admin/clients/{tenant_id}/supertrend/evaluate-now")
 async def evaluate_supertrend_now_portal(
     tenant_id: str,
+    symbol: Optional[str] = None,
     user: dict = Depends(require_auth)
 ):
     """Proxies on-demand diagnostic evaluation request and returns calculation trace."""
@@ -1013,10 +1228,14 @@ async def evaluate_supertrend_now_portal(
     if internal_token:
         headers["X-Internal-Token"] = internal_token
 
+    params = {}
+    if symbol:
+        params["symbol"] = symbol.strip().upper()
+
     async with httpx.AsyncClient() as client:
         for target_url in [url_local, url_caddy, url_docker]:
             try:
-                resp = await client.post(target_url, headers=headers, timeout=6.0)
+                resp = await client.post(target_url, headers=headers, params=params, timeout=6.0)
                 if resp.status_code == 200:
                     return resp.json()
             except Exception:
