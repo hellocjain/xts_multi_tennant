@@ -164,6 +164,69 @@ def db_prune_old(max_age_seconds=7 * 24 * 3600):
             )
             conn.commit()
 
+def send_execution_notification(action: str, symbol: str, quantity: int, price: float, status: str, result: dict):
+    """
+    Asynchronously dispatches Telegram & Discord alerts on trade execution, fill, or rejection.
+    Runs non-blocking in a background daemon thread so it never delays order processing.
+    """
+    bot_token = str(getattr(config, "TELEGRAM_BOT_TOKEN", "") or "").strip()
+    chat_id = str(getattr(config, "TELEGRAM_CHAT_ID", "") or "").strip()
+    discord_url = str(getattr(config, "DISCORD_WEBHOOK_URL", "") or "").strip()
+
+    if not (bot_token and chat_id) and not discord_url:
+        return
+
+    client_id = getattr(config, "CLIENT_ID", "UNKNOWN")
+    is_paper = bool((result.get("result") or {}).get("IsPaperTrade"))
+    mode_str = "[PAPER SANDBOX]" if is_paper else "[LIVE BROKER]"
+    
+    res_obj = result.get("result") or {}
+    app_order_id = res_obj.get("AppOrderID") or res_obj.get("appOrderID") or "N/A"
+    
+    if status in ("done", "paper_done"):
+        title = f"🟢 ORDER FILLED {mode_str}"
+        traded_price = res_obj.get("OrderAverageTradedPrice") or res_obj.get("OrderPrice") or price
+        msg_text = (
+            f"{title}\n"
+            f"• Account: {client_id}\n"
+            f"• Signal: {action} {quantity}x {symbol}\n"
+            f"• Execution Price: ₹{traded_price}\n"
+            f"• Order ID: {app_order_id}\n"
+            f"• Status: FILLED / SUCCESS"
+        )
+    else:
+        title = f"🔴 ORDER REJECTED / FAILED {mode_str}"
+        err_code = result.get("code") or "e-order-error"
+        err_desc = result.get("description") or result.get("error") or "Order placement failed"
+        msg_text = (
+            f"{title}\n"
+            f"• Account: {client_id}\n"
+            f"• Signal: {action} {quantity}x {symbol}\n"
+            f"• Desired Price: ₹{price}\n"
+            f"• Error Code: {err_code}\n"
+            f"• Reason: {err_desc}\n"
+            f"• Status: REJECTED"
+        )
+
+    def _post():
+        import requests
+        # 1. Telegram
+        if bot_token and chat_id:
+            try:
+                tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                requests.post(tg_url, json={"chat_id": chat_id, "text": msg_text}, timeout=4)
+            except Exception as e:
+                logger.warning(f"Telegram alert dispatch failed: {e}")
+
+        # 2. Discord
+        if discord_url:
+            try:
+                requests.post(discord_url, json={"content": msg_text}, timeout=4)
+            except Exception as e:
+                logger.warning(f"Discord alert dispatch failed: {e}")
+
+    threading.Thread(target=_post, daemon=True, name=f"notify_{symbol}").start()
+
 def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref):
     db_update_status(sig_id, "processing")
     try:
@@ -187,10 +250,13 @@ def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref):
         }
 
         db_update_status(sig_id, status, audit_result)
+        send_execution_notification(action, symbol, quantity, price, status, audit_result)
     except Exception as e:
         logger.error(f"UNCAUGHT ERROR dispatching signal {sig_id}: {e}")
-        db_update_status(sig_id, "failed", {"error": str(e)})
+        err_res = {"error": str(e), "code": "e-uncaught"}
+        db_update_status(sig_id, "failed", err_res)
         xts_api.send_ops_alert(f"XTS bot: uncaught error executing signal {sig_id} ({symbol}): {e}")
+        send_execution_notification(action, symbol, quantity, price, "failed", err_res)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

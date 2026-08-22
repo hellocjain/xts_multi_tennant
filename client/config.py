@@ -63,6 +63,11 @@ OPS_ALERT_WEBHOOK_URL = os.environ.get("OPS_ALERT_WEBHOOK_URL", "")
 PAPER_TRADE_MODE = os.environ.get("PAPER_TRADE_MODE", "True").lower() in ("true", "1", "yes")
 LOG_PAPER_TRADES_TO_FILE = os.environ.get("LOG_PAPER_TRADES_TO_FILE", "True").lower() in ("true", "1", "yes")
 
+# 9. Execution & Fill Push Notifications
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+
 # Load mounted config overrides if present
 _mounted_config = os.path.join(DATA_DIR, "config.json")
 if os.path.exists(_mounted_config):

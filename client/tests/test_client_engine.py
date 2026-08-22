@@ -418,3 +418,61 @@ def test_signals_db_secret_masking():
     assert target["payload"]["api_key"] == "***MASKED***"
     assert target["result"]["token"] == "***MASKED***"
     assert target["payload"]["symbol"] == "CRUDEOIL"
+
+def test_telegram_discord_execution_notifications(monkeypatch):
+    import requests
+    posted_messages = []
+
+    def mock_requests_post(url, json=None, timeout=None):
+        posted_messages.append({"url": url, "json": json})
+        class MockResp:
+            status_code = 200
+        return MockResp()
+
+    monkeypatch.setattr(requests, "post", mock_requests_post)
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "TEST_BOT_123")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "-100999888777")
+    monkeypatch.setattr(config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test")
+    monkeypatch.setattr(config, "CLIENT_ID", "TEST_CLIENT_01")
+
+    # 1. Test Successful Fill Notification
+    fill_result = {
+        "type": "success",
+        "result": {
+            "AppOrderID": 12109988,
+            "OrderAverageTradedPrice": 6502.50,
+            "IsPaperTrade": False
+        }
+    }
+    client_main.send_execution_notification("BUY", "CRUDEOIL", 100, 6500.0, "done", fill_result)
+    time.sleep(0.1) # Wait for thread
+
+    assert len(posted_messages) >= 2
+    tg_post = next(p for p in posted_messages if "telegram.org" in p["url"])
+    dc_post = next(p for p in posted_messages if "discord.com" in p["url"])
+
+    assert "ORDER FILLED [LIVE BROKER]" in tg_post["json"]["text"]
+    assert "TEST_CLIENT_01" in tg_post["json"]["text"]
+    assert "BUY 100x CRUDEOIL" in tg_post["json"]["text"]
+    assert "₹6502.5" in tg_post["json"]["text"]
+    assert "12109988" in tg_post["json"]["text"]
+    assert tg_post["json"]["chat_id"] == "-100999888777"
+
+    assert "ORDER FILLED [LIVE BROKER]" in dc_post["json"]["content"]
+
+    # 2. Test Rejected Order Notification
+    posted_messages.clear()
+    reject_result = {
+        "type": "error",
+        "code": "e-order-0008",
+        "description": "Margin insufficient for order"
+    }
+    client_main.send_execution_notification("SELL", "GOLD", 10, 72000.0, "failed", reject_result)
+    time.sleep(0.1) # Wait for thread
+
+    assert len(posted_messages) >= 2
+    tg_rej = next(p for p in posted_messages if "telegram.org" in p["url"])
+    assert "ORDER REJECTED / FAILED" in tg_rej["json"]["text"]
+    assert "e-order-0008" in tg_rej["json"]["text"]
+    assert "Margin insufficient for order" in tg_rej["json"]["text"]
+
