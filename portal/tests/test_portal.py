@@ -466,4 +466,59 @@ def test_admin_master_cache_manual_sync(monkeypatch):
     assert res_htmx.status_code == 200
     assert "Synced (2026-08-22 | 97 contracts)" in res_htmx.text
 
+def test_trade_book_contract_note_csv_export(monkeypatch):
+    import telemetry_service
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('admin_export', 'admin_export', 'hash', 1, 1000)")
+            conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('export_client', 'Export Client', 'ACTIVE', 0, 0)")
+
+    token = security.create_session("admin_export", "testclient", "testclient")
+    client = TestClient(app, cookies={"admin_session": token})
+
+    # Mock single client telemetry returning broker trades
+    mock_trades = [
+        {
+            "TradeID": "TR_99182",
+            "AppOrderID": 771122,
+            "OrderExecutionTime": "22-Aug-2026 10:15:30",
+            "ExchangeSegment": "MCXFO",
+            "TradingSymbol": "CRUDEOIL24AUGFUT",
+            "OrderSide": "BUY",
+            "TradedQuantity": 100,
+            "TradePrice": 6500.0
+        },
+        {
+            "TradeID": "TR_99183",
+            "AppOrderID": 771123,
+            "OrderExecutionTime": "22-Aug-2026 11:30:15",
+            "ExchangeSegment": "MCXFO",
+            "TradingSymbol": "CRUDEOIL24AUGFUT",
+            "OrderSide": "SELL",
+            "TradedQuantity": 100,
+            "TradePrice": 6550.0
+        }
+    ]
+
+    async def mock_telemetry(tenant_id):
+        return {"broker_trades": mock_trades}
+
+    monkeypatch.setattr(telemetry_service, "get_single_client_telemetry", mock_telemetry)
+
+    # Test single tenant export
+    res = client.get("/admin/reports/trades/export?tenant_id=export_client")
+    assert res.status_code == 200
+    assert "text/csv" in res.headers["content-type"]
+    assert "attachment; filename=trade_book_export_client_" in res.headers["content-disposition"]
+
+    csv_text = res.text
+    lines = csv_text.strip().split("\r\n" if "\r\n" in csv_text else "\n")
+    assert len(lines) == 3 # Header + 2 rows
+    assert "Gross Turnover (INR)" in lines[0]
+    assert "Total Statutory Charges (INR)" in lines[0]
+    assert "TR_99182" in lines[1]
+    assert "CRUDEOIL24AUGFUT" in lines[1]
+    assert "TR_99183" in lines[2]
+
+
 

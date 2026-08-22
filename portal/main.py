@@ -781,6 +781,41 @@ async def orders_partial(
         "signals": signals
     })
 
+@app.get("/admin/reports/trades/export")
+async def export_trades_csv(tenant_id: str = "", user: dict = Depends(require_auth)):
+    """Exports tenant or global broker executed trade book as standard Contract Note CSV."""
+    from fastapi.responses import Response
+
+    all_trades = []
+    if tenant_id:
+        tel = await telemetry_service.get_single_client_telemetry(tenant_id)
+        trades = tel.get("broker_trades") or []
+        for t in trades:
+            t["tenant_id"] = tenant_id
+        all_trades.extend(trades)
+    else:
+        tel = await telemetry_service.get_all_clients_telemetry()
+        for client in tel.get("clients", []):
+            c_id = client.get("id", "")
+            for t in (client.get("broker_trades") or []):
+                t["tenant_id"] = c_id
+                all_trades.append(t)
+
+    csv_content = telemetry_service.generate_trade_book_csv(all_trades, tenant_id=tenant_id)
+    
+    date_tag = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_name = f"trade_book_{tenant_id or 'all'}_{date_tag}.csv"
+
+    database.record_audit(user["username"], "EXPORT_TRADE_BOOK_CSV", {"tenant_id": tenant_id, "trades_count": len(all_trades)})
+
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={file_name}"
+        }
+    )
+
 # =====================================================================
 # 100% FRONTEND OPERATIONS & CLUSTER SETTINGS
 # =====================================================================

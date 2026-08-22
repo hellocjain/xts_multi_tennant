@@ -430,7 +430,122 @@ async def panic_all_active_clients() -> dict:
     for idx, res in enumerate(results):
         t_id = tenants[idx]["id"]
         if isinstance(res, Exception):
-            summary.append({"tenant_id": t_id, "status": "error", "error": str(res)})
+            summary.append({"tenant_id": t_id, "status": "error", "message": str(res)})
         else:
-            summary.append({"tenant_id": t_id, "result": res})
-    return {"total_panicked": len(tenants), "results": summary}
+            summary.append({"tenant_id": t_id, "status": "success", "result": res})
+    return {"status": "completed", "total_clients": len(tenants), "results": summary}
+
+def generate_trade_book_csv(trades: list, tenant_id: str = "") -> str:
+    """
+    Generates a standard Indian capital markets Contract Note & Trade Book CSV.
+    Calculates gross turnover, STT/CTT, exchange turnover charges, SEBI fees, stamp duty, GST, and total statutory deductions.
+    """
+    import csv
+    import io
+
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+
+    # Header Row
+    writer.writerow([
+        "Trade ID",
+        "Order ID",
+        "Execution Time (IST)",
+        "Tenant ID",
+        "Exchange Segment",
+        "Trading Symbol",
+        "Side",
+        "Quantity",
+        "Price (INR)",
+        "Gross Turnover (INR)",
+        "STT / CTT (INR)",
+        "Exchange Charges (INR)",
+        "SEBI Fees (INR)",
+        "Stamp Duty (INR)",
+        "GST 18% (INR)",
+        "Total Statutory Charges (INR)"
+    ])
+
+    for tr in trades:
+        trade_id = tr.get("TradeID") or tr.get("tradeID") or tr.get("id") or "N/A"
+        app_order_id = tr.get("AppOrderID") or tr.get("appOrderID") or "N/A"
+        exec_time = tr.get("OrderExecutionTime") or tr.get("ExecutionTime") or tr.get("time") or "N/A"
+        seg = str(tr.get("ExchangeSegment") or tr.get("exchangeSegment") or "MCXFO").upper()
+        sym = tr.get("TradingSymbol") or tr.get("tradingSymbol") or tr.get("symbol") or "N/A"
+        side = str(tr.get("OrderSide") or tr.get("orderSide") or tr.get("action") or "BUY").upper()
+        
+        try:
+            qty = abs(int(tr.get("TradedQuantity") or tr.get("tradedQuantity") or tr.get("quantity") or 0))
+            price = abs(float(tr.get("TradePrice") or tr.get("tradePrice") or tr.get("price") or 0.0))
+        except (ValueError, TypeError):
+            qty = 0
+            price = 0.0
+
+        # Multiplier determination for commodities
+        sym_upper = sym.upper()
+        if "CRUDEOILM" in sym_upper:
+            mult = 10
+        elif "CRUDEOIL" in sym_upper:
+            mult = 100
+        elif "NATURALGASM" in sym_upper:
+            mult = 250
+        elif "NATURALGAS" in sym_upper:
+            mult = 1250
+        elif "SILVERM" in sym_upper:
+            mult = 5
+        elif "SILVERMIC" in sym_upper or "SILVER100" in sym_upper:
+            mult = 1
+        elif "SILVER" in sym_upper:
+            mult = 30
+        elif "GOLDM" in sym_upper:
+            mult = 10
+        elif "GOLDPETAL" in sym_upper:
+            mult = 1
+        elif "GOLD" in sym_upper:
+            mult = 100
+        else:
+            mult = 1
+
+        gross_turnover = round(price * qty * mult, 2)
+
+        # Statutory Charges Estimation
+        if "MCX" in seg:
+            # MCX CTT: 0.01% on Sell
+            stt = round(gross_turnover * 0.0001, 2) if side == "SELL" else 0.0
+            exch_fee = round(gross_turnover * 0.000021, 2) # 0.0021%
+            stamp_duty = round(gross_turnover * 0.00003, 2) if side == "BUY" else 0.0 # 0.003% on buy
+        elif "FO" in seg or "FUT" in seg:
+            # NSE/BSE Futures: 0.02% on Sell
+            stt = round(gross_turnover * 0.0002, 2) if side == "SELL" else 0.0
+            exch_fee = round(gross_turnover * 0.0000345, 2)
+            stamp_duty = round(gross_turnover * 0.00003, 2) if side == "BUY" else 0.0
+        else:
+            # Intraday Cash: 0.025% on Sell
+            stt = round(gross_turnover * 0.00025, 2) if side == "SELL" else 0.0
+            exch_fee = round(gross_turnover * 0.0000345, 2)
+            stamp_duty = round(gross_turnover * 0.00003, 2) if side == "BUY" else 0.0
+
+        sebi_fee = round(gross_turnover * 0.000001, 2) # ₹10 per crore (0.0001%)
+        gst = round((exch_fee + sebi_fee) * 0.18, 2) # 18% GST on exchange & SEBI charges
+        total_statutory = round(stt + exch_fee + sebi_fee + stamp_duty + gst, 2)
+
+        writer.writerow([
+            trade_id,
+            app_order_id,
+            exec_time,
+            tenant_id or tr.get("tenant_id", "ALL"),
+            seg,
+            sym,
+            side,
+            qty,
+            f"{price:.2f}",
+            f"{gross_turnover:.2f}",
+            f"{stt:.2f}",
+            f"{exch_fee:.2f}",
+            f"{sebi_fee:.2f}",
+            f"{stamp_duty:.2f}",
+            f"{gst:.2f}",
+            f"{total_statutory:.2f}"
+        ])
+
+    return output.getvalue()

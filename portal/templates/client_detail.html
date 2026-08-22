@@ -695,18 +695,27 @@
                     <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Orders &amp; Execution Stream</h3>
                 </div>
 
-                <!-- Sub-Filter Switcher -->
-                <div class="flex items-center bg-slate-950 border border-bordercolor p-1 rounded-xl gap-1">
-                    <button id="orders-view-broker-btn" onclick="switchOrdersView('broker')" 
-                            class="py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5">
-                        <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
-                        <span>Live Broker Order Book ({{ client.broker_orders|length }})</span>
-                    </button>
-                    <button id="orders-view-signals-btn" onclick="switchOrdersView('signals')" 
-                            class="py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
-                        <i data-lucide="webhook" class="w-3.5 h-3.5"></i>
-                        <span>TradingView Signals ({{ client.recent_signals|length }})</span>
-                    </button>
+                <!-- Sub-Filter Switcher & CSV Export -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="flex items-center bg-slate-950 border border-bordercolor p-1 rounded-xl gap-1">
+                        <button id="orders-view-broker-btn" onclick="switchOrdersView('broker')" 
+                                class="py-1.5 px-3 rounded-lg text-xs font-semibold bg-brand-600 text-white shadow transition flex items-center gap-1.5">
+                            <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+                            <span>Live Broker Order Book ({{ client.broker_orders|length }})</span>
+                        </button>
+                        <button id="orders-view-signals-btn" onclick="switchOrdersView('signals')" 
+                                class="py-1.5 px-3 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
+                            <i data-lucide="webhook" class="w-3.5 h-3.5"></i>
+                            <span>TradingView Signals ({{ client.recent_signals|length }})</span>
+                        </button>
+                    </div>
+
+                    <a href="/admin/reports/trades/export?tenant_id={{ client.id }}" 
+                       class="py-1.5 px-3 rounded-xl text-xs font-semibold bg-slate-950 hover:bg-slate-900 text-slate-300 border border-bordercolor transition flex items-center gap-1.5" 
+                       title="Export full executed trades as standard Contract Note CSV">
+                        <i data-lucide="download" class="w-3.5 h-3.5 text-brand-400"></i>
+                        <span>Export CSV</span>
+                    </a>
                 </div>
             </div>
 
