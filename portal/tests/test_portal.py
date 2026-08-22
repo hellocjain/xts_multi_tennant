@@ -28,12 +28,17 @@ import main as portal_main
 app = portal_main.app
 
 @pytest.fixture(autouse=True)
-def init_test_db():
+def init_test_db(monkeypatch):
+    test_key = "uYvN3lM8k9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p="
+    monkeypatch.setenv("PORTAL_MASTER_KEY", test_key)
     database.init_portal_db()
     with database.get_db_connection() as conn:
         with conn:
             conn.execute("DELETE FROM admin_sessions")
             conn.execute("DELETE FROM admin_users")
+            conn.execute("DELETE FROM tenant_credentials")
+            conn.execute("DELETE FROM tenant_risk_limits")
+            conn.execute("DELETE FROM tenants")
             pwd_hash = security.hash_password("AdminPass123!")
             conn.execute("""
                 INSERT INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at)
@@ -54,6 +59,37 @@ def test_vault_encryption():
 
     dec = security.decrypt_credentials(enc)
     assert dec == creds
+
+def test_vault_encryption_refuses_missing_master_key(monkeypatch):
+    monkeypatch.delenv("PORTAL_MASTER_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="PORTAL_MASTER_KEY environment variable is not configured"):
+        security.get_fernet()
+
+def test_migrate_vault_script(monkeypatch):
+    import scripts.migrate_vault_master_key as migrator
+    old_key = "uYvN3lM8k9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p="
+    new_key = "wK9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p4r6t8v0="
+    
+    # Setup test tenant credentials with old key
+    monkeypatch.setenv("PORTAL_MASTER_KEY", old_key)
+    creds = {"API_KEY": "TEST_KEY", "CLIENT_ID": "TEST_ID"}
+    enc = security.encrypt_credentials(creds)
+    
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('mig_test', 'Mig Test', 'ACTIVE', 0, 0)")
+            conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('mig_test', ?, 0)", (enc,))
+    
+    res = migrator.migrate_vault(old_key, new_key)
+    assert res["status"] == "success"
+    assert res["re_encrypted_tenants"] >= 1
+    
+    # Decrypt with new key
+    monkeypatch.setenv("PORTAL_MASTER_KEY", new_key)
+    with database.get_db_connection() as conn:
+        row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id='mig_test'").fetchone()
+        dec = security.decrypt_credentials(row["encrypted_payload"])
+        assert dec["API_KEY"] == "TEST_KEY"
 
 def test_password_hashing():
     pwd = "EnterprisePassword99!"

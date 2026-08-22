@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 def get_fernet():
     key = os.environ.get("PORTAL_MASTER_KEY", "").strip()
     if not key:
-        key = "uYvN3lM8k9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p="
+        raise RuntimeError(
+            "CRITICAL SECURITY ERROR: PORTAL_MASTER_KEY environment variable is not configured. "
+            "Refusing to start with insecure cryptographic fallback."
+        )
     return Fernet(key.encode() if isinstance(key, str) else key)
 
 def encrypt_credentials(payload: dict) -> str:
