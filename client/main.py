@@ -80,29 +80,46 @@ def db_init():
             conn.execute("CREATE TABLE IF NOT EXISTS signal_dedup (hash TEXT PRIMARY KEY, timestamp REAL)")
             conn.commit()
 
+def _sanitize_dict(d):
+    if not isinstance(d, dict):
+        return d
+    sanitized = {}
+    sensitive_keys = {"secret", "api_key", "api_secret", "password", "token", "totp_secret", "webhook_secret"}
+    for k, v in d.items():
+        if str(k).lower() in sensitive_keys:
+            sanitized[k] = "***MASKED***"
+        elif isinstance(v, dict):
+            sanitized[k] = _sanitize_dict(v)
+        else:
+            sanitized[k] = v
+    return sanitized
+
 def db_insert_pending(sig_id, payload_dict):
     with _DB_LOCK:
         with closing(_db_conn()) as conn:
             now = time.time()
+            clean_payload = _sanitize_dict(payload_dict) if isinstance(payload_dict, dict) else payload_dict
             conn.execute(
                 "INSERT INTO signals (id, received_at, payload, status, result, updated_at) "
                 "VALUES (?, ?, ?, 'pending', NULL, ?)",
-                (sig_id, now, json.dumps(payload_dict), now),
+                (sig_id, now, json.dumps(clean_payload), now),
             )
             conn.commit()
 
 def db_update_status(sig_id, status, result=None, payload=None):
     with _DB_LOCK:
         with closing(_db_conn()) as conn:
+            clean_res = _sanitize_dict(result) if isinstance(result, dict) else result
             if payload is not None:
+                clean_payload = _sanitize_dict(payload) if isinstance(payload, dict) else payload
                 conn.execute(
                     "UPDATE signals SET status=?, result=?, payload=?, updated_at=? WHERE id=?",
-                    (status, json.dumps(result) if result is not None else None, json.dumps(payload), time.time(), sig_id),
+                    (status, json.dumps(clean_res) if clean_res is not None else None, json.dumps(clean_payload), time.time(), sig_id),
                 )
             else:
                 conn.execute(
                     "UPDATE signals SET status=?, result=?, updated_at=? WHERE id=?",
-                    (status, json.dumps(result) if result is not None else None, time.time(), sig_id),
+                    (status, json.dumps(clean_res) if clean_res is not None else None, time.time(), sig_id),
                 )
             conn.commit()
 

@@ -393,3 +393,24 @@ def test_panic_cancelall_endpoint(monkeypatch):
 
     xts_api.panic_square_off_all()
     assert any("/orders/cancelall" in u for u in called_urls)
+
+def test_signals_db_secret_masking():
+    sig_id = "test_mask_sig"
+    raw_payload = {
+        "secret": "SUPER_SECRET_VALUE_123",
+        "api_key": "SENSITIVE_KEY",
+        "action": "BUY",
+        "symbol": "CRUDEOIL",
+        "quantity": 1,
+        "price": 6500.0
+    }
+    client_main.db_insert_pending(sig_id, raw_payload)
+    client_main.db_update_status(sig_id, "failed", result={"error": "failed", "token": "sensitive_session_token"})
+
+    recent = client_main.db_fetch_recent(10)
+    target = next(s for s in recent if s["id"] == sig_id)
+    
+    assert target["payload"]["secret"] == "***MASKED***"
+    assert target["payload"]["api_key"] == "***MASKED***"
+    assert target["result"]["token"] == "***MASKED***"
+    assert target["payload"]["symbol"] == "CRUDEOIL"
