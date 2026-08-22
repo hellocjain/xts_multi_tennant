@@ -1212,6 +1212,7 @@
                         <!-- Timeframe -->
                         <div class="space-y-1.5">
                             <label class="text-xs font-semibold text-slate-300">Timeframe</label>
+                            <input type="hidden" id="modal-st-timeframe-hidden" name="timeframe" value="5m">
                             <select id="modal-st-timeframe" name="timeframe_select" onchange="toggleModalCustomTimeframe(this.value)"
                                 class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-brand-500 transition">
                                 <option value="1m">1 Minute (60s)</option>
@@ -1226,7 +1227,7 @@
                                 <option value="custom">Custom Minutes...</option>
                             </select>
                             <div id="modal-st-custom-tf-wrap" class="hidden flex items-center gap-2 pt-1">
-                                <input type="number" id="modal-st-custom-minutes" name="custom_minutes" min="1" max="1440" placeholder="e.g. 20, 25"
+                                <input type="number" id="modal-st-custom-minutes" name="custom_minutes" min="1" max="1440" placeholder="e.g. 20, 25" oninput="syncModalTimeframe()"
                                     class="w-full bg-slate-900 border border-brand-500/50 rounded-xl px-3 py-1.5 text-xs text-slate-100 font-mono">
                                 <span class="text-xs text-slate-400 font-mono">min</span>
                             </div>
@@ -1591,6 +1592,25 @@
     // =========================================================================
     // SUPERTREND MULTI-STRATEGY MODAL & UI HANDLERS
     // =========================================================================
+    const strategyTimeframes = {
+        {% for s in supertrend_strategies %}
+        "{{ s.symbol }}": "{{ s.timeframe }}",
+        {% endfor %}
+    };
+
+    function syncModalTimeframe() {
+        const tfSelect = document.getElementById('modal-st-timeframe');
+        const customInput = document.getElementById('modal-st-custom-minutes');
+        const hiddenInput = document.getElementById('modal-st-timeframe-hidden');
+        if (!tfSelect || !hiddenInput) return;
+
+        if (tfSelect.value === 'custom' && customInput && customInput.value.trim()) {
+            hiddenInput.value = `${parseInt(customInput.value.trim())}m`;
+        } else {
+            hiddenInput.value = tfSelect.value;
+        }
+    }
+
     function openAddStrategyModal() {
         const modal = document.getElementById('st-strategy-modal');
         if (!modal) return;
@@ -1603,6 +1623,7 @@
         document.getElementById('modal-st-atr').value = '10';
         document.getElementById('modal-st-mult').value = '3.0';
         document.getElementById('modal-st-timeframe').value = '5m';
+        document.getElementById('modal-st-timeframe-hidden').value = '5m';
         toggleModalCustomTimeframe('5m');
         updateModalExecutionModeUI('LIVE');
         document.getElementById('modal-st-enable-toggle').checked = true;
@@ -1626,6 +1647,9 @@
         const tf = strategy.timeframe || '5m';
         const tfSelect = document.getElementById('modal-st-timeframe');
         const customInput = document.getElementById('modal-st-custom-minutes');
+        const hiddenInput = document.getElementById('modal-st-timeframe-hidden');
+        if (hiddenInput) hiddenInput.value = tf;
+
         if (['1m','3m','5m','15m','20m','25m','30m','45m','1h'].includes(tf)) {
             tfSelect.value = tf;
             toggleModalCustomTimeframe(tf);
@@ -1656,6 +1680,7 @@
         } else {
             wrap.classList.add('hidden');
         }
+        syncModalTimeframe();
     }
 
     function updateModalExecutionModeUI(mode) {
@@ -1811,6 +1836,19 @@
         stActiveSymbol = sym;
         const selectEl = document.getElementById('st-chart-symbol-select');
         if (selectEl && selectEl.value !== sym) selectEl.value = sym;
+        
+        // Auto-synchronize chart timeframe with target strategy's configured timeframe
+        const configuredTf = strategyTimeframes[sym];
+        if (configuredTf) {
+            stActiveTimeframe = configuredTf;
+            document.querySelectorAll('[id^="chart-tf-btn-"]').forEach(btn => {
+                btn.className = "px-2.5 py-1 rounded-lg transition font-bold text-slate-400 hover:text-slate-200";
+            });
+            const activeBtn = document.getElementById(`chart-tf-btn-${configuredTf}`);
+            if (activeBtn) {
+                activeBtn.className = "px-2.5 py-1 rounded-lg transition font-bold bg-brand-600 text-white shadow";
+            }
+        }
         refreshSuperTrendChart();
     }
 

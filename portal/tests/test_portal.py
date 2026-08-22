@@ -615,6 +615,77 @@ def test_portal_supertrend_config_and_validation_guard(monkeypatch):
         assert res_dash.status_code == 200
         assert "ST:" in res_dash.text
 
+def test_save_multi_supertrend_strategy_preserves_15m_and_custom_timeframes():
+    with TestClient(app) as client:
+        enc_payload = security.encrypt_credentials({"CLIENT_ID": "ST02", "WEBHOOK_SECRET": "sec123"})
+        with closing(database.get_db_connection()) as conn:
+            with conn:
+                conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('admin_tf', 'admin_tf', 'hash', 1, 100)")
+                conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('tenant_tf', 'TF Test', 'ACTIVE', 100, 100)")
+                conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('tenant_tf', ?, 100)", (enc_payload,))
+                conn.execute("INSERT OR REPLACE INTO tenant_risk_limits (tenant_id, updated_at) VALUES ('tenant_tf', 100)")
+                conn.execute("DELETE FROM tenant_supertrend_strategies WHERE tenant_id='tenant_tf'")
+
+        cookie = security.create_session("admin_tf", "127.0.0.1", "pytest-tf")
+
+        # 1. Save strategy with 15m preset
+        res_15m = client.post("/admin/clients/tenant_tf/supertrend/strategy/save", data={
+            "symbol": "NATURALGAS1!",
+            "exchange_segment": "MCXFO",
+            "timeframe_select": "15m",
+            "quantity": 2,
+            "product_type": "NRML",
+            "atr_period": 10,
+            "multiplier": 3.0,
+            "execution_mode": "LIVE",
+            "is_enabled": "true"
+        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_15m.status_code == 303
+
+        with closing(database.get_db_connection()) as conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_tf' AND symbol='NATURALGAS1!'").fetchone()
+            assert row is not None
+            assert row["timeframe"] == "15m"
+            assert row["quantity"] == 2
+            assert row["is_enabled"] == 1
+
+        # 2. Save strategy with custom 20m interval
+        res_20m = client.post("/admin/clients/tenant_tf/supertrend/strategy/save", data={
+            "symbol": "SILVER1001!",
+            "exchange_segment": "MCXFO",
+            "timeframe_select": "custom",
+            "custom_minutes": "20",
+            "quantity": 1,
+            "product_type": "NRML",
+            "atr_period": 10,
+            "multiplier": 3.0,
+            "execution_mode": "PAPER",
+            "is_enabled": "true"
+        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_20m.status_code == 303
+
+        with closing(database.get_db_connection()) as conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_tf' AND symbol='SILVER1001!'").fetchone()
+            assert row is not None
+            assert row["timeframe"] == "20m"
+            assert row["execution_mode"] == "PAPER"
+
+        # 3. Uncheck is_enabled to disable
+        res_disable = client.post("/admin/clients/tenant_tf/supertrend/strategy/save", data={
+            "symbol": "SILVER1001!",
+            "exchange_segment": "MCXFO",
+            "timeframe_select": "20m",
+            "quantity": 1,
+            "product_type": "NRML",
+            "execution_mode": "PAPER"
+            # is_enabled omitted = False
+        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_disable.status_code == 303
+
+        with closing(database.get_db_connection()) as conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_tf' AND symbol='SILVER1001!'").fetchone()
+            assert row["is_enabled"] == 0
+
 
 
 

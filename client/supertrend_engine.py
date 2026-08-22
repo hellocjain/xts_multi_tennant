@@ -279,7 +279,11 @@ class SingleSuperTrendRunner:
         if "exchange_segment" in config_dict:
             self.exchange_segment = str(config_dict["exchange_segment"]).strip().upper()
         if "timeframe" in config_dict:
-            self.timeframe = str(config_dict["timeframe"]).strip().lower()
+            new_tf = str(config_dict["timeframe"]).strip().lower()
+            if new_tf and new_tf != self.timeframe:
+                self.timeframe = new_tf
+                self.cached_candles = []
+                self.recent_trade_markers = []
         if "quantity" in config_dict:
             self.quantity = max(1, int(config_dict["quantity"]))
         if "product_type" in config_dict:

@@ -851,15 +851,15 @@ async def save_supertrend_strategy_action(
     id: str = Form(""),
     symbol: str = Form(...),
     exchange_segment: str = Form("MCXFO"),
-    timeframe: str = Form("5m"),
-    timeframe_select: str = Form("5m"),
-    custom_minutes: str = Form(""),
+    timeframe: Optional[str] = Form(None),
+    timeframe_select: Optional[str] = Form(None),
+    custom_minutes: Optional[str] = Form(None),
     quantity: int = Form(1),
     product_type: str = Form("NRML"),
     atr_period: int = Form(10),
     multiplier: float = Form(3.0),
     execution_mode: str = Form("LIVE"),
-    is_enabled: bool = Form(True),
+    is_enabled: Optional[str] = Form(None),
     user: dict = Depends(require_auth)
 ):
     """Saves or updates a symbol strategy for a client account (Max 6 concurrent strategies)."""
@@ -870,13 +870,16 @@ async def save_supertrend_strategy_action(
     clean_atr = max(2, atr_period)
     clean_mult = max(0.1, multiplier)
     clean_mode = "PAPER" if execution_mode.strip().upper() == "PAPER" else "LIVE"
+    clean_enabled = is_enabled in ("true", "1", "on", "yes", True) if is_enabled is not None else False
 
-    if timeframe_select == "custom" and custom_minutes.strip().isdigit():
+    # Robust timeframe resolution
+    clean_tf = "5m"
+    if timeframe_select == "custom" and custom_minutes and custom_minutes.strip().isdigit():
         clean_tf = f"{int(custom_minutes.strip())}m"
-    elif timeframe.strip():
+    elif timeframe_select and timeframe_select.strip() and timeframe_select.strip() != "custom":
+        clean_tf = timeframe_select.strip().lower()
+    elif timeframe and timeframe.strip() and timeframe.strip() != "custom":
         clean_tf = timeframe.strip().lower()
-    else:
-        clean_tf = timeframe_select.strip().lower() or "5m"
 
     if not clean_sym:
         raise HTTPException(status_code=400, detail="Trading symbol is required.")
@@ -886,9 +889,14 @@ async def save_supertrend_strategy_action(
 
     with closing(database.get_db_connection()) as conn:
         with conn:
-            # Check capacity limit if inserting a new symbol
-            existing_sym = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=?", (tenant_id, clean_sym)).fetchone()
-            if not existing_sym:
+            # Check capacity limit: only enforce if inserting a brand-new symbol / record
+            existing_rec = None
+            if id.strip():
+                existing_rec = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND id=?", (tenant_id, id.strip())).fetchone()
+            if not existing_rec:
+                existing_rec = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=?", (tenant_id, clean_sym)).fetchone()
+
+            if not existing_rec:
                 cur_count = conn.execute("SELECT COUNT(*) FROM tenant_supertrend_strategies WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
                 if cur_count >= 6:
                     raise HTTPException(status_code=400, detail="Maximum strategy limit (6 symbols) reached for this account. Remove an existing strategy first.")
@@ -920,10 +928,12 @@ async def save_supertrend_strategy_action(
                 clean_atr,
                 clean_mult,
                 clean_mode,
-                1 if is_enabled else 0,
+                1 if clean_enabled else 0,
                 now,
                 now
             ))
+
+    logger.info(f"Tenant [{tenant_id}] saved SuperTrend strategy: {clean_sym} ({clean_tf}, {clean_mode}, qty={clean_qty}, enabled={clean_enabled})")
 
     # Re-generate client config.json
     try:
@@ -952,7 +962,7 @@ async def save_supertrend_strategy_action(
         "atr_period": clean_atr,
         "multiplier": clean_mult,
         "execution_mode": clean_mode,
-        "is_enabled": is_enabled
+        "is_enabled": clean_enabled
     }
 
     async with httpx.AsyncClient() as client:
