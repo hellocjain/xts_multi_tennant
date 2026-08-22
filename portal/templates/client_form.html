@@ -88,6 +88,21 @@
                             class="w-full bg-slate-950 border border-bordercolor rounded-xl px-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
                     </div>
                 </div>
+                
+                <!-- Live Credential Test Trigger & Target -->
+                <div class="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <button type="button" 
+                        hx-post="/admin/clients/validate-credentials" 
+                        hx-include="closest form" 
+                        hx-target="#cred-validation-result"
+                        hx-indicator="#cred-spinner"
+                        class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-bordercolor text-xs font-semibold px-4 py-2 rounded-xl transition flex items-center gap-2">
+                        <i data-lucide="radio" class="w-3.5 h-3.5 text-brand-400"></i>
+                        <span>Test Broker Connection</span>
+                        <span id="cred-spinner" class="htmx-indicator animate-spin text-xs">⏳</span>
+                    </button>
+                    <div id="cred-validation-result" class="w-full sm:w-auto flex-1"></div>
+                </div>
             </div>
 
             <!-- 3. Risk Controls & Execution Parameters -->

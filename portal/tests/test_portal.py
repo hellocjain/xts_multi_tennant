@@ -317,3 +317,57 @@ def test_thread_safe_port_allocation():
     with docker_manager.PORT_LOCK:
         assert "tenant_0" not in docker_manager.LOCAL_PORTS
 
+def test_validate_broker_credentials_wizard(monkeypatch):
+    # Setup test admin user and session
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('admin_wiz', 'admin_wiz', 'hash', 1, 1000)")
+    
+    token = security.create_session("admin_wiz", "testclient", "testclient")
+    
+    client = TestClient(app, cookies={"admin_session": token})
+
+    # 1. Missing keys returns warning
+    res_empty = client.post("/admin/clients/validate-credentials", data={"api_key": "", "api_secret": ""})
+    assert res_empty.status_code == 200
+    assert "Please enter both Interactive API Key and Secret" in res_empty.text
+
+    # 2. Mock valid broker response
+    monkeypatch.setattr(security, "validate_broker_credentials", lambda **kwargs: {
+        "valid": True,
+        "interactive": True,
+        "market_data": True,
+        "client_name": "Test Trader",
+        "segments": ["NSECM", "MCXFO"],
+        "errors": []
+    })
+
+    res_valid = client.post("/admin/clients/validate-credentials", data={
+        "api_key": "VALID_KEY",
+        "api_secret": "VALID_SECRET",
+        "client_id": "ABK01"
+    })
+    assert res_valid.status_code == 200
+    assert "Live Broker Handshake Verified" in res_valid.text
+    assert "Test Trader" in res_valid.text
+    assert "MCXFO" in res_valid.text
+
+    # 3. Mock failed broker response
+    monkeypatch.setattr(security, "validate_broker_credentials", lambda **kwargs: {
+        "valid": False,
+        "interactive": False,
+        "market_data": False,
+        "client_name": "",
+        "segments": [],
+        "errors": ["Interactive Auth Error: Invalid API Key or Secret"]
+    })
+
+    res_fail = client.post("/admin/clients/validate-credentials", data={
+        "api_key": "BAD_KEY",
+        "api_secret": "BAD_SECRET",
+        "client_id": "ABK01"
+    })
+    assert res_fail.status_code == 200
+    assert "Broker Authentication Failed" in res_fail.text
+    assert "Invalid API Key or Secret" in res_fail.text
+

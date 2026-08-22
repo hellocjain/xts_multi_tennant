@@ -108,8 +108,73 @@ def verify_and_consume_recovery_code(user_id: str, code: str) -> bool:
                     "UPDATE admin_users SET recovery_codes_hash_json=? WHERE id=?",
                     (json.dumps(stored_hashes), user_id)
                 )
+                logger.warning(f"Recovery code consumed for user {user_id}. {len(stored_hashes)} codes remaining.")
                 return True
     return False
+
+def validate_broker_credentials(api_key: str, api_secret: str, client_id: str, base_url: str = "https://symphony.acagarwal.com:3000/interactive", md_api_key: str = "", md_api_secret: str = "") -> dict:
+    """Validates XTS Interactive & Market Data credentials against live broker REST endpoints."""
+    import requests
+    results = {
+        "valid": False,
+        "interactive": False,
+        "market_data": False,
+        "client_name": "",
+        "segments": [],
+        "errors": []
+    }
+    
+    clean_base = (base_url or "https://symphony.acagarwal.com:3000/interactive").rstrip("/")
+    if not clean_base.endswith("/interactive"):
+        clean_base = f"{clean_base}/interactive" if "/interactive" not in clean_base else clean_base
+
+    # 1. Test Interactive Login
+    try:
+        login_url = f"{clean_base}/user/session"
+        payload = {"appKey": api_key.strip(), "secretKey": api_secret.strip(), "source": "WEBAPI"}
+        resp = requests.post(login_url, json=payload, timeout=6)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("type") == "success" and (data.get("result") or {}).get("token"):
+                token = data["result"]["token"]
+                results["interactive"] = True
+                
+                # Fetch profile details
+                prof_url = f"{clean_base}/user/profile"
+                p_resp = requests.get(prof_url, headers={"authorization": token}, timeout=5)
+                if p_resp.status_code == 200:
+                    p_data = p_resp.json().get("result", {})
+                    results["client_name"] = p_data.get("ClientName", "") or p_data.get("clientName", "") or client_id
+                    results["segments"] = p_data.get("ExchangeList", []) or p_data.get("exchangeList", [])
+            else:
+                desc = data.get("description") or data.get("error") or "Interactive login rejected"
+                results["errors"].append(f"Interactive Auth Error: {desc}")
+        else:
+            results["errors"].append(f"Interactive HTTP {resp.status_code}: {resp.text[:120]}")
+    except Exception as e:
+        results["errors"].append(f"Interactive Connection Error: {str(e)}")
+
+    # 2. Test Market Data Login if provided
+    md_key = (md_api_key or api_key).strip()
+    md_sec = (md_api_secret or api_secret).strip()
+    if md_key and md_sec:
+        try:
+            md_base = clean_base.replace("/interactive", "/apimarketdata")
+            md_login_url = f"{md_base}/auth/login"
+            md_payload = {"appKey": md_key, "secretKey": md_sec, "source": "WEBAPI"}
+            md_resp = requests.post(md_login_url, json=md_payload, timeout=6)
+            if md_resp.status_code == 200 and md_resp.json().get("type") == "success":
+                results["market_data"] = True
+            else:
+                md_err = md_resp.json().get("description") if md_resp.status_code == 200 else f"HTTP {md_resp.status_code}"
+                results["errors"].append(f"Market Data Auth Warning: {md_err}")
+        except Exception as e:
+            results["errors"].append(f"Market Data Connection Warning: {str(e)}")
+    else:
+        results["market_data"] = True
+
+    results["valid"] = results["interactive"]
+    return results
 
 # Session Management
 def create_session(user_id: str, ip_address: str, user_agent: str, lifetime_seconds=43200) -> str:

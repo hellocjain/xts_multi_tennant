@@ -351,6 +351,53 @@ async def client_webhook_modal(tenant_id: str, request: Request, user: dict = De
         "server_info": get_server_info()
     })
 
+@app.post("/admin/clients/validate-credentials", response_class=HTMLResponse)
+async def validate_credentials_action(
+    request: Request,
+    api_key: str = Form(""),
+    api_secret: str = Form(""),
+    md_api_key: str = Form(""),
+    md_api_secret: str = Form(""),
+    client_id: str = Form(""),
+    user: dict = Depends(require_auth)
+):
+    if not api_key.strip() or not api_secret.strip():
+        return HTMLResponse(
+            """<div class="bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3 rounded-xl flex items-center gap-2">
+                <span>⚠️ Please enter both Interactive API Key and Secret to test broker connection.</span>
+            </div>"""
+        )
+
+    res = security.validate_broker_credentials(
+        api_key=api_key,
+        api_secret=api_secret,
+        client_id=client_id,
+        md_api_key=md_api_key,
+        md_api_secret=md_api_secret
+    )
+
+    if res["valid"]:
+        seg_str = ", ".join(res["segments"]) if res["segments"] else "Active"
+        name_str = f" ({res['client_name']})" if res["client_name"] else ""
+        return HTMLResponse(
+            f"""<div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs p-3.5 rounded-xl flex items-start gap-2.5">
+                <div>
+                    <div class="font-bold text-emerald-300">✅ Live Broker Handshake Verified!</div>
+                    <div class="text-[11px] text-emerald-400/90 mt-0.5">Authenticated successfully for <strong>{client_id}{name_str}</strong>. Segments: {seg_str}</div>
+                </div>
+            </div>"""
+        )
+    else:
+        err_msg = "<br>• ".join(res["errors"]) if res["errors"] else "Broker authentication failed"
+        return HTMLResponse(
+            f"""<div class="bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3.5 rounded-xl flex items-start gap-2.5">
+                <div>
+                    <div class="font-bold text-rose-300">❌ Broker Authentication Failed</div>
+                    <div class="text-[11px] text-rose-400/90 mt-0.5">• {err_msg}</div>
+                </div>
+            </div>"""
+        )
+
 @app.get("/admin/clients/add", response_class=HTMLResponse)
 async def add_client_page(request: Request, user: dict = Depends(require_auth)):
     return templates.TemplateResponse(request=request, name="client_form.html", context={
