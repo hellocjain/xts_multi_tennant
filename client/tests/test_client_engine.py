@@ -374,3 +374,22 @@ def test_derivative_lot_size_alignment(monkeypatch):
     # 3. Aligned quantity (e.g. 200 units = 2 lots) -> must succeed
     res_good = xts_api.place_order("BUY", "CRUDEOIL", 200, 100.0, "REF_LOT_3")
     assert res_good["type"] == "success"
+
+def test_panic_cancelall_endpoint(monkeypatch):
+    called_urls = []
+    class MockResp:
+        status_code = 200
+        def json(self):
+            return {"type": "success", "result": {"positionList": []}}
+
+    def mock_post(url, json=None, headers=None, timeout=None):
+        called_urls.append(url)
+        return MockResp()
+
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda: "mock_token")
+    monkeypatch.setattr(xts_api.api_session, "post", mock_post)
+    monkeypatch.setattr(xts_api.api_session, "get", lambda *args, **kwargs: MockResp())
+
+    xts_api.panic_square_off_all()
+    assert any("/orders/cancelall" in u for u in called_urls)

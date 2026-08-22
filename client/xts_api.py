@@ -1568,20 +1568,26 @@ def panic_square_off_all():
     headers = {"authorization": token, "Content-Type": "application/json"}
     results = []
 
-    # 1. Cancel all open pending orders
+    # 1. Cancel all open pending orders (atomic POST /orders/cancelall with sequential fallback)
     try:
-        ord_url = f"{safe_url}/orders"
-        o_resp = api_session.get(ord_url, headers=headers, timeout=5)
-        orders = o_resp.json().get("result", [])
-        for ord_item in orders:
-            if isinstance(ord_item, dict):
-                st = ord_item.get("OrderStatus")
-                app_id = ord_item.get("AppOrderID")
-                if st in ("Open", "New", "Pending", "PartiallyFilled", "PendingNew", "Replaced") and app_id:
-                    cancel_url = f"{safe_url}/orders?appOrderID={app_id}&clientID={client_id}"
-                    ORDER_RATE_LIMITER.acquire(timeout=3.0)
-                    api_session.delete(cancel_url, json={"appOrderID": app_id, "clientID": client_id}, headers=headers, timeout=4)
-                    logger.critical(f"🚨 CANCELLED OPEN ORDER: AppOrderID {app_id}")
+        cancel_all_url = f"{safe_url}/orders/cancelall"
+        ORDER_RATE_LIMITER.acquire(timeout=3.0)
+        c_all_resp = api_session.post(cancel_all_url, json={"clientID": client_id}, headers=headers, timeout=5)
+        if c_all_resp.status_code == 200 and c_all_resp.json().get("type") == "success":
+            logger.critical(f"🚨 ATOMIC CANCEL ALL SUCCESSFUL for client {client_id}")
+        else:
+            ord_url = f"{safe_url}/orders"
+            o_resp = api_session.get(ord_url, headers=headers, timeout=5)
+            orders = o_resp.json().get("result", [])
+            for ord_item in orders:
+                if isinstance(ord_item, dict):
+                    st = ord_item.get("OrderStatus")
+                    app_id = ord_item.get("AppOrderID")
+                    if st in ("Open", "New", "Pending", "PartiallyFilled", "PendingNew", "Replaced") and app_id:
+                        cancel_url = f"{safe_url}/orders?appOrderID={app_id}&clientID={client_id}"
+                        ORDER_RATE_LIMITER.acquire(timeout=3.0)
+                        api_session.delete(cancel_url, json={"appOrderID": app_id, "clientID": client_id}, headers=headers, timeout=4)
+                        logger.critical(f"🚨 CANCELLED OPEN ORDER: AppOrderID {app_id}")
     except Exception as e:
         logger.error(f"Order cancellation sweep error: {e}")
 
