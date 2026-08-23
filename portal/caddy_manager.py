@@ -92,8 +92,8 @@ def generate_caddyfile_content() -> str:
         reverse_proxy @client_route xts_client_{{re.internal.1}}:8000 {{
             rewrite {{re.internal.2}}
             transport http {{
-                response_header_timeout 3s
-                dial_timeout 1s
+                response_header_timeout 35s
+                dial_timeout 2s
             }}
         }}
     }}

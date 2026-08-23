@@ -686,7 +686,7 @@ async def refresh_client_master(tenant_id: str, request: Request, user: dict = D
     async with httpx.AsyncClient() as client:
         for target_url in [url_local, url_caddy, url_docker]:
             try:
-                resp = await client.post(target_url, headers=headers, timeout=12.0)
+                resp = await client.post(target_url, headers=headers, timeout=35.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     break
