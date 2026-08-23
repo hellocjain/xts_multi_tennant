@@ -385,3 +385,36 @@ def test_sec_xts_008_chart_abort_controller_race_protection():
     assert "signal: chartAbortController.signal" in html, "Missing signal option in chart fetch call"
     assert "currentSeq !== chartRequestSeq" in html, "Missing out-of-order sequence check in refreshSuperTrendChart"
 
+def test_multi_strategy_card_actions_id_binding():
+    """
+    Verifies that client_detail.html correctly binds strategy ID to 'View Chart',
+    'Evaluate Single Strategy', and the delete/toggle form routes so multi-timeframe
+    strategies on the same symbol are uniquely controlled.
+    """
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO tenant_supertrend_strategies (
+                    id, tenant_id, symbol, exchange_segment, timeframe, quantity,
+                    product_type, atr_period, multiplier, execution_mode, is_enabled,
+                    created_at, updated_at
+                ) VALUES 
+                ('st_silv_15m', 't_live_profit', 'SILVER1001!', 'MCXFO', '15m', 1, 'NRML', 10, 3.0, 'LIVE', 1, 100, 100),
+                ('st_silv_30m', 't_live_profit', 'SILVER1001!', 'MCXFO', '30m', 2, 'NRML', 10, 3.0, 'LIVE', 1, 200, 200);
+            """)
+
+    client = get_auth_client()
+    res = client.get("/admin/clients/t_live_profit")
+    assert res.status_code == 200
+    html = res.text
+
+    assert "switchChartStrategy('st_silv_15m')" in html
+    assert "switchChartStrategy('st_silv_30m')" in html
+    assert "openEvaluateModal('SILVER1001!', 'st_silv_15m')" in html
+    assert "openEvaluateModal('SILVER1001!', 'st_silv_30m')" in html
+    assert "/supertrend/strategy/st_silv_15m/toggle" in html
+    assert "/supertrend/strategy/st_silv_30m/toggle" in html
+    assert "/supertrend/strategy/st_silv_15m/delete" in html
+    assert "/supertrend/strategy/st_silv_30m/delete" in html
+
+

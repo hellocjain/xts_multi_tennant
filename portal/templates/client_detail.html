@@ -1030,14 +1030,14 @@
 
                 <!-- Action Footer -->
                 <div class="flex items-center justify-between pt-3 border-t border-bordercolor/60 text-xs font-mono">
-                    <button type="button" onclick="switchChartSymbol('{{ s.symbol }}')"
+                    <button type="button" onclick="switchChartStrategy('{{ s.id }}')"
                         class="text-brand-400 hover:text-brand-300 flex items-center gap-1 font-bold">
                         <i data-lucide="candlestick-chart" class="w-3.5 h-3.5"></i>
                         <span>View Chart</span>
                     </button>
 
                     <div class="flex items-center gap-2">
-                        <button type="button" onclick="openEvaluateModal('{{ s.symbol }}')" title="Evaluate Single Strategy"
+                        <button type="button" onclick="openEvaluateModal('{{ s.symbol }}', '{{ s.id }}')" title="Evaluate Single Strategy"
                             class="p-1.5 bg-slate-900 hover:bg-slate-800 text-amber-400 rounded-lg border border-bordercolor transition">
                             <i data-lucide="zap" class="w-3.5 h-3.5"></i>
                         </button>
@@ -1047,7 +1047,7 @@
                             <i data-lucide="edit" class="w-3.5 h-3.5"></i>
                         </button>
 
-                        <form method="POST" action="/admin/clients/{{ client.id }}/supertrend/strategy/{{ s.id }}/delete" onsubmit="return confirm('Remove strategy for {{ s.symbol }}?');">
+                        <form method="POST" action="/admin/clients/{{ client.id }}/supertrend/strategy/{{ s.id }}/delete" onsubmit="return confirm('Remove strategy for {{ s.symbol }} ({{ s.timeframe }})?');">
                             <button type="submit" title="Delete Strategy"
                                 class="p-1.5 bg-slate-900 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-bordercolor hover:border-rose-500/40 transition">
                                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
