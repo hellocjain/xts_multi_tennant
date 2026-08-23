@@ -79,7 +79,8 @@ def parse_timeframe_seconds(tf_str: Any) -> int:
 def calculate_supertrend(
     candles: List[Dict[str, Any]],
     atr_period: int = 10,
-    multiplier: float = 3.0
+    multiplier: float = 3.0,
+    change_atr: bool = True
 ) -> Dict[str, Any]:
     """
     Computes SuperTrend indicator over a chronological list of OHLC candles.
@@ -116,15 +117,20 @@ def calculate_supertrend(
             tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
         tr_list.append(tr)
 
-    # 2. Compute Wilder's Smoothing ATR (RMA in Pine Script)
+    # 2. Compute ATR (Wilder's Smoothing RMA vs SMA matching Pine Script changeATR)
     atr_list = [0.0] * n
-    initial_atr = sum(tr_list[:atr_period]) / float(atr_period)
-    atr_list[atr_period - 1] = initial_atr
-
-    for i in range(atr_period, n):
-        prev_atr = atr_list[i - 1]
-        current_atr = ((prev_atr * (atr_period - 1)) + tr_list[i]) / float(atr_period)
-        atr_list[i] = current_atr
+    if change_atr:
+        # Wilder's Smoothing ATR (RMA in Pine Script: atr = atr(Periods))
+        initial_atr = sum(tr_list[:atr_period]) / float(atr_period)
+        atr_list[atr_period - 1] = initial_atr
+        for i in range(atr_period, n):
+            prev_atr = atr_list[i - 1]
+            current_atr = ((prev_atr * (atr_period - 1)) + tr_list[i]) / float(atr_period)
+            atr_list[i] = current_atr
+    else:
+        # Simple Moving Average ATR (atr2 = sma(tr, Periods) in Pine Script)
+        for i in range(atr_period - 1, n):
+            atr_list[i] = sum(tr_list[i - atr_period + 1 : i + 1]) / float(atr_period)
 
     # 3. Compute Basic Bands, Final Ratchet Bands, and Trend
     final_ub = [0.0] * n
@@ -164,13 +170,14 @@ def calculate_supertrend(
             else:
                 final_lb[i] = prev_lb
 
-            # Trend Direction (Pine Script trend := trend == -1 and close > dn1 ? 1 : trend == 1 and close < up1 ? -1 : trend)
-            if close > prev_ub:
+            # Trend Direction (Pine Script trend := trend[1] == -1 and close > dn1 ? 1 : trend[1] == 1 and close < up1 ? -1 : trend[1])
+            prev_t = trend[i - 1]
+            if prev_t == -1 and close > prev_ub:
                 trend[i] = 1
-            elif close < prev_lb:
+            elif prev_t == 1 and close < prev_lb:
                 trend[i] = -1
             else:
-                trend[i] = trend[i - 1]
+                trend[i] = prev_t
 
             supertrend[i] = final_lb[i] if trend[i] == 1 else final_ub[i]
 

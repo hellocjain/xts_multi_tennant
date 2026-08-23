@@ -975,6 +975,92 @@ async def test_multi_timeframe_pending_suppression_isolation(monkeypatch):
     assert payload["quantity"] == 2
     assert "30M" in payload["order_ref"].upper()
 
+def test_pine_script_v4_kivancozbilgic_mathematical_parity():
+    """
+    Direct validation of calculate_supertrend against KivancOzbilgic Pine Script v4 formulas:
+    - tr = max(high-low, abs(high-close[1]), abs(low-close[1]))
+    - atr = rma(tr, Periods) (Wilder's Smoothing)
+    - up = src - Multiplier*atr; up := close[1] > up1 ? max(up, up1) : up
+    - dn = src + Multiplier*atr; dn := close[1] < dn1 ? min(dn, dn1) : dn
+    - trend := trend[1] == -1 and close > dn1 ? 1 : trend[1] == 1 and close < up1 ? -1 : trend[1]
+    """
+    # 20 controlled bars with known price actions:
+    # Bars 0-9: Flat range for RMA initialization (seed = SMA of first 10 TRs)
+    # Bars 10-14: Rising prices establishing Bullish trend (trend = 1)
+    # Bars 15-16: Sharp collapse breaking lower band (trend = -1, sellSignal)
+    # Bars 17-19: Sharp surge breaking upper band (trend = 1, buySignal)
+    candles = [
+        {"time": 1000 + i*60, "open": 100.0, "high": 102.0, "low": 98.0, "close": 100.0, "volume": 1000}
+        for i in range(10)
+    ]
+    # TR for each of first 10 bars = 102 - 98 = 4.0. Initial ATR(10) at bar 9 = 4.0.
+    
+    # Bar 10: High 110, Low 100, Close 108. hl2 = 105.0. TR = max(110-100, |110-100|, |100-100|) = 10.0.
+    # ATR(10) = (4.0 * 9 + 10.0) / 10 = 4.6.
+    # basic_lb = 105.0 - (3.0 * 4.6) = 91.2. basic_ub = 105.0 + 13.8 = 118.8.
+    candles.append({"time": 1600, "open": 100.0, "high": 110.0, "low": 100.0, "close": 108.0, "volume": 1000})
+
+    # Bar 11: High 120, Low 107, Close 118. hl2 = 113.5. TR = max(13, |120-108|, |107-108|) = 13.0.
+    # ATR(10) = (4.6 * 9 + 13.0) / 10 = 5.44.
+    # basic_lb = 113.5 - (3.0 * 5.44) = 97.18.
+    # Since basic_lb (97.18) > prev_lb (91.2) and prev_close (108.0) >= 91.2 -> final_lb = 97.18 (Ratcheted up!)
+    candles.append({"time": 1660, "open": 108.0, "high": 120.0, "low": 107.0, "close": 118.0, "volume": 1000})
+
+    # Bar 12: Whipsaw Bar: Price drops to 90 mid-candle (piercing lower band 97.18) but closes at 115 (above lower band).
+    # Pine Script rule: Trend is evaluated on CLOSE. Since close (115) > prev_lb (97.18), trend remains +1 (BULLISH)!
+    candles.append({"time": 1720, "open": 118.0, "high": 119.0, "low": 90.0, "close": 115.0, "volume": 1000})
+
+    # Bar 13: Collapse Bar: Close breaks below lower band (Close = 80.0)
+    # Flips trend to -1 (BEARISH)
+    candles.append({"time": 1780, "open": 115.0, "high": 115.0, "low": 75.0, "close": 80.0, "volume": 1000})
+
+    # Bar 14: Rebound Bar: Close surges above upper band (Close = 135.0)
+    # Flips trend to +1 (BULLISH)
+    candles.append({"time": 1840, "open": 80.0, "high": 140.0, "low": 80.0, "close": 135.0, "volume": 1000})
+
+    res = calculate_supertrend(candles, atr_period=10, multiplier=3.0, change_atr=True)
+    assert res["error"] is None
+    assert len(res["candle_series"]) == 15
+
+    # Check Bar 9 (initialization bar)
+    bar9 = res["candle_series"][9]
+    assert bar9["atr"] == 4.0
+    assert bar9["trend"] == 1
+
+    # Check Bar 11 (ratchet verification)
+    bar11 = res["candle_series"][11]
+    assert bar11["lower_band"] > bar9["lower_band"] # Lower band ratcheted upward
+    assert bar11["trend"] == 1
+
+    # Check Bar 12 (whipsaw bar)
+    bar12 = res["candle_series"][12]
+    assert bar12["trend"] == 1 # Maintained Bullish because close > prev_lb
+
+    # Check Bar 13 (bearish flip bar)
+    bar13 = res["candle_series"][13]
+    assert bar13["trend"] == -1 # Flipped to Bearish
+
+    # Check Bar 14 (bullish flip bar)
+    bar14 = res["candle_series"][14]
+    assert bar14["trend"] == 1 # Flipped to Bullish
+    assert res["is_flip"] is True
+    assert res["flip_direction"] == "BULLISH"
+
+def test_pine_script_v4_sma_atr_mode_parity():
+    """
+    Validates calculate_supertrend with change_atr=False (sma(tr, Periods) mode in Pine Script).
+    """
+    candles = [
+        {"time": 1000 + i*60, "open": 100.0, "high": 105.0, "low": 95.0, "close": 100.0, "volume": 1000}
+        for i in range(15)
+    ]
+    # Each bar TR = 105 - 95 = 10.0. SMA(TR, 10) = 10.0 everywhere.
+    res_sma = calculate_supertrend(candles, atr_period=10, multiplier=3.0, change_atr=False)
+    assert res_sma["error"] is None
+    for c in res_sma["candle_series"][9:]:
+        assert c["atr"] == 10.0
+
+
 
 
 
