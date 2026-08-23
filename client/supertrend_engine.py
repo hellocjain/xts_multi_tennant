@@ -22,6 +22,7 @@ import uuid
 import math
 import re
 from typing import List, Dict, Optional, Any, Callable
+from xts_api import slice_quantity_for_freeze
 
 logger = logging.getLogger("supertrend_engine")
 
@@ -269,6 +270,7 @@ class SingleSuperTrendRunner:
         # Historical buffer & chart markers
         self.cached_candles: List[Dict[str, Any]] = []
         self.recent_trade_markers: List[Dict[str, Any]] = []
+        self.pending_order_first_seen: Dict[str, float] = {}
 
     def update_config(self, config_dict: dict):
         """Updates parameters for this single runner safely."""
@@ -484,6 +486,8 @@ class SingleSuperTrendRunner:
             inst_id = inst.get("inst_id")
             exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
             freeze_limit = int(inst.get("freeze_qty") or 100000)
+            lot_size = int(inst.get("lot_size") or 1)
+            is_derivative = exch_seg not in ["NSECM", "BSECM"]
             tf_seconds = parse_timeframe_seconds(self.timeframe)
 
             # 2. Expiry Protection Guard
@@ -520,13 +524,20 @@ class SingleSuperTrendRunner:
 
                 if target_pos:
                     side = target_pos.get("side", "").upper()
-                    qty = int(target_pos.get("quantity", 0))
-                    if side == "LONG" and qty > 0:
+                    raw_qty = int(target_pos.get("quantity", 0))
+                    # Reconcile raw broker units to strategy lots for derivative segments
+                    if is_derivative and lot_size > 1 and raw_qty > 0 and (raw_qty % lot_size != 0):
+                        logger.critical(
+                            f"🚨 DATA INTEGRITY WARNING: Position raw quantity {raw_qty} for {self.symbol} is NOT an exact multiple of lot size {lot_size}! "
+                            f"Remainder: {raw_qty % lot_size}. Reconciling with floor division: {raw_qty // lot_size} lots."
+                        )
+                    reconciled_lots = (raw_qty // lot_size) if (is_derivative and lot_size > 1) else raw_qty
+                    if side == "LONG" and reconciled_lots > 0:
                         self.strategy_position = "LONG"
-                        self.current_broker_quantity = qty
-                    elif side == "SHORT" and qty > 0:
+                        self.current_broker_quantity = reconciled_lots
+                    elif side == "SHORT" and reconciled_lots > 0:
                         self.strategy_position = "SHORT"
-                        self.current_broker_quantity = qty
+                        self.current_broker_quantity = reconciled_lots
                     else:
                         self.strategy_position = "FLAT"
                         self.current_broker_quantity = 0
@@ -536,15 +547,37 @@ class SingleSuperTrendRunner:
             except Exception as e:
                 logger.error(f"SuperTrend [{self.symbol}]: Failed to reconcile broker positions: {e}")
 
-            # 4. Pending Order Protection
+            # 4. Pending Order Protection (Scoped to strategy orders with 60s stale timeout)
             try:
                 broker_orders = await asyncio.to_thread(xts_api_module.get_broker_orders)
+                now_ts = time.time()
                 for o in broker_orders:
                     st = str(o.get("OrderStatus", "")).upper()
                     o_sym = str(o.get("TradingSymbol", "")).upper()
-                    if self.symbol in o_sym and st in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
-                        logger.warning(f"SuperTrend [{self.symbol}]: Found pending order {o.get('AppOrderID')} ({st}). Yielding cycle.")
-                        return
+                    order_ref = str(o.get("OrderUniqueIdentifier") or o.get("orderUniqueIdentifier") or "")
+                    app_id = str(o.get("AppOrderID") or o.get("appOrderID") or "")
+
+                    is_our_st_order = order_ref.startswith("ST_REV_") and (self.symbol in order_ref or self.symbol in o_sym)
+                    if is_our_st_order and st in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
+                        first_seen = self.pending_order_first_seen.setdefault(app_id, now_ts)
+                        age = now_ts - first_seen
+                        if age > 60.0:
+                            logger.critical(
+                                f"🚨 SuperTrend [{self.symbol}]: STALE PENDING ORDER {app_id} (Ref: {order_ref}, Age: {age:.1f}s). "
+                                f"Bypassing suppression to allow position reconciliation."
+                            )
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(
+                                    f"WARNING: Strategy {self.symbol} bypassed stale pending order {app_id} ({st}, {age:.0f}s old)"
+                                )
+                        else:
+                            logger.warning(
+                                f"SuperTrend [{self.symbol}]: Found in-flight strategy pending order {app_id} "
+                                f"({st}, Ref: {order_ref}, Age: {age:.1f}s). Yielding cycle."
+                            )
+                            return
+                    elif app_id in self.pending_order_first_seen and st not in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
+                        self.pending_order_first_seen.pop(app_id, None)
             except Exception as e:
                 logger.warning(f"SuperTrend [{self.symbol}]: Order check warning: {e}")
 
@@ -561,7 +594,7 @@ class SingleSuperTrendRunner:
                 self.last_error = "No candle data returned from broker OHLC API"
                 return
 
-            # 6. Calculate SuperTrend
+            # 6. Calculate SuperTrend (for live telemetry & charts)
             st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
             if st_res.get("error"):
                 self.last_error = st_res["error"]
@@ -577,13 +610,32 @@ class SingleSuperTrendRunner:
             self.last_error = None
             self.status = "RUNNING"
 
-            # 7. Evaluate Flip & Execute Reversal (ON_CANDLE_CLOSE Rule)
-            candle_ts = st_res["last_candle_time"]
-            is_flip = st_res["is_flip"]
-            flip_dir = st_res["flip_direction"]
+            # 7. Evaluate Flip & Execute Reversal (Strict ON_CANDLE_CLOSE Rule)
+            # Verify if the last candle is actually closed before evaluating signals.
+            # In Symphony XTS OHLC API, candle 'time' is the bar-close timestamp (e.g. hh:mm:59).
+            # An actively forming bar has candle_time in the future relative to current time (candle_time > now_ts).
+            # The bar is confirmed closed as soon as now_ts >= last_candle_close_time.
+            now_ts = int(time.time())
+            last_candle_close_time = int(candles[-1].get("time") or candles[-1].get("timestamp", 0))
+            is_last_candle_closed = (now_ts >= last_candle_close_time)
+
+            if is_last_candle_closed:
+                eval_st_res = st_res
+            else:
+                # The latest bar is still in-progress/forming. Evaluate signals strictly on the last confirmed closed bar.
+                closed_candles = candles[:-1]
+                if len(closed_candles) < self.atr_period + 1:
+                    return
+                eval_st_res = calculate_supertrend(closed_candles, self.atr_period, self.multiplier)
+                if eval_st_res.get("error"):
+                    return
+
+            candle_ts = eval_st_res["last_candle_time"]
+            is_flip = eval_st_res["is_flip"]
+            flip_dir = eval_st_res["flip_direction"]
 
             if is_flip and candle_ts != self.last_processed_candle_time:
-                logger.info(f"🚨 [SUPERTREND FLIP] Symbol: {self.symbol} | Direction: {flip_dir} at candle {candle_ts}. Current Position: {self.strategy_position} | Mode: {self.execution_mode}")
+                logger.info(f"🚨 [SUPERTREND FLIP] Symbol: {self.symbol} | Direction: {flip_dir} at confirmed candle close {candle_ts}. Current Position: {self.strategy_position} | Mode: {self.execution_mode}")
                 
                 if flip_dir == "BULLISH":
                     if self.strategy_position == "SHORT":
@@ -607,13 +659,20 @@ class SingleSuperTrendRunner:
 
     async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
         """Dispatches an Exit order with freeze-quantity slicing."""
+        # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
+        max_allowed_lots = max(self.quantity * 5, 50)
+        if qty > max_allowed_lots or qty <= 0:
+            logger.critical(
+                f"🚨 CRITICAL SAFETY GUARD: Disallowed exit quantity {qty} lots for {self.symbol} "
+                f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
+            )
+            return
+
         action = "BUY" if side.upper() == "SHORT" else "SELL"
         is_paper = (self.execution_mode == "PAPER")
         
-        remaining_qty = qty
-        chunk_idx = 1
-        while remaining_qty > 0:
-            chunk_qty = min(remaining_qty, freeze_limit)
+        chunks = slice_quantity_for_freeze(qty, freeze_limit)
+        for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             order_ref = f"ST_REV_EXIT_{self.symbol}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_EXIT_{self.symbol}_{ref_suffix}_{chunk_idx}"
             sig_id = f"st_exit_{str(uuid.uuid4())[:8]}"
             
@@ -637,9 +696,7 @@ class SingleSuperTrendRunner:
                 if hasattr(main_module, "_dispatch_and_record"):
                     await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, self.symbol, chunk_qty, 0.0, order_ref, is_paper)
             
-            remaining_qty -= chunk_qty
-            chunk_idx += 1
-            if remaining_qty > 0:
+            if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
 
         self.last_signal_time = time.time()
@@ -656,12 +713,19 @@ class SingleSuperTrendRunner:
 
     async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
         """Dispatches an Entry order with freeze-quantity slicing."""
+        # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
+        max_allowed_lots = max(self.quantity * 5, 50)
+        if qty > max_allowed_lots or qty <= 0:
+            logger.critical(
+                f"🚨 CRITICAL SAFETY GUARD: Disallowed entry quantity {qty} lots for {self.symbol} "
+                f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
+            )
+            return
+
         is_paper = (self.execution_mode == "PAPER")
         
-        remaining_qty = qty
-        chunk_idx = 1
-        while remaining_qty > 0:
-            chunk_qty = min(remaining_qty, freeze_limit)
+        chunks = slice_quantity_for_freeze(qty, freeze_limit)
+        for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             order_ref = f"ST_REV_ENTRY_{self.symbol}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_ENTRY_{self.symbol}_{ref_suffix}_{chunk_idx}"
             sig_id = f"st_entry_{str(uuid.uuid4())[:8]}"
             
@@ -685,9 +749,7 @@ class SingleSuperTrendRunner:
                 if hasattr(main_module, "_dispatch_and_record"):
                     await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), self.symbol, chunk_qty, 0.0, order_ref, is_paper)
 
-            remaining_qty -= chunk_qty
-            chunk_idx += 1
-            if remaining_qty > 0:
+            if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
 
         self.last_signal_time = time.time()
@@ -855,56 +917,83 @@ class MultiSuperTrendEngine:
             r.last_error = val
 
     def update_config(self, config_dict: dict):
-        """Updates or registers strategy configurations (supports single dict or full dict with symbol)."""
+        """Updates or registers strategy configurations (supports single dict or full dict with symbol/strategies)."""
+        if "strategies" in config_dict and isinstance(config_dict["strategies"], list):
+            new_strat_list = config_dict["strategies"]
+            seen_ids = set()
+            for s_cfg in new_strat_list:
+                s_id = str(s_cfg.get("id") or s_cfg.get("strategy_id") or "").strip()
+                s_sym = str(s_cfg.get("symbol", "")).strip().upper()
+                if not s_id:
+                    s_id = f"st_{s_sym.lower()}_{s_cfg.get('timeframe', '5m')}"
+                    s_cfg["id"] = s_id
+                seen_ids.add(s_id)
+                self.add_or_update_strategy(s_cfg)
+            # Remove any deleted runners
+            for existing_id in list(self.strategies.keys()):
+                if existing_id not in seen_ids:
+                    self.remove_strategy(existing_id)
+            return
+
+        strat_id = str(config_dict.get("id") or config_dict.get("strategy_id") or "").strip()
         sym = str(config_dict.get("symbol", "")).strip().upper()
-        if not sym and self.strategies:
+        if not strat_id and not sym and self.strategies:
             r = self.primary_runner
             if r:
                 r.update_config(config_dict)
                 return
-        if not sym:
-            sym = "DEFAULT_SYMBOL"
-            config_dict["symbol"] = sym
-
-        if sym in self.strategies:
-            self.strategies[sym].update_config(config_dict)
-        else:
-            if len(self.strategies) >= self.max_strategies:
-                raise ValueError(f"Max strategies limit ({self.max_strategies}) reached. Cannot add {sym}.")
-            runner = SingleSuperTrendRunner(config_dict, dispatch_fn=self.dispatch_fn)
-            self.strategies[sym] = runner
-            logger.info(f"MultiSuperTrendEngine: Registered runner for {sym} ({runner.timeframe}, {runner.execution_mode}). Total: {len(self.strategies)}/{self.max_strategies}")
+        self.add_or_update_strategy(config_dict)
 
     def add_or_update_strategy(self, config_dict: dict) -> dict:
-        """Adds or updates a symbol strategy and returns its telemetry."""
+        """Adds or updates a strategy runner and returns its telemetry."""
         sym = str(config_dict.get("symbol", "")).strip().upper()
         if not sym:
             raise ValueError("Symbol is required")
-        if sym not in self.strategies and len(self.strategies) >= self.max_strategies:
-            raise ValueError(f"Strategy capacity limit of {self.max_strategies} symbols reached.")
+        strat_id = str(config_dict.get("id") or config_dict.get("strategy_id") or "").strip()
+        if not strat_id:
+            strat_id = f"st_{sym.lower()}_{config_dict.get('timeframe', '5m')}"
+            config_dict["id"] = strat_id
 
-        if sym in self.strategies:
-            self.strategies[sym].update_config(config_dict)
+        if strat_id in self.strategies:
+            runner = self.strategies[strat_id]
+            # If symbol changed for this strategy ID, clear cached candles/markers
+            if runner.symbol != sym:
+                logger.info(f"MultiSuperTrendEngine: Strategy {strat_id} migrated symbol from {runner.symbol} to {sym}")
+                runner.cached_candles = []
+                runner.recent_trade_markers = []
+            runner.update_config(config_dict)
         else:
-            self.strategies[sym] = SingleSuperTrendRunner(config_dict, dispatch_fn=self.dispatch_fn)
+            if len(self.strategies) >= self.max_strategies:
+                raise ValueError(f"Strategy capacity limit of {self.max_strategies} symbols reached.")
+            runner = SingleSuperTrendRunner(config_dict, dispatch_fn=self.dispatch_fn)
+            self.strategies[strat_id] = runner
+            logger.info(f"MultiSuperTrendEngine: Registered runner {strat_id} for {sym} ({runner.timeframe}, {runner.execution_mode}). Total: {len(self.strategies)}/{self.max_strategies}")
 
-        return self.strategies[sym].get_telemetry()
+        return runner.get_telemetry()
 
-    def remove_strategy(self, symbol: str) -> bool:
-        """Removes a symbol strategy runner."""
-        sym = str(symbol).strip().upper()
-        if sym in self.strategies:
-            runner = self.strategies.pop(sym)
+    def remove_strategy(self, key: str) -> bool:
+        """Removes a strategy runner by ID or matching symbol."""
+        lookup = str(key).strip()
+        if lookup in self.strategies:
+            runner = self.strategies.pop(lookup)
             runner.is_enabled = False
             runner.status = "REMOVED"
-            logger.info(f"MultiSuperTrendEngine: Removed runner for {sym}")
+            logger.info(f"MultiSuperTrendEngine: Removed runner {lookup} ({runner.symbol})")
             return True
+
+        # Fallback to lookup by symbol or runner.id
+        for sid, runner in list(self.strategies.items()):
+            if sid == lookup or runner.id == lookup or runner.symbol == lookup.upper():
+                self.strategies.pop(sid)
+                runner.is_enabled = False
+                runner.status = "REMOVED"
+                logger.info(f"MultiSuperTrendEngine: Removed runner {sid} ({runner.symbol})")
+                return True
         return False
 
-    def toggle_strategy(self, symbol: str, is_enabled: Optional[bool] = None) -> Optional[dict]:
-        """Toggles enable/disable state for a specific strategy."""
-        sym = str(symbol).strip().upper()
-        runner = self.strategies.get(sym)
+    def toggle_strategy(self, key: str, is_enabled: Optional[bool] = None) -> Optional[dict]:
+        """Toggles enable/disable state for a specific strategy by ID or symbol."""
+        runner = self.get_strategy(key)
         if not runner:
             return None
         if is_enabled is None:
@@ -914,8 +1003,14 @@ class MultiSuperTrendEngine:
         runner.status = "RUNNING" if runner.is_enabled else "DISABLED"
         return runner.get_telemetry()
 
-    def get_strategy(self, symbol: str) -> Optional[SingleSuperTrendRunner]:
-        return self.strategies.get(str(symbol).strip().upper())
+    def get_strategy(self, key: str) -> Optional[SingleSuperTrendRunner]:
+        lookup = str(key).strip()
+        if lookup in self.strategies:
+            return self.strategies[lookup]
+        for sid, runner in self.strategies.items():
+            if sid == lookup or runner.id == lookup or runner.symbol == lookup.upper():
+                return runner
+        return None
 
     def get_all_strategies(self) -> List[dict]:
         return [r.get_telemetry() for r in self.strategies.values()]
@@ -980,10 +1075,10 @@ class MultiSuperTrendEngine:
         Fetches live historical OHLC on-demand for instant chart rendering.
         """
         target_sym = str(symbol_override or self.symbol).strip().upper()
-        if not target_sym and self.strategies:
-            target_sym = next(iter(self.strategies.keys()))
+        runner = self.get_strategy(target_sym) if target_sym else self.primary_runner
+        if runner and not target_sym:
+            target_sym = runner.symbol
 
-        runner = self.strategies.get(target_sym)
         target_tf = str(timeframe_override or (runner.timeframe if runner else "5m")).strip().lower()
         tf_seconds = parse_timeframe_seconds(target_tf)
 
@@ -1073,10 +1168,7 @@ class MultiSuperTrendEngine:
     async def evaluate_cycle_diagnostic(self, xts_api_module, symbol_override: Optional[str] = None) -> dict:
         """Executes on-demand diagnostic trace for the specified or active symbol."""
         target_sym = str(symbol_override or self.symbol).strip().upper()
-        if not target_sym and self.strategies:
-            target_sym = next(iter(self.strategies.keys()))
-
-        runner = self.strategies.get(target_sym)
+        runner = self.get_strategy(target_sym) if target_sym else self.primary_runner
         if runner:
             return await runner.evaluate_diagnostic(xts_api_module)
 

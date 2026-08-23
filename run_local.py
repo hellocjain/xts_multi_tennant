@@ -19,7 +19,26 @@ os.makedirs(os.path.join(LOCAL_DATA, "caddy"), exist_ok=True)
 os.environ["PORTAL_DATA_DIR"] = os.path.join(LOCAL_DATA, "portal")
 os.environ["CLIENT_DATA_ROOT"] = os.path.join(LOCAL_DATA, "data")
 os.environ["CADDY_CONFIG_PATH"] = os.path.join(LOCAL_DATA, "caddy", "Caddyfile")
-os.environ["PORTAL_MASTER_KEY"] = os.environ.get("PORTAL_MASTER_KEY", "uYvN3lM8k9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p=")
+
+from cryptography.fernet import Fernet
+if "PORTAL_MASTER_KEY" not in os.environ:
+    dev_key_file = os.path.join(LOCAL_DATA, ".dev_master_key")
+    if os.path.exists(dev_key_file):
+        try:
+            with open(dev_key_file, "r") as f:
+                os.environ["PORTAL_MASTER_KEY"] = f.read().strip()
+        except Exception:
+            pass
+    if "PORTAL_MASTER_KEY" not in os.environ or not os.environ["PORTAL_MASTER_KEY"]:
+        new_dev_key = Fernet.generate_key().decode()
+        os.environ["PORTAL_MASTER_KEY"] = new_dev_key
+        try:
+            with open(dev_key_file, "w") as f:
+                f.write(new_dev_key)
+            os.chmod(dev_key_file, 0o600)
+        except Exception:
+            pass
+
 os.environ["PORTAL_ADMIN_USER"] = "admin"
 os.environ["PORTAL_ADMIN_PASSWORD"] = "AdminPass123!"
 os.environ["DOMAIN_NAME"] = "localhost:8500"

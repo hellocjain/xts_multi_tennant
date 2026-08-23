@@ -48,6 +48,10 @@
                 <span class="bg-amber-500/10 text-amber-400 text-xs font-semibold px-2 py-0.5 rounded border border-amber-500/30">
                     DUP SUPPRESSED
                 </span>
+                {% elif s.status == 'partial_failure' %}
+                <span class="bg-amber-500/20 text-amber-300 text-xs font-bold px-2 py-0.5 rounded border border-amber-500/40">
+                    ⚠️ PARTIAL FAILURE
+                </span>
                 {% else %}
                 <div class="flex flex-col space-y-1">
                     <span class="bg-rose-500/10 text-rose-400 text-xs font-semibold px-2 py-0.5 rounded border border-rose-500/30 w-max">

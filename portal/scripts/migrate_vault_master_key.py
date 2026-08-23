@@ -18,11 +18,12 @@ import docker_manager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("vault_migration")
 
-OLD_DEFAULT_KEY = "uYvN3lM8k9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p="
-
 def migrate_vault(old_key_str: str = None, new_key_str: str = None) -> dict:
     if not old_key_str:
-        old_key_str = os.environ.get("OLD_PORTAL_MASTER_KEY", OLD_DEFAULT_KEY).strip()
+        old_key_str = os.environ.get("OLD_PORTAL_MASTER_KEY", "").strip()
+
+    if not old_key_str:
+        raise RuntimeError("CRITICAL SECURITY ERROR: OLD_PORTAL_MASTER_KEY environment variable is not configured. Vault migration aborted.")
     
     if not new_key_str:
         new_key_str = Fernet.generate_key().decode()

@@ -367,3 +367,21 @@ def test_custom_jinja_filters():
     assert format_inr("invalid") == "0.00"
     assert format_inr(0) == "0.00"
     assert format_inr(-500.5) == "-500.50"
+
+
+def test_sec_xts_008_chart_abort_controller_race_protection():
+    """
+    Regression Test for SEC-XTS-008:
+    Verifies that client_detail.html contains AbortController, request sequence counter,
+    and out-of-order response drop guards to prevent symbol-switch race conditions.
+    """
+    client = get_auth_client()
+    res = client.get("/admin/clients/t_live_profit")
+    assert res.status_code == 200
+    html = res.text
+
+    assert "chartAbortController" in html, "Missing chartAbortController in client_detail.html"
+    assert "chartRequestSeq" in html, "Missing chartRequestSeq in client_detail.html"
+    assert "signal: chartAbortController.signal" in html, "Missing signal option in chart fetch call"
+    assert "currentSeq !== chartRequestSeq" in html, "Missing out-of-order sequence check in refreshSuperTrendChart"
+

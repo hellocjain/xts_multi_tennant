@@ -200,6 +200,19 @@ def send_execution_notification(action: str, symbol: str, quantity: int, price: 
             f"• Order ID: {app_order_id}\n"
             f"• Status: FILLED / SUCCESS"
         )
+    elif status == "partial_failure":
+        title = f"⚠️ PARTIAL EXECUTION {mode_str}"
+        dispatched_qty = result.get("dispatched_quantity", 0)
+        total_qty = result.get("total_quantity", quantity)
+        err_desc = result.get("message") or "Partial slice execution"
+        msg_text = (
+            f"{title}\n"
+            f"• Account: {client_id}\n"
+            f"• Signal: {action} {quantity}x {symbol}\n"
+            f"• Slices Placed: {dispatched_qty} of {total_qty} units\n"
+            f"• Status: PARTIAL FAILURE\n"
+            f"• Reason: {err_desc}"
+        )
     else:
         title = f"🔴 ORDER REJECTED / FAILED {mode_str}"
         err_code = result.get("code") or "e-order-error"
@@ -241,6 +254,8 @@ def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref, is_
 
         if result.get("type") == "success":
             status = "paper_done" if is_paper_trade else "done"
+        elif result.get("status") == "partial_failure" or result.get("type") == "partial_failure":
+            status = "partial_failure"
         else:
             status = "failed"
 
@@ -748,7 +763,7 @@ async def panic(request: Request):
         if sym_names:
             panic_payload["symbol"] = sym_names
 
-    status = "done" if (isinstance(result, dict) and result.get("status") == "success") else "failed"
+    status = "done" if (isinstance(result, dict) and result.get("status") == "success") else "partial_failure" if (isinstance(result, dict) and result.get("status") == "partial_failure") else "failed"
     db_update_status(sig_id, status, result, payload=panic_payload)
     return result
 

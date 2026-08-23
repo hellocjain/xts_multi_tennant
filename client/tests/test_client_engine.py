@@ -522,4 +522,432 @@ def test_trading_paused_webhook_rejection():
     assert res_resumed.status_code == 200
 
 
+def test_sec_xts_006_rate_limiter_timeout_rejection(monkeypatch):
+    """
+    Regression Test for SEC-XTS-006:
+    Verifies that when ORDER_RATE_LIMITER.acquire() returns False (timeout),
+    place_order returns a rate-limit error response and the underlying HTTP client is NEVER called.
+    """
+    from unittest.mock import MagicMock
+
+    mock_http_post = MagicMock()
+    mock_http_delete = MagicMock()
+    monkeypatch.setattr(xts_api.api_session, "post", mock_http_post)
+    monkeypatch.setattr(xts_api.api_session, "delete", mock_http_delete)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda *a, **kw: "valid_interactive_token")
+    monkeypatch.setattr(xts_api, "get_live_price", lambda *a, **kw: 2500.0)
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+
+    # 1. Rate limiter times out (returns False)
+    monkeypatch.setattr(xts_api.ORDER_RATE_LIMITER, "acquire", lambda *a, **kw: False)
+
+    res = xts_api.place_order("BUY", "RELIANCE", 1, 2500.0, "ORDER_REF_RATE_TEST", is_paper=False)
+
+    assert res.get("status") == "error", f"Expected error response on rate limit timeout, got: {res}"
+    assert "rate limit" in res.get("message", "").lower()
+    mock_http_post.assert_not_called()
+
+    def mock_get(url, *a, **kw):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        if "positions" in url:
+            mock_r.json.return_value = {
+                "type": "success",
+                "result": {
+                    "positionList": [{
+                        "ExchangeInstrumentId": 2885,
+                        "ExchangeSegment": "NSECM",
+                        "ProductType": "MIS",
+                        "TradingSymbol": "RELIANCE",
+                        "Quantity": 10,
+                        "BuyAveragePrice": 2500.0
+                    }]
+                }
+            }
+        else:
+            mock_r.json.return_value = {
+                "type": "success",
+                "result": [{"OrderUniqueIdentifier": "ORDER_REF_RATE_TEST", "OrderStatus": "Open", "AppOrderID": 999123}]
+            }
+        return mock_r
+
+    monkeypatch.setattr(xts_api.api_session, "get", mock_get)
+
+    # 2. Partial fill cleanup check on rate limit timeout
+    xts_api._monitor_and_clean_partial_fills("ORDER_REF_RATE_TEST", "CLIENT_01", "valid_interactive_token")
+    mock_http_delete.assert_not_called()
+
+    # 3. Panic square-off slice check on rate limit timeout (all chunks timed out)
+    panic_res = xts_api.panic_square_off_all()
+    assert panic_res.get("status") == "error"
+    assert panic_res.get("closed_quantity") == 0
+    assert panic_res.get("unclosed_quantity") == 10
+    assert len(panic_res.get("failed_chunks")) == 1
+    # Neither atomic cancel-all nor individual cancel nor slice order POST should dispatch HTTP requests
+    mock_http_post.assert_not_called()
+    mock_http_delete.assert_not_called()
+
+
+def test_sec_xts_006_panic_square_off_partial_rate_limit_timeout(monkeypatch):
+    """
+    Regression Test for SEC-XTS-006 (Multi-chunk Partial Rate Limit Timeout):
+    Verifies that when one chunk in a multi-chunk square-off times out on the rate limiter
+    while other chunks succeed:
+    1. The final status is reported as 'partial_failure' (never 'success').
+    2. Closed quantity (2,000) and unclosed quantity (1,000) are explicitly separated.
+    3. Failed chunks detail which specific lots were skipped and why.
+    """
+    from unittest.mock import MagicMock
+
+    dispatched_payloads = []
+    def mock_post(url, headers=None, json=None, timeout=None):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        if "cancelall" in url:
+            mock_r.json.return_value = {"type": "success", "result": "all cancelled"}
+        else:
+            dispatched_payloads.append(json)
+            mock_r.json.return_value = {"type": "success", "result": {"AppOrderID": 12345}}
+        return mock_r
+
+    def mock_get(url, *a, **kw):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        if "positions" in url:
+            mock_r.json.return_value = {
+                "type": "success",
+                "result": {
+                    "positionList": [{
+                        "ExchangeInstrumentId": 25001,
+                        "ExchangeSegment": "MCXFO",
+                        "ProductType": "NRML",
+                        "TradingSymbol": "CRUDEOIL",
+                        "Quantity": 3000,
+                        "BuyAveragePrice": 6500.0
+                    }]
+                }
+            }
+        return mock_r
+
+    monkeypatch.setattr(xts_api.api_session, "post", mock_post)
+    monkeypatch.setattr(xts_api.api_session, "get", mock_get)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda *a, **kw: "valid_interactive_token")
+    monkeypatch.setattr(xts_api, "get_live_price", lambda *a, **kw: 6500.0)
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+
+    # Freeze limit for CRUDEOIL in FUT_MASTER is 10,000; override instrument lookup to test 3 chunks of 1,000
+    monkeypatch.setattr(xts_api, "get_instrument_by_id", lambda iid: {
+        "tick_size": 1.0,
+        "freeze_qty": 1000,
+        "exch_seg": "MCXFO"
+    })
+
+    # Chunk 1: acquire -> True (success)
+    # Chunk 2: acquire -> False (rate limit timeout!)
+    # Chunk 3: acquire -> True (success)
+    # Cancel-all: acquire -> True
+    acquire_call_count = [0]
+    def mock_acquire(timeout=None):
+        acquire_call_count[0] += 1
+        # Call 1: atomic cancelall (True)
+        # Call 2: chunk 1 (True)
+        # Call 3: chunk 2 (False - timeout)
+        # Call 4: chunk 3 (True)
+        if acquire_call_count[0] == 3:
+            return False
+        return True
+
+    monkeypatch.setattr(xts_api.ORDER_RATE_LIMITER, "acquire", mock_acquire)
+
+    panic_res = xts_api.panic_square_off_all()
+
+    # Invariants:
+    assert panic_res["status"] == "partial_failure", f"Must report partial_failure, got: {panic_res['status']}"
+    assert panic_res["closed_quantity"] == 2000, f"Expected 2000 closed, got {panic_res['closed_quantity']}"
+    assert panic_res["unclosed_quantity"] == 1000, f"Expected 1000 unclosed, got {panic_res['unclosed_quantity']}"
+    assert len(panic_res["squared_off"]) == 2
+    assert len(panic_res["failed_chunks"]) == 1
+    assert panic_res["failed_chunks"][0]["qty"] == 1000
+    assert panic_res["failed_chunks"][0]["reason"] == "Rate limit exceeded"
+    assert len(dispatched_payloads) == 2
+
+
+def test_sec_xts_003_panic_square_off_unique_order_refs(monkeypatch):
+    """
+    Regression Test for SEC-XTS-003:
+    Verifies that all chunks generated during panic square-off slicing have unique
+    orderUniqueIdentifier values, preventing duplicate order identifier rejections by the broker OMS.
+    """
+    from unittest.mock import MagicMock
+
+    dispatched_refs = []
+    seen_refs = set()
+
+    def mock_post(url, headers=None, json=None, timeout=None):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        if "cancelall" in url:
+            mock_r.json.return_value = {"type": "success", "result": "all cancelled"}
+        else:
+            ref = json.get("orderUniqueIdentifier")
+            dispatched_refs.append(ref)
+            if ref in seen_refs:
+                # Real broker OMS rejection on duplicate OrderUniqueIdentifier
+                mock_r.json.return_value = {
+                    "type": "error",
+                    "description": f"Duplicate order identifier detected: {ref}"
+                }
+            else:
+                seen_refs.add(ref)
+                mock_r.json.return_value = {
+                    "type": "success",
+                    "result": {"AppOrderID": 88000 + len(seen_refs)}
+                }
+        return mock_r
+
+    def mock_get(url, *a, **kw):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        mock_r.json.return_value = {
+            "type": "success",
+            "result": {
+                "positionList": [{
+                    "ExchangeInstrumentId": 25001,
+                    "ExchangeSegment": "MCXFO",
+                    "ProductType": "NRML",
+                    "TradingSymbol": "CRUDEOIL",
+                    "Quantity": 5000,
+                    "BuyAveragePrice": 6500.0
+                }]
+            }
+        }
+        return mock_r
+
+    monkeypatch.setattr(xts_api.api_session, "post", mock_post)
+    monkeypatch.setattr(xts_api.api_session, "get", mock_get)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda *a, **kw: "valid_interactive_token")
+    monkeypatch.setattr(xts_api, "get_live_price", lambda *a, **kw: 6500.0)
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+
+    # Freeze limit 1,000 for 5,000 quantity -> 5 chunks
+    monkeypatch.setattr(xts_api, "get_instrument_by_id", lambda iid: {
+        "tick_size": 1.0,
+        "freeze_qty": 1000,
+        "exch_seg": "MCXFO"
+    })
+
+    # Fix mock clock so multiple calls in same millisecond produce collision under buggy code
+    fixed_timestamp = 1787200000.123
+    monkeypatch.setattr(time, "time", lambda: fixed_timestamp)
+    monkeypatch.setattr(xts_api.ORDER_RATE_LIMITER, "acquire", lambda *a, **kw: True)
+
+    panic_res = xts_api.panic_square_off_all()
+
+    # 1. Total 5 chunks must be dispatched
+    assert len(dispatched_refs) == 5, f"Expected 5 chunks dispatched, got {len(dispatched_refs)}"
+
+    # 2. Every chunk must have a UNIQUE orderUniqueIdentifier
+    assert len(set(dispatched_refs)) == 5, (
+        f"CRITICAL BUG SEC-XTS-003: Duplicate OrderIdentifier collision! Dispatched refs: {dispatched_refs}"
+    )
+
+    # 3. All 5 chunks must succeed at broker OMS
+    assert panic_res["status"] == "success", f"Panic square-off failed: {panic_res}"
+    assert panic_res["closed_quantity"] == 5000
+    assert panic_res["unclosed_quantity"] == 0
+
+
+def test_sec_xts_005_webhook_freeze_quantity_auto_slicing(monkeypatch):
+    """
+    Regression Test for SEC-XTS-005:
+    Verifies that external webhook orders exceeding broker freeze limit (e.g. 5,000 lots with 1,200 freeze limit)
+    are automatically sliced into compliant chunks [1200, 1200, 1200, 1200, 200] and dispatched,
+    rather than being rejected outright.
+    """
+    from unittest.mock import MagicMock
+    import datetime
+
+    dispatched_chunks = []
+
+    def mock_post(url, headers=None, json=None, timeout=None):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        dispatched_chunks.append(json)
+        mock_r.json.return_value = {
+            "type": "success",
+            "result": {"AppOrderID": 90000 + len(dispatched_chunks)}
+        }
+        return mock_r
+
+    monkeypatch.setattr(xts_api.api_session, "post", mock_post)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda *a, **kw: "valid_interactive_token")
+    monkeypatch.setattr(xts_api, "get_live_price", lambda *a, **kw: 200.0)
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(config, "MAX_LOTS_LIMIT", 10000)
+    monkeypatch.setattr(config, "MAX_UNITS_LIMIT", 1000000)
+    monkeypatch.setattr(config, "MAX_ORDER_VALUE_INR", 5000000000.0)
+    monkeypatch.setattr(config, "DAILY_NOTIONAL_CAP_INR", 10000000000.0)
+    monkeypatch.setattr(config, "TV_SENDS_LOTS", False)
+    monkeypatch.setattr(config, "CLIENT_ID", "TEST_CLIENT_01")
+    monkeypatch.setattr(xts_api.ORDER_RATE_LIMITER, "acquire", lambda *a, **kw: True)
+
+    # Mock contract info: symbol "NATURALGAS", lot size 1, freeze limit 1,200
+    monkeypatch.setattr(xts_api, "get_dynamic_contract_info", lambda sym: (
+        568245, "MCXFO", "NRML", 0.10, 1, 1200, datetime.date.today() + datetime.timedelta(days=20)
+    ))
+
+    # Send 5,000 lots from external webhook / place_order
+    res = xts_api.place_order("BUY", "NATURALGAS", 5000, 200.0, "TV_SIGNAL_NATGAS_5000", is_paper=False)
+
+    # Invariant: Order must NOT be rejected with 'exceeds broker freeze limit'!
+    assert res.get("status") != "error", f"Order was rejected instead of sliced: {res}"
+    assert res.get("type") == "success" or res.get("status") == "success"
+
+    # Invariant: Must dispatch exactly 5 sliced chunks: [1200, 1200, 1200, 1200, 200]
+    assert len(dispatched_chunks) == 5, f"Expected 5 chunks dispatched, got {len(dispatched_chunks)}"
+    chunk_quantities = [c.get("orderQuantity") for c in dispatched_chunks]
+    assert chunk_quantities == [1200, 1200, 1200, 1200, 200], f"Wrong chunk quantities: {chunk_quantities}"
+
+    # Invariant: All chunk refs must be unique and traceable
+    chunk_refs = [c.get("orderUniqueIdentifier") for c in dispatched_chunks]
+    assert len(set(chunk_refs)) == 5, f"Duplicate chunk order refs: {chunk_refs}"
+    assert chunk_refs[0] == "TV_SIGNAL_NATGAS_5000"
+
+
+def test_shared_slice_quantity_for_freeze_unit_parity():
+    """
+    Unit test confirming mathematical precision and edge-case behavior
+    of the shared slice_quantity_for_freeze helper across all engines.
+    """
+    # 1. Exact multiple
+    assert xts_api.slice_quantity_for_freeze(5000, 1000) == [1000, 1000, 1000, 1000, 1000]
+    
+    # 2. Non-multiple with remainder
+    assert xts_api.slice_quantity_for_freeze(5000, 1200) == [1200, 1200, 1200, 1200, 200]
+    
+    # 3. Quantity below freeze limit
+    assert xts_api.slice_quantity_for_freeze(500, 1200) == [500]
+    
+    # 4. Quantity exactly equal to freeze limit
+    assert xts_api.slice_quantity_for_freeze(1200, 1200) == [1200]
+    
+    # 5. Zero / negative / unconfigured freeze limit
+    assert xts_api.slice_quantity_for_freeze(2500, 0) == [2500]
+    assert xts_api.slice_quantity_for_freeze(2500, -100) == [2500]
+    assert xts_api.slice_quantity_for_freeze(2500, None) == [2500]
+
+
+def test_dispatch_and_record_records_partial_failure_status(monkeypatch):
+    """
+    Verifies that when place_order / execute_trade_with_retry returns a partial_failure result,
+    _dispatch_and_record correctly records 'partial_failure' in signals.db rather than
+    silently degrading to 'failed'.
+    """
+    recorded_statuses = []
+
+    def mock_db_update_status(sig_id, status, result=None, payload=None):
+        recorded_statuses.append(status)
+
+    monkeypatch.setattr(client_main, "db_update_status", mock_db_update_status)
+    monkeypatch.setattr(client_main, "send_execution_notification", lambda *a, **kw: None)
+
+    # Simulate partial failure return from trade execution
+    partial_res = {
+        "status": "partial_failure",
+        "type": "partial_failure",
+        "message": "Partial slices placed: 2400/5000 units",
+        "dispatched_quantity": 2400,
+        "total_quantity": 5000,
+        "slices": [{"type": "success"}, {"type": "error"}]
+    }
+    monkeypatch.setattr(xts_api, "execute_trade_with_retry", lambda *a, **kw: partial_res)
+
+    client_main._dispatch_and_record("test_sig_123", "BUY", "NATURALGAS", 5000, 200.0, "REF_123")
+
+    # Invariants:
+    # 1. First status is 'processing'
+    assert recorded_statuses[0] == "processing"
+    # 2. Final recorded status MUST be 'partial_failure'
+    assert recorded_statuses[-1] == "partial_failure"
+
+
+def test_sec_xts_009_panic_pricing_fails_closed_without_hardcoded_100(monkeypatch):
+    """
+    Regression Test for SEC-XTS-009:
+    Verifies that when live market price, broker position average prices, and OHLC data are missing,
+    panic square-off fails closed rather than falling back to a hardcoded price of 100
+    and firing dangerous, mispriced orders to the broker OMS.
+    """
+    from unittest.mock import MagicMock
+
+    dispatched_orders = []
+
+    def mock_post(url, headers=None, json=None, timeout=None):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        if "cancelall" in url:
+            mock_r.json.return_value = {"type": "success", "result": "all cancelled"}
+        else:
+            dispatched_orders.append(json)
+            mock_r.json.return_value = {"type": "success", "result": {"AppOrderID": 12345}}
+        return mock_r
+
+    def mock_get(url, *a, **kw):
+        mock_r = MagicMock()
+        mock_r.status_code = 200
+        mock_r.json.return_value = {
+            "type": "success",
+            "result": {
+                "positionList": [{
+                    "ExchangeInstrumentId": 77777,
+                    "ExchangeSegment": "MCXFO",
+                    "ProductType": "NRML",
+                    "TradingSymbol": "GOLD24AUGFUT",
+                    "Quantity": 1,
+                    # No prices available from broker position
+                    "BuyAveragePrice": 0,
+                    "SellAveragePrice": 0,
+                    "LastTradedPrice": 0,
+                    "LTP": 0
+                }]
+            }
+        }
+        return mock_r
+
+    monkeypatch.setattr(xts_api.api_session, "post", mock_post)
+    monkeypatch.setattr(xts_api.api_session, "get", mock_get)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda *a, **kw: "valid_interactive_token")
+    # Live price fails / is missing
+    monkeypatch.setattr(xts_api, "get_live_price", lambda *a, **kw: None)
+    # OHLC candles fail / missing
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: [])
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(config, "CLIENT_ID", "TEST_CLIENT_01")
+    monkeypatch.setattr(xts_api.ORDER_RATE_LIMITER, "acquire", lambda *a, **kw: True)
+
+    panic_res = xts_api.panic_square_off_all()
+
+    # Invariants:
+    # 1. Must NOT dispatch an order with hardcoded limit price of ~100 on GOLD (which trades at ~75,000)
+    for ord in dispatched_orders:
+        limit_px = ord.get("limitPrice", 0)
+        assert limit_px != 99.0 and limit_px != 100.0 and limit_px != 101.0, (
+            f"CRITICAL BUG SEC-XTS-009: Dispatched order with hardcoded price 100 fallback! {ord}"
+        )
+
+    # 2. Because price could not be safely resolved, the position MUST be reported as failed/unclosed
+    assert panic_res["status"] in ("error", "partial_failure")
+    assert panic_res["unclosed_quantity"] == 1
+    assert len(panic_res["failed_chunks"]) == 1
+    assert "safe execution price" in panic_res["failed_chunks"][0]["reason"].lower() or "price" in panic_res["failed_chunks"][0]["reason"].lower()
+    assert len(dispatched_orders) == 0, f"Dispatched dangerous orders: {dispatched_orders}"
+
+
+
+
+
+
+
+
+
 

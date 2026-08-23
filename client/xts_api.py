@@ -10,6 +10,7 @@ import os
 import threading
 import fcntl
 import calendar
+import uuid
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 
 import config
@@ -1173,11 +1174,28 @@ def _monitor_and_clean_partial_fills(order_ref, client_id, token):
                         if status in ("PartiallyFilled", "Open", "New", "PendingNew", "Replaced") and app_order_id:
                             logger.warning(f"PARTIAL FILL GUARD: Cancelling unfilled remainder for AppOrderID {app_order_id} (Status: {status})")
                             cancel_url = f"{safe_url}/orders?appOrderID={app_order_id}&clientID={client_id}"
-                            ORDER_RATE_LIMITER.acquire(timeout=5.0)
+                            if not ORDER_RATE_LIMITER.acquire(timeout=5.0):
+                                logger.error(f"PARTIAL FILL GUARD: Rate limit timeout exceeded while attempting cancel for AppOrderID {app_order_id}. Skipping.")
+                                return
                             api_session.delete(cancel_url, json={"appOrderID": app_order_id, "clientID": client_id}, headers=headers, timeout=5)
-                            return
     except Exception as e:
         logger.error(f"Partial fill monitor error: {e}")
+
+def slice_quantity_for_freeze(quantity: int, freeze_limit: int) -> list:
+    """
+    Unified freeze-quantity auto-slicing engine.
+    Splits an order quantity into an array of chunks compliant with the exchange/broker freeze limit.
+    If freeze_limit is None or <= 0 or quantity <= freeze_limit, returns [quantity].
+    """
+    if not freeze_limit or freeze_limit <= 0 or quantity <= freeze_limit:
+        return [quantity]
+    chunks = []
+    rem = quantity
+    while rem > 0:
+        c = min(rem, freeze_limit)
+        chunks.append(c)
+        rem -= c
+    return chunks
 
 def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
     is_paper = is_paper or getattr(config, "PAPER_TRADE_MODE", False)
@@ -1214,9 +1232,6 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
         if execution_qty < lot_size:
             logger.error(f"REJECTED: Quantity {execution_qty} is less than minimum lot size {lot_size} for {exch_seg} {symbol}")
             return {"status": "error", "message": f"Quantity ({execution_qty}) cannot be less than lot size ({lot_size}) for {exch_seg}"}
-
-    if execution_qty > freeze_qty:
-        return {"status": "error", "message": f"Quantity ({execution_qty}) exceeds broker freeze limit ({freeze_qty})"}
 
     max_lots = getattr(config, "MAX_LOTS_LIMIT", 100)
     effective_lots = (execution_qty // lot_size) if lot_size > 0 else execution_qty
@@ -1275,14 +1290,30 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
         "clientID": client_id or "PAPER_CLIENT",
     }
 
+    # Slicing chunk determination for freeze limits
+    chunks = slice_quantity_for_freeze(execution_qty, freeze_qty)
+    if len(chunks) > 1:
+        logger.info(f"FREEZE AUTO-SLICING: Quantity {execution_qty} for {symbol} sliced into {len(chunks)} chunks: {chunks} (Freeze limit: {freeze_qty})")
+
     if is_paper:
-        paper_order_id = f"PAPER_{int(time.time() * 1000)}"
+        paper_order_ids = []
+        for idx, chunk_qty in enumerate(chunks, start=1):
+            chunk_ref = f"{order_ref}_{idx}" if idx > 1 else order_ref
+            paper_order_id = f"PAPER_{int(time.time() * 1000)}_{idx}"
+            paper_order_ids.append(paper_order_id)
+            log_line = f"[PAPER MARKET TRADE] {action} {chunk_qty} qty of {symbol} (ID: {instrument_id} [{contract_expiry}]) @ Limit Px Rs {execution_price} (LTP Rs {base_price}) | Ref: {chunk_ref}"
+            logger.info(log_line)
+            _log_paper_trade_to_file(
+                action, symbol, chunk_qty, instrument_id, exch_seg,
+                base_price, chunk_ref, (base_price * chunk_qty * contract_mult), paper_order_id,
+            )
+
         simulated_response = {
             "type": "success",
             "code": "s-orders-0001",
-            "description": "Paper order executed successfully",
+            "description": f"Paper order executed successfully in {len(chunks)} slices" if len(chunks) > 1 else "Paper order executed successfully",
             "result": {
-                "AppOrderID": paper_order_id,
+                "AppOrderID": paper_order_ids[0],
                 "OrderUniqueIdentifier": order_ref,
                 "OrderStatus": "Filled",
                 "ExecutionPrice": base_price,
@@ -1292,43 +1323,114 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
                 "IsPaperTrade": True,
             },
         }
-
-        log_line = f"[PAPER MARKET TRADE] {action} {execution_qty} qty of {symbol} (ID: {instrument_id} [{contract_expiry}]) @ Limit Px Rs {execution_price} (LTP Rs {base_price}) | Ref: {order_ref}"
-        logger.info(log_line)
-
-        _log_paper_trade_to_file(
-            action, symbol, execution_qty, instrument_id, exch_seg,
-            base_price, order_ref, order_val, paper_order_id,
-        )
         return simulated_response
 
-    try:
-        logger.info(f"Routing MARKETABLE LIMIT {action} Order -> Exec Qty: {execution_qty} (ID: {instrument_id}) | Limit Px: {execution_price} (LTP: {base_price})")
-        ORDER_RATE_LIMITER.acquire(timeout=5.0)
-        response = api_session.post(url, headers=headers, json=payload, timeout=8)
-        data = response.json()
+    # LIVE Execution: Single chunk fast-path
+    if len(chunks) == 1:
+        try:
+            logger.info(f"Routing MARKETABLE LIMIT {action} Order -> Exec Qty: {execution_qty} (ID: {instrument_id}) | Limit Px: {execution_price} (LTP: {base_price})")
+            if not ORDER_RATE_LIMITER.acquire(timeout=5.0):
+                logger.error(f"❌ RATE LIMIT EXCEEDED: Token acquisition timed out for {action} {symbol} (OrderRef: {order_ref}). Order dispatch blocked.")
+                refund_daily_notional(order_val)
+                return {"status": "error", "message": "Rate limit exceeded"}
+            response = api_session.post(url, headers=headers, json=payload, timeout=8)
+            data = response.json()
 
-        if data.get('type') == 'success':
-            logger.info(f"✅ BROKER ACCEPTED ORDER: {data}")
-            
-            if getattr(config, "CANCEL_LINGERING_PARTIAL_FILLS", True):
-                threading.Thread(
-                    target=_monitor_and_clean_partial_fills,
-                    args=(order_ref, client_id, token),
-                    daemon=True
-                ).start()
-        else:
-            logger.error(f"❌ BROKER REJECTED: {data}")
+            if data.get('type') == 'success':
+                logger.info(f"✅ BROKER ACCEPTED ORDER: {data}")
+                
+                if getattr(config, "CANCEL_LINGERING_PARTIAL_FILLS", True):
+                    threading.Thread(
+                        target=_monitor_and_clean_partial_fills,
+                        args=(order_ref, client_id, token),
+                        daemon=True
+                    ).start()
+            else:
+                logger.error(f"❌ BROKER REJECTED: {data}")
+                refund_daily_notional(order_val)
+
+            return data
+        except requests.exceptions.Timeout as e:
+            logger.critical(f"TIMEOUT: State unknown. NOT refunding notional cap for {order_ref}. Verify manually.")
+            return {"status": "error", "message": f"timeout: {e}"}
+        except Exception as e:
+            logger.error(f"Network error routing order: {e}")
             refund_daily_notional(order_val)
+            return {"status": "error", "message": str(e)}
 
-        return data
-    except requests.exceptions.Timeout as e:
-        logger.critical(f"TIMEOUT: State unknown. NOT refunding notional cap for {order_ref}. Verify manually.")
-        return {"status": "error", "message": f"timeout: {e}"}
-    except Exception as e:
-        logger.error(f"Network error routing order: {e}")
-        refund_daily_notional(order_val)
-        return {"status": "error", "message": str(e)}
+    # LIVE Execution: Multi-chunk auto-sliced execution
+    dispatched_results = []
+    total_dispatched_qty = 0
+    for idx, chunk_qty in enumerate(chunks, start=1):
+        chunk_ref = f"{order_ref}_{idx}" if idx > 1 else order_ref
+        chunk_payload = dict(payload)
+        chunk_payload["orderQuantity"] = chunk_qty
+        chunk_payload["orderUniqueIdentifier"] = chunk_ref
+
+        try:
+            logger.info(f"Routing SLICE [{idx}/{len(chunks)}] {action} -> Qty: {chunk_qty} | Ref: {chunk_ref}")
+            if not ORDER_RATE_LIMITER.acquire(timeout=5.0):
+                logger.error(f"❌ RATE LIMIT EXCEEDED on slice [{idx}/{len(chunks)}] for {action} {symbol} (Ref: {chunk_ref}).")
+                undispatched_val = base_price * (execution_qty - total_dispatched_qty) * contract_mult
+                refund_daily_notional(undispatched_val)
+                dispatched_results.append({"status": "error", "message": "Rate limit exceeded", "order_ref": chunk_ref, "qty": chunk_qty})
+                break
+
+            response = api_session.post(url, headers=headers, json=chunk_payload, timeout=8)
+            data = response.json()
+            if data.get('type') == 'success':
+                logger.info(f"✅ BROKER ACCEPTED SLICE [{idx}/{len(chunks)}]: {data}")
+                total_dispatched_qty += chunk_qty
+                dispatched_results.append(data)
+                if getattr(config, "CANCEL_LINGERING_PARTIAL_FILLS", True):
+                    threading.Thread(
+                        target=_monitor_and_clean_partial_fills,
+                        args=(chunk_ref, client_id, token),
+                        daemon=True
+                    ).start()
+            else:
+                logger.error(f"❌ BROKER REJECTED SLICE [{idx}/{len(chunks)}]: {data}")
+                undispatched_val = base_price * (execution_qty - total_dispatched_qty) * contract_mult
+                refund_daily_notional(undispatched_val)
+                dispatched_results.append(data)
+                break
+        except requests.exceptions.Timeout as e:
+            logger.critical(f"TIMEOUT on slice [{idx}/{len(chunks)}]: State unknown for {chunk_ref}. Verify manually.")
+            dispatched_results.append({"status": "error", "message": f"timeout: {e}"})
+            break
+        except Exception as e:
+            logger.error(f"Network error routing slice [{idx}/{len(chunks)}]: {e}")
+            undispatched_val = base_price * (execution_qty - total_dispatched_qty) * contract_mult
+            refund_daily_notional(undispatched_val)
+            dispatched_results.append({"status": "error", "message": str(e)})
+            break
+
+    all_ok = all(d.get("type") == "success" for d in dispatched_results) and len(dispatched_results) == len(chunks)
+    if all_ok:
+        first_app_id = dispatched_results[0].get("result", {}).get("AppOrderID") if isinstance(dispatched_results[0].get("result"), dict) else "MULTI"
+        return {
+            "type": "success",
+            "code": "s-orders-0001",
+            "description": f"All {len(chunks)} slices accepted by broker",
+            "result": {
+                "AppOrderID": first_app_id,
+                "OrderUniqueIdentifier": order_ref,
+                "OrderStatus": "Placed",
+                "ExecutionQty": execution_qty,
+                "slices": dispatched_results,
+            }
+        }
+    elif total_dispatched_qty > 0:
+        return {
+            "status": "partial_failure",
+            "type": "partial_failure",
+            "message": f"Partial slices placed: {total_dispatched_qty}/{execution_qty} units",
+            "dispatched_quantity": total_dispatched_qty,
+            "total_quantity": execution_qty,
+            "slices": dispatched_results,
+        }
+    else:
+        return dispatched_results[0] if dispatched_results else {"status": "error", "message": "Order slicing dispatch failed"}
 
 def get_margin_telemetry():
     """Fetches RMS balance and margin sub-limits from Symphony XTS broker."""
@@ -1766,14 +1868,21 @@ def panic_square_off_all():
     client_id = getattr(config, "CLIENT_ID", "").strip()
     safe_url = get_safe_base_url()
     headers = {"authorization": token, "Content-Type": "application/json"}
-    results = []
+    successful_chunks = []
+    failed_chunks = []
+    total_closed_qty = 0
+    total_unclosed_qty = 0
 
     # 1. Cancel all open pending orders (atomic POST /orders/cancelall with sequential fallback)
     try:
         cancel_all_url = f"{safe_url}/orders/cancelall"
-        ORDER_RATE_LIMITER.acquire(timeout=3.0)
-        c_all_resp = api_session.post(cancel_all_url, json={"clientID": client_id}, headers=headers, timeout=5)
-        if c_all_resp.status_code == 200 and c_all_resp.json().get("type") == "success":
+        c_all_resp = None
+        if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
+            logger.critical("PANIC: Rate limit timeout exceeded for atomic cancel-all. Falling back.")
+        else:
+            c_all_resp = api_session.post(cancel_all_url, json={"clientID": client_id}, headers=headers, timeout=5)
+        
+        if c_all_resp is not None and c_all_resp.status_code == 200 and c_all_resp.json().get("type") == "success":
             logger.critical(f"🚨 ATOMIC CANCEL ALL SUCCESSFUL for client {client_id}")
         else:
             ord_url = f"{safe_url}/orders"
@@ -1785,7 +1894,9 @@ def panic_square_off_all():
                     app_id = ord_item.get("AppOrderID")
                     if st in ("Open", "New", "Pending", "PartiallyFilled", "PendingNew", "Replaced") and app_id:
                         cancel_url = f"{safe_url}/orders?appOrderID={app_id}&clientID={client_id}"
-                        ORDER_RATE_LIMITER.acquire(timeout=3.0)
+                        if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
+                            logger.critical(f"PANIC: Rate limit timeout exceeded while cancelling AppOrderID {app_id}. Skipping.")
+                            continue
                         api_session.delete(cancel_url, json={"appOrderID": app_id, "clientID": client_id}, headers=headers, timeout=4)
                         logger.critical(f"🚨 CANCELLED OPEN ORDER: AppOrderID {app_id}")
     except Exception as e:
@@ -1830,20 +1941,47 @@ def panic_square_off_all():
 
             live_price = get_live_price(inst_id, exch_seg)
             if not live_price or live_price == "TOKEN_EXPIRED":
-                if action == "BUY": # Closing a short position
-                    live_price = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("BuyAveragePrice", 0) or 100)
-                else: # Closing a long position
-                    live_price = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("SellAveragePrice", 0) or 100)
+                # Fallback 1: Query latest 1m OHLC bar close from broker
+                try:
+                    candles = fetch_ohlc_candles(exch_seg, inst_id, 60, 1)
+                    if candles and isinstance(candles, list) and len(candles) > 0:
+                        last_c = candles[-1]
+                        if isinstance(last_c, dict) and last_c.get("close", 0) > 0:
+                            live_price = float(last_c["close"])
+                except Exception as candle_err:
+                    logger.warning(f"PANIC: OHLC candle price fallback failed for {sym}: {candle_err}")
 
+            if not live_price or live_price == "TOKEN_EXPIRED":
+                # Fallback 2: Check broker position traded prices
+                if action == "BUY": # Closing a short position
+                    pos_price = float(p.get("SellAveragePrice", 0) or p.get("ActualSellAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("BuyAveragePrice", 0) or 0)
+                else: # Closing a long position
+                    pos_price = float(p.get("BuyAveragePrice", 0) or p.get("ActualBuyAveragePrice", 0) or p.get("LastTradedPrice", 0) or p.get("LTP", 0) or p.get("SellAveragePrice", 0) or 0)
+                if pos_price > 0:
+                    live_price = pos_price
+
+            if not live_price or live_price == "TOKEN_EXPIRED" or float(live_price) <= 0:
+                # Fail closed: never dispatch arbitrary limit orders with hardcoded ~100 prices
+                logger.critical(f"🚨 PANIC SAFETY GUARD: Cannot determine safe execution price for {sym} ({action} {square_qty}). Refusing blind order dispatch!")
+                failed_chunks.append({
+                    "symbol": sym,
+                    "action": action,
+                    "qty": square_qty,
+                    "order_ref": f"PANIC_{int(time.time()*1000)}_PRICING_FAIL",
+                    "reason": "Cannot determine safe execution price (LTP/OHLC missing)"
+                })
+                total_unclosed_qty += square_qty
+                continue
+
+            live_price = float(live_price)
             buffer = max(live_price * 0.01, tick_size * 10)
             raw_limit = (live_price + buffer) if action == "BUY" else (live_price - buffer)
             exec_price = apply_tick_size(raw_limit, tick_size, action)
 
-            # Slicing chunk for freeze limits
-            remaining_qty = square_qty
-            while remaining_qty > 0:
-                chunk_qty = min(remaining_qty, freeze_limit)
-                order_ref = f"PANIC_{int(time.time()*1000)}"
+            # Slicing chunk for freeze limits using shared slicing engine
+            chunks = slice_quantity_for_freeze(square_qty, freeze_limit)
+            for chunk_idx, chunk_qty in enumerate(chunks, start=1):
+                order_ref = f"PANIC_{int(time.time()*1000)}_{chunk_idx}_{uuid.uuid4().hex[:6]}"
                 order_url = f"{safe_url}/orders"
                 payload = {
                     "exchangeSegment": exch_seg,
@@ -1861,7 +1999,17 @@ def panic_square_off_all():
                     "clientID": client_id,
                 }
                 try:
-                    ORDER_RATE_LIMITER.acquire(timeout=3.0)
+                    if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
+                        logger.critical(f"PANIC: Rate limit timeout exceeded for square-off slice {order_ref}. {chunk_qty} lots NOT closed.")
+                        failed_chunks.append({
+                            "symbol": sym,
+                            "action": action,
+                            "qty": chunk_qty,
+                            "order_ref": order_ref,
+                            "reason": "Rate limit exceeded"
+                        })
+                        total_unclosed_qty += chunk_qty
+                        continue
                     resp_post = api_session.post(order_url, headers=headers, json=payload, timeout=8)
                     try:
                         res = resp_post.json()
@@ -1881,11 +2029,48 @@ def panic_square_off_all():
                 except Exception as post_err:
                     res = {"type": "error", "description": f"Dispatch failed: {post_err}"}
 
-                results.append({"symbol": sym, "action": action, "qty": chunk_qty, "result": res})
-                logger.critical(f"🚨 PANIC SQUARE OFF EXECUTED: {action} {chunk_qty} of {sym} -> {res}")
-                remaining_qty -= chunk_qty
+                if res.get("type") == "success" or res.get("status") == "success":
+                    successful_chunks.append({"symbol": sym, "action": action, "qty": chunk_qty, "result": res})
+                    total_closed_qty += chunk_qty
+                    logger.critical(f"🚨 PANIC SQUARE OFF EXECUTED: {action} {chunk_qty} of {sym} -> {res}")
+                else:
+                    failed_chunks.append({
+                        "symbol": sym,
+                        "action": action,
+                        "qty": chunk_qty,
+                        "order_ref": order_ref,
+                        "result": res,
+                        "reason": res.get("description") or res.get("message") or "Broker rejection"
+                    })
+                    total_unclosed_qty += chunk_qty
+                    logger.critical(f"🚨 PANIC SQUARE OFF REJECTED: {action} {chunk_qty} of {sym} -> {res}")
     except Exception as e:
         logger.error(f"Panic square off error: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": str(e), "unclosed_quantity": total_unclosed_qty}
 
-    return {"status": "success", "squared_off": results}
+    if failed_chunks and not successful_chunks:
+        return {
+            "status": "error",
+            "squared_off": [],
+            "failed_chunks": failed_chunks,
+            "closed_quantity": 0,
+            "unclosed_quantity": total_unclosed_qty,
+            "message": f"All square-off orders failed ({total_unclosed_qty} units NOT closed)"
+        }
+    elif failed_chunks:
+        return {
+            "status": "partial_failure",
+            "squared_off": successful_chunks,
+            "failed_chunks": failed_chunks,
+            "closed_quantity": total_closed_qty,
+            "unclosed_quantity": total_unclosed_qty,
+            "message": f"Partial square-off: {total_closed_qty} units closed, {total_unclosed_qty} units NOT closed"
+        }
+    else:
+        return {
+            "status": "success",
+            "squared_off": successful_chunks,
+            "failed_chunks": [],
+            "closed_quantity": total_closed_qty,
+            "unclosed_quantity": 0
+        }

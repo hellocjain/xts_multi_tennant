@@ -853,6 +853,17 @@
                                 <span class="bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20 font-semibold">
                                     DUP SUPPRESSED
                                 </span>
+                                {% elif sig.status == 'partial_failure' %}
+                                <div class="flex flex-col space-y-0.5">
+                                    <span class="bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/40 font-bold text-xs w-max">
+                                        ⚠️ PARTIAL FAILURE
+                                    </span>
+                                    {% if sig.result and sig.result.unclosed_quantity %}
+                                    <span class="text-[10px] text-amber-400 font-mono">
+                                        {{ sig.result.unclosed_quantity }} units open
+                                    </span>
+                                    {% endif %}
+                                </div>
                                 {% else %}
                                 <span class="bg-rose-500/10 text-rose-400 px-2 py-0.5 rounded border border-rose-500/20 font-semibold">
                                     {{ sig.status|upper }}
@@ -870,6 +881,19 @@
                         <!-- Expandable Interactive Signal Drawer -->
                         <tr id="drawer-{{ loop.index }}" class="hidden bg-slate-950/90 border-b border-bordercolor">
                             <td colspan="8" class="p-5 space-y-3">
+                                {% if sig.result and sig.result.failed_chunks %}
+                                <div class="bg-rose-950/40 border border-rose-500/40 rounded-xl p-3.5 text-rose-300 space-y-1.5">
+                                    <div class="font-bold flex items-center gap-1.5 text-xs text-rose-200">
+                                        <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-400 inline-block"></i>
+                                        <span>Unclosed Lots Alert ({{ sig.result.unclosed_quantity|default(0) }} units NOT closed):</span>
+                                    </div>
+                                    <ul class="list-disc list-inside space-y-1 text-[11px] font-mono text-slate-300">
+                                        {% for fc in sig.result.failed_chunks %}
+                                        <li>{{ fc.action }} <strong class="text-rose-400">{{ fc.qty }}</strong> {{ fc.symbol }} — Reason: <span class="text-amber-300">{{ fc.reason|default('Broker rejection') }}</span> (Ref: <span class="text-slate-400">{{ fc.order_ref }}</span>)</li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                {% endif %}
                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
                                     <div class="space-y-1.5">
                                         <div class="font-bold text-slate-300 flex items-center justify-between">
@@ -1713,6 +1737,8 @@
     let stActiveSymbol = "{% if supertrend_strategies and supertrend_strategies|length > 0 %}{{ supertrend_strategies[0].symbol }}{% else %}{{ supertrend.symbol|default('') }}{% endif %}";
     let stActiveTimeframe = "{% if supertrend_strategies and supertrend_strategies|length > 0 %}{{ supertrend_strategies[0].timeframe }}{% else %}{{ supertrend.timeframe|default('5m') }}{% endif %}";
     let stChartRefreshTimer = null;
+    let chartAbortController = null;
+    let chartRequestSeq = 0;
 
     function initSuperTrendChart() {
         const container = document.getElementById('st-chart-container');
@@ -1758,21 +1784,25 @@
                 timeScale: {
                     timeVisible: true,
                     secondsVisible: false,
-                    borderColor: '#334155',
+                    borderColor: '#1e293b',
                 },
                 rightPriceScale: {
-                    borderColor: '#334155',
-                    scaleMargins: { top: 0.1, bottom: 0.1 },
+                    borderColor: '#1e293b',
+                    scaleMargins: {
+                        top: 0.1,
+                        bottom: 0.1,
+                    },
                 },
                 crosshair: {
-                    mode: LightweightCharts.CrosshairMode.Normal,
-                },
+                    mode: 1,
+                }
             });
 
             // Candlestick Series
             stCandleSeries = stChartInstance.addCandlestickSeries({
                 upColor: '#10b981',
                 downColor: '#f43f5e',
+                borderVisible: false,
                 borderUpColor: '#10b981',
                 borderDownColor: '#f43f5e',
                 wickUpColor: '#10b981',
@@ -1802,11 +1832,26 @@
         const tenantId = "{{ client.id }}";
         if (!tenantId || !stActiveSymbol) return;
 
+        if (chartAbortController) {
+            chartAbortController.abort();
+        }
+        chartAbortController = new AbortController();
+        const currentSeq = ++chartRequestSeq;
+        const requestedSymbol = stActiveSymbol;
+        const requestedTf = stActiveTimeframe;
+
         try {
-            const symParam = stActiveSymbol ? `&symbol=${encodeURIComponent(stActiveSymbol)}` : '';
-            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/chart-data?timeframe=${encodeURIComponent(stActiveTimeframe)}${symParam}`);
+            const symParam = requestedSymbol ? `&symbol=${encodeURIComponent(requestedSymbol)}` : '';
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/chart-data?timeframe=${encodeURIComponent(requestedTf)}${symParam}`, {
+                signal: chartAbortController.signal
+            });
             if (!resp.ok) return;
             const data = await resp.json();
+
+            // Guard against out-of-order response resolving after a newer symbol/timeframe was selected
+            if (currentSeq !== chartRequestSeq || requestedSymbol !== stActiveSymbol) {
+                return;
+            }
 
             const loadingEl = document.getElementById('st-chart-loading');
             if (loadingEl) loadingEl.remove();
@@ -1853,6 +1898,9 @@
                 }
             }
         } catch (e) {
+            if (e.name === 'AbortError') {
+                return; // Normal cancellation on fast symbol switch
+            }
             console.error('Failed to load SuperTrend chart data:', e);
         }
     }

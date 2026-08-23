@@ -93,6 +93,27 @@ def test_migrate_vault_script(monkeypatch):
         dec = security.decrypt_credentials(row["encrypted_payload"])
         assert dec["API_KEY"] == "TEST_KEY"
 
+def test_sec_xts_004_migrate_vault_refuses_missing_old_master_key(monkeypatch):
+    """
+    Regression Test for SEC-XTS-004:
+    Verifies that migrate_vault refuses to run and raises an explicit error
+    if OLD_PORTAL_MASTER_KEY is not configured, failing closed rather than
+    falling back to a hardcoded default key.
+    """
+    import scripts.migrate_vault_master_key as migrator
+    monkeypatch.delenv("OLD_PORTAL_MASTER_KEY", raising=False)
+    monkeypatch.delenv("PORTAL_MASTER_KEY", raising=False)
+
+    with pytest.raises((RuntimeError, ValueError), match="OLD_PORTAL_MASTER_KEY"):
+        migrator.migrate_vault(old_key_str=None)
+
+    # Hardening test: Even if PORTAL_MASTER_KEY is present in env, if OLD_PORTAL_MASTER_KEY is unset, it must STILL raise!
+    monkeypatch.setenv("PORTAL_MASTER_KEY", "uYvN3lM8k9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p=")
+    monkeypatch.delenv("OLD_PORTAL_MASTER_KEY", raising=False)
+    with pytest.raises((RuntimeError, ValueError), match="OLD_PORTAL_MASTER_KEY"):
+        migrator.migrate_vault(old_key_str=None)
+
+
 def test_password_hashing():
     pwd = "EnterprisePassword99!"
     h = security.hash_password(pwd)
