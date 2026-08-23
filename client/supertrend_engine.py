@@ -557,29 +557,33 @@ class SingleSuperTrendRunner:
                     order_ref = str(o.get("OrderUniqueIdentifier") or o.get("orderUniqueIdentifier") or "")
                     app_id = str(o.get("AppOrderID") or o.get("appOrderID") or "")
 
-                    is_our_st_order = order_ref.startswith("ST_REV_") and (self.symbol in order_ref or self.symbol in o_sym)
+                    is_our_st_order = (
+                        order_ref.startswith("ST_REV_") and 
+                        (self.symbol in order_ref or self.symbol in o_sym) and 
+                        (f"_{self.timeframe.upper()}_" in order_ref.upper() or f"_{self.timeframe.upper()}" in order_ref.upper() or f"_{self.timeframe.lower()}_" in order_ref.lower() or f"_{self.timeframe.lower()}" in order_ref.lower())
+                    )
                     if is_our_st_order and st in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
                         first_seen = self.pending_order_first_seen.setdefault(app_id, now_ts)
                         age = now_ts - first_seen
                         if age > 60.0:
                             logger.critical(
-                                f"🚨 SuperTrend [{self.symbol}]: STALE PENDING ORDER {app_id} (Ref: {order_ref}, Age: {age:.1f}s). "
+                                f"🚨 SuperTrend [{self.symbol} ({self.timeframe})]: STALE PENDING ORDER {app_id} (Ref: {order_ref}, Age: {age:.1f}s). "
                                 f"Bypassing suppression to allow position reconciliation."
                             )
                             if hasattr(xts_api_module, "send_ops_alert"):
                                 xts_api_module.send_ops_alert(
-                                    f"WARNING: Strategy {self.symbol} bypassed stale pending order {app_id} ({st}, {age:.0f}s old)"
+                                    f"WARNING: Strategy {self.symbol} ({self.timeframe}) bypassed stale pending order {app_id} ({st}, {age:.0f}s old)"
                                 )
                         else:
                             logger.warning(
-                                f"SuperTrend [{self.symbol}]: Found in-flight strategy pending order {app_id} "
+                                f"SuperTrend [{self.symbol} ({self.timeframe})]: Found in-flight strategy pending order {app_id} "
                                 f"({st}, Ref: {order_ref}, Age: {age:.1f}s). Yielding cycle."
                             )
                             return
                     elif app_id in self.pending_order_first_seen and st not in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
                         self.pending_order_first_seen.pop(app_id, None)
             except Exception as e:
-                logger.warning(f"SuperTrend [{self.symbol}]: Order check warning: {e}")
+                logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Order check warning: {e}")
 
             # 5. Fetch OHLC Candles from Market Data REST API
             candles = await asyncio.to_thread(
@@ -635,25 +639,29 @@ class SingleSuperTrendRunner:
             flip_dir = eval_st_res["flip_direction"]
 
             if is_flip and candle_ts != self.last_processed_candle_time:
-                logger.info(f"🚨 [SUPERTREND FLIP] Symbol: {self.symbol} | Direction: {flip_dir} at confirmed candle close {candle_ts}. Current Position: {self.strategy_position} | Mode: {self.execution_mode}")
+                logger.info(f"🚨 [SUPERTREND FLIP] Symbol: {self.symbol} ({self.timeframe}) | Direction: {flip_dir} at confirmed candle close {candle_ts}. Current Position: {self.strategy_position} | Mode: {self.execution_mode}")
                 
                 if flip_dir == "BULLISH":
                     if self.strategy_position == "SHORT":
-                        exit_qty = self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity
+                        exit_qty = self.quantity
                         await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
                         await asyncio.sleep(0.5)
                         await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                    elif self.strategy_position == "FLAT":
+                        self.strategy_position = "LONG"
+                    elif self.strategy_position in ("FLAT", "INITIALIZING"):
                         await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
+                        self.strategy_position = "LONG"
                 
                 elif flip_dir == "BEARISH":
                     if self.strategy_position == "LONG":
-                        exit_qty = self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity
+                        exit_qty = self.quantity
                         await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
                         await asyncio.sleep(0.5)
                         await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                    elif self.strategy_position == "FLAT":
+                        self.strategy_position = "SHORT"
+                    elif self.strategy_position in ("FLAT", "INITIALIZING"):
                         await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
+                        self.strategy_position = "SHORT"
 
                 self.last_processed_candle_time = candle_ts
 
@@ -663,7 +671,7 @@ class SingleSuperTrendRunner:
         max_allowed_lots = max(self.quantity * 5, 50)
         if qty > max_allowed_lots or qty <= 0:
             logger.critical(
-                f"🚨 CRITICAL SAFETY GUARD: Disallowed exit quantity {qty} lots for {self.symbol} "
+                f"🚨 CRITICAL SAFETY GUARD: Disallowed exit quantity {qty} lots for {self.symbol} ({self.timeframe}) "
                 f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
             )
             return
@@ -673,7 +681,7 @@ class SingleSuperTrendRunner:
         
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
-            order_ref = f"ST_REV_EXIT_{self.symbol}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_EXIT_{self.symbol}_{ref_suffix}_{chunk_idx}"
+            order_ref = f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}_{chunk_idx}"
             sig_id = f"st_exit_{str(uuid.uuid4())[:8]}"
             
             payload = {
@@ -687,7 +695,7 @@ class SingleSuperTrendRunner:
                 "is_paper": is_paper
             }
             
-            logger.info(f"SuperTrend [{self.symbol}]: Dispatching Exit Leg [Chunk {chunk_idx}]: {payload}")
+            logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Exit Leg [Chunk {chunk_idx}]: {payload}")
             if self.dispatch_fn:
                 await self.dispatch_fn(sig_id, payload)
             elif main_module:
@@ -717,7 +725,7 @@ class SingleSuperTrendRunner:
         max_allowed_lots = max(self.quantity * 5, 50)
         if qty > max_allowed_lots or qty <= 0:
             logger.critical(
-                f"🚨 CRITICAL SAFETY GUARD: Disallowed entry quantity {qty} lots for {self.symbol} "
+                f"🚨 CRITICAL SAFETY GUARD: Disallowed entry quantity {qty} lots for {self.symbol} ({self.timeframe}) "
                 f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
             )
             return
@@ -726,7 +734,7 @@ class SingleSuperTrendRunner:
         
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
-            order_ref = f"ST_REV_ENTRY_{self.symbol}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_ENTRY_{self.symbol}_{ref_suffix}_{chunk_idx}"
+            order_ref = f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}_{chunk_idx}"
             sig_id = f"st_entry_{str(uuid.uuid4())[:8]}"
             
             payload = {
@@ -740,7 +748,7 @@ class SingleSuperTrendRunner:
                 "is_paper": is_paper
             }
             
-            logger.info(f"SuperTrend [{self.symbol}]: Dispatching Entry Leg [Chunk {chunk_idx}]: {payload}")
+            logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Entry Leg [Chunk {chunk_idx}]: {payload}")
             if self.dispatch_fn:
                 await self.dispatch_fn(sig_id, payload)
             elif main_module:
@@ -978,16 +986,16 @@ class MultiSuperTrendEngine:
             runner = self.strategies.pop(lookup)
             runner.is_enabled = False
             runner.status = "REMOVED"
-            logger.info(f"MultiSuperTrendEngine: Removed runner {lookup} ({runner.symbol})")
+            logger.info(f"MultiSuperTrendEngine: Removed runner {lookup} ({runner.symbol} {runner.timeframe})")
             return True
 
-        # Fallback to lookup by symbol or runner.id
+        # Fallback to lookup by runner.id, or (symbol + timeframe), or symbol
         for sid, runner in list(self.strategies.items()):
-            if sid == lookup or runner.id == lookup or runner.symbol == lookup.upper():
+            if sid == lookup or runner.id == lookup or runner.symbol == lookup.upper() or f"{runner.symbol.lower()}_{runner.timeframe}" in lookup.lower():
                 self.strategies.pop(sid)
                 runner.is_enabled = False
                 runner.status = "REMOVED"
-                logger.info(f"MultiSuperTrendEngine: Removed runner {sid} ({runner.symbol})")
+                logger.info(f"MultiSuperTrendEngine: Removed runner {sid} ({runner.symbol} {runner.timeframe})")
                 return True
         return False
 
@@ -1003,12 +1011,20 @@ class MultiSuperTrendEngine:
         runner.status = "RUNNING" if runner.is_enabled else "DISABLED"
         return runner.get_telemetry()
 
-    def get_strategy(self, key: str) -> Optional[SingleSuperTrendRunner]:
+    def get_strategy(self, key: str, timeframe: Optional[str] = None) -> Optional[SingleSuperTrendRunner]:
         lookup = str(key).strip()
         if lookup in self.strategies:
             return self.strategies[lookup]
         for sid, runner in self.strategies.items():
-            if sid == lookup or runner.id == lookup or runner.symbol == lookup.upper():
+            if sid == lookup or runner.id == lookup:
+                return runner
+        if timeframe:
+            clean_tf = str(timeframe).strip().lower()
+            for runner in self.strategies.values():
+                if runner.symbol == lookup.upper() and runner.timeframe == clean_tf:
+                    return runner
+        for runner in self.strategies.values():
+            if runner.symbol == lookup.upper():
                 return runner
         return None
 
@@ -1069,17 +1085,30 @@ class MultiSuperTrendEngine:
             "markers": []
         }
 
-    async def get_chart_data_async(self, xts_api_module, timeframe_override: Optional[str] = None, symbol_override: Optional[str] = None) -> dict:
+    async def get_chart_data_async(
+        self,
+        xts_api_module,
+        timeframe_override: Optional[str] = None,
+        symbol_override: Optional[str] = None,
+        strategy_id_override: Optional[str] = None
+    ) -> dict:
         """
         Returns JSON formatted for TradingView Lightweight Charts for the requested symbol and timeframe.
         Fetches live historical OHLC on-demand for instant chart rendering.
         """
-        target_sym = str(symbol_override or self.symbol).strip().upper()
-        runner = self.get_strategy(target_sym) if target_sym else self.primary_runner
+        runner = None
+        if strategy_id_override:
+            runner = self.get_strategy(strategy_id_override)
+        
+        target_sym = str(symbol_override or (runner.symbol if runner else self.symbol)).strip().upper()
+        target_tf = str(timeframe_override or (runner.timeframe if runner else "5m")).strip().lower()
+
+        if not runner and target_sym:
+            runner = self.get_strategy(target_sym, timeframe=target_tf) or self.primary_runner
+
         if runner and not target_sym:
             target_sym = runner.symbol
 
-        target_tf = str(timeframe_override or (runner.timeframe if runner else "5m")).strip().lower()
         tf_seconds = parse_timeframe_seconds(target_tf)
 
         if runner and runner.cached_candles and target_tf == runner.timeframe and not timeframe_override:
@@ -1165,15 +1194,27 @@ class MultiSuperTrendEngine:
             "markers": []
         }
 
-    async def evaluate_cycle_diagnostic(self, xts_api_module, symbol_override: Optional[str] = None) -> dict:
-        """Executes on-demand diagnostic trace for the specified or active symbol."""
-        target_sym = str(symbol_override or self.symbol).strip().upper()
-        runner = self.get_strategy(target_sym) if target_sym else self.primary_runner
+    async def evaluate_cycle_diagnostic(
+        self,
+        xts_api_module,
+        symbol_override: Optional[str] = None,
+        strategy_id_override: Optional[str] = None,
+        timeframe_override: Optional[str] = None
+    ) -> dict:
+        """Executes on-demand diagnostic trace for the specified or active symbol/strategy."""
+        runner = None
+        if strategy_id_override:
+            runner = self.get_strategy(strategy_id_override)
+
+        target_sym = str(symbol_override or (runner.symbol if runner else self.symbol)).strip().upper()
+        if not runner and target_sym:
+            runner = self.get_strategy(target_sym, timeframe=timeframe_override) or self.primary_runner
+
         if runner:
             return await runner.evaluate_diagnostic(xts_api_module)
 
         # Standalone diagnostic for un-registered symbol
-        temp_runner = SingleSuperTrendRunner({"symbol": target_sym, "timeframe": "5m", "exchange_segment": "MCXFO"})
+        temp_runner = SingleSuperTrendRunner({"symbol": target_sym, "timeframe": timeframe_override or "5m", "exchange_segment": "MCXFO"})
         return await temp_runner.evaluate_diagnostic(xts_api_module)
 
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:

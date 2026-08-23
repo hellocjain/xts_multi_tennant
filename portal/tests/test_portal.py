@@ -704,8 +704,159 @@ def test_save_multi_supertrend_strategy_preserves_15m_and_custom_timeframes():
         assert res_disable.status_code == 303
 
         with closing(database.get_db_connection()) as conn:
-            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_tf' AND symbol='SILVER1001!'").fetchone()
+            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_tf' AND symbol='SILVER1001!' AND timeframe='20m'").fetchone()
             assert row["is_enabled"] == 0
+
+def test_same_symbol_multi_timeframe_coexistence_and_management():
+    """
+    Test verifying that multiple strategies on the SAME symbol with DIFFERENT timeframes
+    (e.g., SILVER1001! on 15m and SILVER1001! on 30m) can coexist, be toggled independently,
+    and deleted without collisions.
+    """
+    with TestClient(app) as client:
+        enc_payload = security.encrypt_credentials({"CLIENT_ID": "ST_MULTI", "WEBHOOK_SECRET": "sec456"})
+        with closing(database.get_db_connection()) as conn:
+            with conn:
+                conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('admin_multi', 'admin_multi', 'hash', 1, 100)")
+                conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('tenant_multi', 'Multi TF Test', 'ACTIVE', 100, 100)")
+                conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('tenant_multi', ?, 100)", (enc_payload,))
+                conn.execute("INSERT OR REPLACE INTO tenant_risk_limits (tenant_id, updated_at) VALUES ('tenant_multi', 100)")
+                conn.execute("DELETE FROM tenant_supertrend_strategies WHERE tenant_id='tenant_multi'")
+
+        cookie = security.create_session("admin_multi", "127.0.0.1", "pytest-multi")
+
+        # 1. Add Strategy 1: SILVER1001! on 15m (Qty 1, LIVE)
+        res_15m = client.post("/admin/clients/tenant_multi/supertrend/strategy/save", data={
+            "symbol": "SILVER1001!",
+            "exchange_segment": "MCXFO",
+            "timeframe_select": "15m",
+            "quantity": 1,
+            "product_type": "NRML",
+            "atr_period": 10,
+            "multiplier": 3.0,
+            "execution_mode": "LIVE",
+            "is_enabled": "true"
+        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_15m.status_code == 303
+
+        # 2. Add Strategy 2: SILVER1001! on 30m (Qty 2, PAPER) on the SAME symbol
+        res_30m = client.post("/admin/clients/tenant_multi/supertrend/strategy/save", data={
+            "symbol": "SILVER1001!",
+            "exchange_segment": "MCXFO",
+            "timeframe_select": "30m",
+            "quantity": 2,
+            "product_type": "NRML",
+            "atr_period": 10,
+            "multiplier": 3.0,
+            "execution_mode": "PAPER",
+            "is_enabled": "true"
+        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_30m.status_code == 303
+
+        # 3. Assert both strategies coexist in DB
+        with closing(database.get_db_connection()) as conn:
+            rows = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_multi' ORDER BY created_at ASC").fetchall()
+            assert len(rows) == 2, f"Expected 2 strategies for SILVER1001!, found {len(rows)}"
+            
+            strat_15m = next(r for r in rows if r["timeframe"] == "15m")
+            strat_30m = next(r for r in rows if r["timeframe"] == "30m")
+            
+            assert strat_15m["symbol"] == "SILVER1001!"
+            assert strat_15m["quantity"] == 1
+            assert strat_15m["execution_mode"] == "LIVE"
+            assert strat_15m["is_enabled"] == 1
+
+            assert strat_30m["symbol"] == "SILVER1001!"
+            assert strat_30m["quantity"] == 2
+            assert strat_30m["execution_mode"] == "PAPER"
+            assert strat_30m["is_enabled"] == 1
+
+            id_15m = strat_15m["id"]
+            id_30m = strat_30m["id"]
+            assert id_15m != id_30m
+
+        # 4. Toggle only the 15m strategy
+        res_toggle = client.post(f"/admin/clients/tenant_multi/supertrend/strategy/{id_15m}/toggle", cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_toggle.status_code == 303
+
+        with closing(database.get_db_connection()) as conn:
+            r15 = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE id=?", (id_15m,)).fetchone()
+            r30 = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE id=?", (id_30m,)).fetchone()
+            assert r15["is_enabled"] == 0
+            assert r30["is_enabled"] == 1
+
+        # 5. Delete the 30m strategy
+        res_del = client.post(f"/admin/clients/tenant_multi/supertrend/strategy/{id_30m}/delete", cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_del.status_code == 303
+
+        with closing(database.get_db_connection()) as conn:
+            remaining = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_multi'").fetchall()
+            assert len(remaining) == 1
+            assert remaining[0]["id"] == id_15m
+            assert remaining[0]["timeframe"] == "15m"
+
+def test_database_schema_auto_migration_multi_timeframe():
+    """
+    Test verifying that an existing database table with UNIQUE(tenant_id, symbol)
+    is automatically migrated to UNIQUE(tenant_id, symbol, timeframe) without data loss.
+    """
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("PRAGMA foreign_keys = OFF;")
+            conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('tenant_mig', 'Mig Tenant', 'ACTIVE', 100, 100);")
+            conn.execute("DROP TABLE IF EXISTS tenant_supertrend_strategies;")
+            # Create old table schema with UNIQUE(tenant_id, symbol)
+            conn.execute("""
+                CREATE TABLE tenant_supertrend_strategies (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    symbol TEXT NOT NULL,
+                    exchange_segment TEXT NOT NULL DEFAULT 'MCXFO',
+                    timeframe TEXT NOT NULL DEFAULT '5m',
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    product_type TEXT NOT NULL DEFAULT 'NRML',
+                    atr_period INTEGER NOT NULL DEFAULT 10,
+                    multiplier REAL NOT NULL DEFAULT 3.0,
+                    execution_mode TEXT NOT NULL DEFAULT 'LIVE',
+                    is_enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(tenant_id, symbol)
+                );
+            """)
+            conn.execute("""
+                INSERT INTO tenant_supertrend_strategies (
+                    id, tenant_id, symbol, exchange_segment, timeframe, quantity,
+                    product_type, atr_period, multiplier, execution_mode, is_enabled,
+                    created_at, updated_at
+                ) VALUES ('st_mig_01', 'tenant_mig', 'GOLD1!', 'MCXFO', '5m', 1, 'NRML', 10, 3.0, 'LIVE', 1, 100, 100);
+            """)
+            conn.execute("PRAGMA foreign_keys = ON;")
+
+    # Run init_portal_db which triggers the migration
+    database.init_portal_db()
+
+    with closing(database.get_db_connection()) as conn:
+        schema = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='tenant_supertrend_strategies'").fetchone()[0]
+        assert "UNIQUE(tenant_id, symbol, timeframe)" in schema
+        
+        # Verify existing row preserved
+        row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE id='st_mig_01'").fetchone()
+        assert row is not None
+        assert row["symbol"] == "GOLD1!"
+        assert row["timeframe"] == "5m"
+
+        # Verify we can now insert the same symbol with a 15m timeframe
+        conn.execute("""
+            INSERT INTO tenant_supertrend_strategies (
+                id, tenant_id, symbol, exchange_segment, timeframe, quantity,
+                product_type, atr_period, multiplier, execution_mode, is_enabled,
+                created_at, updated_at
+            ) VALUES ('st_mig_02', 'tenant_mig', 'GOLD1!', 'MCXFO', '15m', 2, 'NRML', 10, 3.0, 'LIVE', 1, 200, 200);
+        """)
+        
+        rows = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='tenant_mig'").fetchall()
+        assert len(rows) == 2
 
 
 

@@ -582,9 +582,9 @@ async def save_supertrend_strategy(request: Request):
     except Exception as e:
         return JSONResponse(status_code=400, content={"status": "error", "message": str(e)})
 
-@app.post("/internal/supertrend/strategy/{symbol}/toggle")
-async def toggle_supertrend_strategy(symbol: str, request: Request):
-    """Toggles enable/disable state for a single symbol strategy."""
+@app.post("/internal/supertrend/strategy/{key}/toggle")
+async def toggle_supertrend_strategy(key: str, request: Request):
+    """Toggles enable/disable state for a single symbol strategy by ID or symbol."""
     internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
     if internal_auth_token:
         req_token = request.headers.get("X-Internal-Token", "").strip()
@@ -599,26 +599,26 @@ async def toggle_supertrend_strategy(symbol: str, request: Request):
     except Exception:
         pass
 
-    strat_tel = supertrend_engine.toggle_strategy(symbol, is_enabled)
+    strat_tel = supertrend_engine.toggle_strategy(key, is_enabled)
     if not strat_tel:
-        return JSONResponse(status_code=404, content={"status": "error", "message": f"Strategy for '{symbol}' not found"})
+        return JSONResponse(status_code=404, content={"status": "error", "message": f"Strategy '{key}' not found"})
 
     return {"status": "success", "strategy": strat_tel, "telemetry": supertrend_engine.get_telemetry()}
 
-@app.delete("/internal/supertrend/strategy/{symbol}")
-async def delete_supertrend_strategy(symbol: str, request: Request):
-    """Deletes a symbol strategy from the running container."""
+@app.delete("/internal/supertrend/strategy/{key}")
+async def delete_supertrend_strategy(key: str, request: Request):
+    """Deletes a symbol strategy from the running container by ID or symbol."""
     internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
     if internal_auth_token:
         req_token = request.headers.get("X-Internal-Token", "").strip()
         if not hmac.compare_digest(req_token, internal_auth_token):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
-    ok = supertrend_engine.remove_strategy(symbol)
+    ok = supertrend_engine.remove_strategy(key)
     if not ok:
-        return JSONResponse(status_code=404, content={"status": "error", "message": f"Strategy for '{symbol}' not found"})
+        return JSONResponse(status_code=404, content={"status": "error", "message": f"Strategy '{key}' not found"})
 
-    return {"status": "success", "message": f"Strategy for '{symbol}' removed", "telemetry": supertrend_engine.get_telemetry()}
+    return {"status": "success", "message": f"Strategy '{key}' removed", "telemetry": supertrend_engine.get_telemetry()}
 
 @app.get("/internal/supertrend/status")
 async def get_supertrend_status(request: Request):
@@ -632,7 +632,12 @@ async def get_supertrend_status(request: Request):
     return supertrend_engine.get_telemetry()
 
 @app.get("/internal/supertrend/candles")
-async def get_supertrend_candles(request: Request, timeframe: Optional[str] = None, symbol: Optional[str] = None):
+async def get_supertrend_candles(
+    request: Request,
+    timeframe: Optional[str] = None,
+    symbol: Optional[str] = None,
+    strategy_id: Optional[str] = None
+):
     """Returns candlestick and indicator series for TradingView Lightweight Charts."""
     internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
     if internal_auth_token:
@@ -640,10 +645,20 @@ async def get_supertrend_candles(request: Request, timeframe: Optional[str] = No
         if not hmac.compare_digest(req_token, internal_auth_token):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
-    return await supertrend_engine.get_chart_data_async(xts_api, timeframe_override=timeframe, symbol_override=symbol)
+    return await supertrend_engine.get_chart_data_async(
+        xts_api,
+        timeframe_override=timeframe,
+        symbol_override=symbol,
+        strategy_id_override=strategy_id
+    )
 
 @app.post("/internal/supertrend/evaluate-now")
-async def evaluate_supertrend_now(request: Request, symbol: Optional[str] = None):
+async def evaluate_supertrend_now(
+    request: Request,
+    symbol: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    timeframe: Optional[str] = None
+):
     """Executes on-demand diagnostic cycle evaluation and returns full formula trace."""
     internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
     if internal_auth_token:
@@ -651,7 +666,12 @@ async def evaluate_supertrend_now(request: Request, symbol: Optional[str] = None
         if not hmac.compare_digest(req_token, internal_auth_token):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
-    return await supertrend_engine.evaluate_cycle_diagnostic(xts_api, symbol_override=symbol)
+    return await supertrend_engine.evaluate_cycle_diagnostic(
+        xts_api,
+        symbol_override=symbol,
+        strategy_id_override=strategy_id,
+        timeframe_override=timeframe
+    )
 
 @app.get("/internal/validate-symbol")
 async def validate_symbol_endpoint(request: Request, symbol: str = ""):

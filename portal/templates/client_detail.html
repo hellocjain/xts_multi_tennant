@@ -1085,12 +1085,12 @@
                         <div class="flex items-center gap-2">
                             <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">TradingView Live Candlestick Chart</h3>
                             
-                            <!-- Multi-Symbol Switcher Dropdown -->
+                            <!-- Multi-Symbol / Strategy Switcher Dropdown -->
                             {% if supertrend_strategies %}
-                            <select id="st-chart-symbol-select" onchange="switchChartSymbol(this.value)"
+                            <select id="st-chart-symbol-select" onchange="switchChartStrategy(this.value)"
                                 class="bg-slate-900 border border-brand-500/40 text-brand-300 text-xs font-mono font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:border-brand-400 transition cursor-pointer">
                                 {% for s in supertrend_strategies %}
-                                <option value="{{ s.symbol }}">{{ s.symbol }} ({{ s.timeframe }}) - {{ s.execution_mode }}</option>
+                                <option value="{{ s.id }}" data-symbol="{{ s.symbol }}" data-timeframe="{{ s.timeframe }}">{{ s.symbol }} ({{ s.timeframe }}) - {{ s.execution_mode }} [Qty: {{ s.quantity }}]</option>
                                 {% endfor %}
                             </select>
                             {% else %}
@@ -1616,9 +1616,17 @@
     // =========================================================================
     // SUPERTREND MULTI-STRATEGY MODAL & UI HANDLERS
     // =========================================================================
-    const strategyTimeframes = {
+    // SUPERTREND MULTI-STRATEGY MODAL & UI HANDLERS
+    // =========================================================================
+    const strategyMap = {
         {% for s in supertrend_strategies %}
-        "{{ s.symbol }}": "{{ s.timeframe }}",
+        "{{ s.id }}": {
+            id: "{{ s.id }}",
+            symbol: "{{ s.symbol }}",
+            timeframe: "{{ s.timeframe }}",
+            execution_mode: "{{ s.execution_mode }}",
+            quantity: {{ s.quantity }}
+        },
         {% endfor %}
     };
 
@@ -1658,14 +1666,14 @@
     function openEditStrategyModal(strategy) {
         const modal = document.getElementById('st-strategy-modal');
         if (!modal || !strategy) return;
-        document.getElementById('st-modal-title').innerText = `Edit Strategy: ${strategy.symbol}`;
+        document.getElementById('st-modal-title').innerText = `Edit Strategy: ${strategy.symbol} (${strategy.timeframe || '5m'})`;
         document.getElementById('st-modal-strat-id').value = strategy.id || '';
         const symInput = document.getElementById('modal-st-symbol-input');
         if (symInput) {
             symInput.value = strategy.symbol || '';
-            symInput.readOnly = true;
+            symInput.readOnly = false;
         }
-        document.getElementById('modal-st-symbol-validation').innerHTML = '<span class="text-[10px] text-brand-400 font-mono">Editing existing contract runner</span>';
+        document.getElementById('modal-st-symbol-validation').innerHTML = '<span class="text-[10px] text-brand-400 font-mono">Editing contract runner</span>';
         document.getElementById('modal-st-exchange-seg').value = strategy.exchange_segment || 'MCXFO';
         document.getElementById('modal-st-qty').value = strategy.quantity || 1;
         document.getElementById('modal-st-prod-type').value = strategy.product_type || 'NRML';
@@ -1734,6 +1742,7 @@
     let stChartInstance = null;
     let stCandleSeries = null;
     let stLineSeries = null;
+    let stActiveStrategyId = "{% if supertrend_strategies and supertrend_strategies|length > 0 %}{{ supertrend_strategies[0].id }}{% else %}{% endif %}";
     let stActiveSymbol = "{% if supertrend_strategies and supertrend_strategies|length > 0 %}{{ supertrend_strategies[0].symbol }}{% else %}{{ supertrend.symbol|default('') }}{% endif %}";
     let stActiveTimeframe = "{% if supertrend_strategies and supertrend_strategies|length > 0 %}{{ supertrend_strategies[0].timeframe }}{% else %}{{ supertrend.timeframe|default('5m') }}{% endif %}";
     let stChartRefreshTimer = null;
@@ -1837,12 +1846,14 @@
         }
         chartAbortController = new AbortController();
         const currentSeq = ++chartRequestSeq;
+        const requestedStratId = stActiveStrategyId;
         const requestedSymbol = stActiveSymbol;
         const requestedTf = stActiveTimeframe;
 
         try {
+            const stratParam = requestedStratId ? `&strategy_id=${encodeURIComponent(requestedStratId)}` : '';
             const symParam = requestedSymbol ? `&symbol=${encodeURIComponent(requestedSymbol)}` : '';
-            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/chart-data?timeframe=${encodeURIComponent(requestedTf)}${symParam}`, {
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/chart-data?timeframe=${encodeURIComponent(requestedTf)}${symParam}${stratParam}`, {
                 signal: chartAbortController.signal
             });
             if (!resp.ok) return;
@@ -1892,7 +1903,7 @@
                 if (data.symbol) {
                     stActiveSymbol = data.symbol;
                     const selectEl = document.getElementById('st-chart-symbol-select');
-                    if (selectEl && selectEl.value !== data.symbol) selectEl.value = data.symbol;
+                    if (selectEl && data.id && selectEl.value !== data.id) selectEl.value = data.id;
                     const badge = document.getElementById('st-chart-symbol-badge');
                     if (badge) badge.innerText = `${data.symbol} (${stActiveTimeframe})`;
                 }
@@ -1905,24 +1916,36 @@
         }
     }
 
+    function switchChartStrategy(stratId) {
+        if (!stratId) return;
+        stActiveStrategyId = stratId;
+        const strat = strategyMap[stratId];
+        if (strat) {
+            stActiveSymbol = strat.symbol;
+            stActiveTimeframe = strat.timeframe;
+        }
+        const selectEl = document.getElementById('st-chart-symbol-select');
+        if (selectEl && selectEl.value !== stratId) selectEl.value = stratId;
+        
+        document.querySelectorAll('[id^="chart-tf-btn-"]').forEach(btn => {
+            btn.className = "px-2.5 py-1 rounded-lg transition font-bold text-slate-400 hover:text-slate-200";
+        });
+        const activeBtn = document.getElementById(`chart-tf-btn-${stActiveTimeframe}`);
+        if (activeBtn) {
+            activeBtn.className = "px-2.5 py-1 rounded-lg transition font-bold bg-brand-600 text-white shadow";
+        }
+        refreshSuperTrendChart();
+    }
+
     function switchChartSymbol(sym) {
         if (!sym) return;
-        stActiveSymbol = sym;
-        const selectEl = document.getElementById('st-chart-symbol-select');
-        if (selectEl && selectEl.value !== sym) selectEl.value = sym;
-        
-        // Auto-synchronize chart timeframe with target strategy's configured timeframe
-        const configuredTf = strategyTimeframes[sym];
-        if (configuredTf) {
-            stActiveTimeframe = configuredTf;
-            document.querySelectorAll('[id^="chart-tf-btn-"]').forEach(btn => {
-                btn.className = "px-2.5 py-1 rounded-lg transition font-bold text-slate-400 hover:text-slate-200";
-            });
-            const activeBtn = document.getElementById(`chart-tf-btn-${configuredTf}`);
-            if (activeBtn) {
-                activeBtn.className = "px-2.5 py-1 rounded-lg transition font-bold bg-brand-600 text-white shadow";
+        for (const sid in strategyMap) {
+            if (strategyMap[sid].symbol.toUpperCase() === sym.toUpperCase()) {
+                switchChartStrategy(sid);
+                return;
             }
         }
+        stActiveSymbol = sym;
         refreshSuperTrendChart();
     }
 
@@ -1939,11 +1962,12 @@
     }
 
     // Modal: Force Evaluate Strategy Cycle (Single or All)
-    async function openEvaluateModal(symbol) {
+    async function openEvaluateModal(symbol, strategyId) {
         const modal = document.getElementById('st-evaluate-modal');
         const body = document.getElementById('st-evaluate-modal-body');
         if (!modal || !body) return;
 
+        const targetStratId = strategyId || stActiveStrategyId || '';
         const targetSym = symbol || stActiveSymbol || '';
         modal.classList.remove('hidden');
         lucide.createIcons();
@@ -1959,7 +1983,8 @@
         try {
             const tenantId = "{{ client.id }}";
             const symParam = targetSym ? `?symbol=${encodeURIComponent(targetSym)}` : '';
-            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/evaluate-now${symParam}`, {
+            const stratParam = targetStratId ? `${symParam ? '&' : '?'}strategy_id=${encodeURIComponent(targetStratId)}` : '';
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/evaluate-now${symParam}${stratParam}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });

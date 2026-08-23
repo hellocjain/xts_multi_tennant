@@ -831,6 +831,151 @@ def test_sec_xts_007_strategy_id_isolation_and_symbol_migration():
     assert engine.get_strategy("strat_crude_5m") is None
     assert engine.get_strategy("strat_crude_15m") is None
 
+@pytest.mark.anyio
+async def test_multi_timeframe_same_symbol_execution_and_order_refs(monkeypatch):
+    """
+    Verifies that when multiple strategies run on the SAME symbol with different timeframes
+    (e.g., SILVER1001! on 15m and SILVER1001! on 30m):
+    1. Both runners execute their confirmed flips independently with distinct lot sizes.
+    2. Order references format: ST_REV_ENTRY_{SYMBOL}_{TIMEFRAME}_{TS} prevents order ID collisions.
+    """
+    dispatched_orders = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched_orders.append((sig_id, payload))
+
+    engine = SuperTrendEngine(dispatch_fn=mock_dispatch)
+
+    # 1. Register 15m (Qty 1) and 30m (Qty 2) runners for SILVER1001!
+    engine.add_or_update_strategy({
+        "id": "st_silver_15m",
+        "symbol": "SILVER1001!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "15m",
+        "quantity": 1,
+        "product_type": "NRML",
+        "atr_period": 10,
+        "multiplier": 2.0,
+        "is_enabled": True
+    })
+    engine.add_or_update_strategy({
+        "id": "st_silver_30m",
+        "symbol": "SILVER1001!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "30m",
+        "quantity": 2,
+        "product_type": "NRML",
+        "atr_period": 10,
+        "multiplier": 2.0,
+        "is_enabled": True
+    })
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 999123,
+        "exch_seg": "MCXFO",
+        "lot_size": 1,
+        "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    # Synthetic candles for 15m and 30m
+    prices_bullish = [130, 128, 126, 124, 122, 120, 118, 116, 114, 112, 110, 100, 50, 40, 30, 150]
+    candles_15m = generate_synthetic_candles(prices_bullish, base_time=1787200000, interval=900)
+    candles_30m = generate_synthetic_candles(prices_bullish, base_time=1787200000, interval=1800)
+
+    def mock_fetch_ohlc(seg, inst_id, tf_seconds, bars):
+        if tf_seconds == 900:
+            return candles_15m
+        elif tf_seconds == 1800:
+            return candles_30m
+        return candles_15m
+
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", mock_fetch_ohlc)
+    monkeypatch.setattr(time, "time", lambda: 1787250000.0) # Past candle close timestamps
+
+    await engine.evaluate_cycle(xts_api, client_main)
+
+    # Invariant: Both strategies dispatched orders
+    assert len(dispatched_orders) == 2, f"Expected 2 dispatched orders, got {len(dispatched_orders)}"
+
+    sig_1, p_1 = next((s, p) for s, p in dispatched_orders if p["quantity"] == 1)
+    sig_2, p_2 = next((s, p) for s, p in dispatched_orders if p["quantity"] == 2)
+
+    assert p_1["symbol"] == "SILVER1001!"
+    assert p_1["action"] == "BUY"
+    assert "15M" in p_1["order_ref"].upper()
+
+    assert p_2["symbol"] == "SILVER1001!"
+    assert p_2["action"] == "BUY"
+    assert "30M" in p_2["order_ref"].upper()
+
+@pytest.mark.anyio
+async def test_multi_timeframe_pending_suppression_isolation(monkeypatch):
+    """
+    Verifies that an in-flight order on the 15m timeframe does NOT suppress
+    the 30m runner on the same underlying symbol.
+    """
+    dispatched_orders = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched_orders.append((sig_id, payload))
+
+    engine = SuperTrendEngine(dispatch_fn=mock_dispatch)
+
+    engine.add_or_update_strategy({
+        "id": "st_silver_15m",
+        "symbol": "SILVER1001!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "15m",
+        "quantity": 1,
+        "multiplier": 2.0,
+        "is_enabled": True
+    })
+    engine.add_or_update_strategy({
+        "id": "st_silver_30m",
+        "symbol": "SILVER1001!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "30m",
+        "quantity": 2,
+        "multiplier": 2.0,
+        "is_enabled": True
+    })
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 999123,
+        "exch_seg": "MCXFO",
+        "lot_size": 1,
+        "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+
+    # Mock broker order book returning an OPEN order specifically for 15M runner
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [
+        {
+            "AppOrderID": "ORD_15M_99",
+            "TradingSymbol": "SILVER1001! 31AUG2026",
+            "OrderUniqueIdentifier": "ST_REV_ENTRY_SILVER1001!_15M_1787200000",
+            "OrderStatus": "OPEN"
+        }
+    ])
+
+    prices_bullish = [130, 128, 126, 124, 122, 120, 118, 116, 114, 112, 110, 100, 50, 40, 30, 150]
+    candles = generate_synthetic_candles(prices_bullish, base_time=1787200000, interval=1800)
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles)
+    monkeypatch.setattr(time, "time", lambda: 1787250000.0)
+
+    await engine.evaluate_cycle(xts_api, client_main)
+
+    # 15M was suppressed due to in-flight pending order, but 30M must execute successfully!
+    assert len(dispatched_orders) == 1
+    sig, payload = dispatched_orders[0]
+    assert payload["quantity"] == 2
+    assert "30M" in payload["order_ref"].upper()
+
+
 
 
 

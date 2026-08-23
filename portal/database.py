@@ -103,6 +103,40 @@ def init_portal_db():
                 conn.execute("ALTER TABLE tenant_supertrend_configs ADD COLUMN execution_mode TEXT DEFAULT 'LIVE'")
 
             # 4. Multi-Symbol Tenant SuperTrend Auto-Trading Strategies (Max 6 per tenant)
+            # Automatic schema migration: migrate from UNIQUE(tenant_id, symbol) to UNIQUE(tenant_id, symbol, timeframe)
+            try:
+                table_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='tenant_supertrend_strategies'").fetchone()
+                if table_sql and "UNIQUE(tenant_id, symbol)" in table_sql[0] and "UNIQUE(tenant_id, symbol, timeframe)" not in table_sql[0]:
+                    logger.info("Migrating tenant_supertrend_strategies schema to UNIQUE(tenant_id, symbol, timeframe)...")
+                    conn.execute("PRAGMA foreign_keys = OFF;")
+                    conn.execute("""
+                        CREATE TABLE tenant_supertrend_strategies_migrating (
+                            id TEXT PRIMARY KEY,
+                            tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                            symbol TEXT NOT NULL,
+                            exchange_segment TEXT NOT NULL DEFAULT 'MCXFO',
+                            timeframe TEXT NOT NULL DEFAULT '5m',
+                            quantity INTEGER NOT NULL DEFAULT 1,
+                            product_type TEXT NOT NULL DEFAULT 'NRML',
+                            atr_period INTEGER NOT NULL DEFAULT 10,
+                            multiplier REAL NOT NULL DEFAULT 3.0,
+                            execution_mode TEXT NOT NULL DEFAULT 'LIVE',
+                            is_enabled INTEGER NOT NULL DEFAULT 1,
+                            created_at REAL NOT NULL,
+                            updated_at REAL NOT NULL,
+                            UNIQUE(tenant_id, symbol, timeframe)
+                        );
+                    """)
+                    conn.execute("INSERT OR IGNORE INTO tenant_supertrend_strategies_migrating SELECT * FROM tenant_supertrend_strategies;")
+                    conn.execute("DROP TABLE tenant_supertrend_strategies;")
+                    conn.execute("ALTER TABLE tenant_supertrend_strategies_migrating RENAME TO tenant_supertrend_strategies;")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_st_strat_tenant ON tenant_supertrend_strategies(tenant_id);")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_st_strat_tenant_sym_tf ON tenant_supertrend_strategies(tenant_id, symbol, timeframe);")
+                    conn.execute("PRAGMA foreign_keys = ON;")
+                    logger.info("Successfully migrated tenant_supertrend_strategies schema.")
+            except Exception as e:
+                logger.warning(f"tenant_supertrend_strategies schema migration note: {e}")
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tenant_supertrend_strategies (
                     id TEXT PRIMARY KEY,
@@ -118,10 +152,11 @@ def init_portal_db():
                     is_enabled INTEGER NOT NULL DEFAULT 1,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
-                    UNIQUE(tenant_id, symbol)
+                    UNIQUE(tenant_id, symbol, timeframe)
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_st_strat_tenant ON tenant_supertrend_strategies(tenant_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_st_strat_tenant_sym_tf ON tenant_supertrend_strategies(tenant_id, symbol, timeframe)")
 
             # Auto-migrate legacy single-symbol config rows
             try:
@@ -129,7 +164,8 @@ def init_portal_db():
                 for l_cfg in legacy_configs:
                     tid = l_cfg["tenant_id"]
                     sym = l_cfg["symbol"]
-                    existing_strat = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=?", (tid, sym)).fetchone()
+                    tf = l_cfg["timeframe"] or "5m"
+                    existing_strat = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=? AND timeframe=?", (tid, sym, tf)).fetchone()
                     if not existing_strat:
                         import uuid
                         strat_id = f"st_{uuid.uuid4().hex[:12]}"
@@ -144,7 +180,7 @@ def init_portal_db():
                             tid,
                             sym,
                             l_cfg["exchange_segment"] or "MCXFO",
-                            l_cfg["timeframe"] or "5m",
+                            tf,
                             int(l_cfg["quantity"] or 1),
                             l_cfg["product_type"] or "NRML",
                             int(l_cfg["atr_period"] or 10),
