@@ -191,29 +191,54 @@
         </div>
 
         <!-- 3. Broker Margin & Daily Notional Progress -->
-        <div class="grid grid-cols-2 gap-3 text-xs">
-            <!-- Margin Block -->
-            <div class="bg-slate-950/60 border border-bordercolor/80 rounded-xl p-3 space-y-1">
-                <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
-                    <span>Broker Margin</span>
-                    <span class="text-brand-400 font-mono">{{ (c.margin_pct or 0)|num }}% Used</span>
+        <div class="space-y-2 text-xs">
+            <div class="grid grid-cols-2 gap-3">
+                <!-- MCX Commodity Margin Block -->
+                {% set mcx_avail = c.mcx_margin.available_margin if (c.mcx_margin and c.mcx_margin.available_margin is defined and c.mcx_margin.available_margin is not none) else 0.0 %}
+                {% set mcx_used = c.mcx_margin.margin_used if (c.mcx_margin and c.mcx_margin.margin_used is defined and c.mcx_margin.margin_used is not none) else (c.margin_used or 0.0) %}
+                {% set uni_avail = c.unified_margin.available_margin if (c.unified_margin and c.unified_margin.available_margin is defined and c.unified_margin.available_margin is not none) else (c.available_margin or 0.0) %}
+                {% set uni_payin = c.unified_margin.pay_in_amount if (c.unified_margin and c.unified_margin.pay_in_amount is defined and c.unified_margin.pay_in_amount is not none) else 0.0 %}
+                
+                <div class="bg-slate-950/60 border {% if (mcx_avail or 0) > 0 %}border-emerald-500/30{% else %}border-bordercolor/80{% endif %} rounded-xl p-3 space-y-1">
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
+                        <span class="flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full {% if (mcx_avail or 0) > 0 %}bg-emerald-400{% else %}bg-slate-600{% endif %}"></span>
+                            MCX Margin
+                        </span>
+                        <span class="text-slate-400 font-mono text-[9px]">Commodity</span>
+                    </div>
+                    <div class="font-mono {% if (mcx_avail or 0) > 0 %}text-emerald-300 font-bold{% else %}text-slate-400{% endif %} text-sm">
+                        ₹{{ mcx_avail|inr }}
+                    </div>
+                    <div class="text-[10px] text-slate-400 font-mono truncate">Used: ₹{{ mcx_used|inr }}</div>
                 </div>
-                <div class="font-mono text-slate-200 font-bold">₹{{ (c.available_margin or 0)|num }} <span class="text-[10px] text-slate-500 font-normal">Avail</span></div>
-                <div class="text-[10px] text-slate-400 font-mono truncate">Blocked: ₹{{ (c.margin_used or 0)|num }}</div>
+
+                <!-- Unified / All Segments Margin Block -->
+                <div class="bg-slate-950/60 border border-bordercolor/80 rounded-xl p-3 space-y-1">
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
+                        <span class="flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                            Unified / All
+                        </span>
+                        <span class="text-cyan-400 font-mono text-[9px]">UPI / Eq</span>
+                    </div>
+                    <div class="font-mono text-cyan-300 font-bold text-sm">
+                        ₹{{ uni_avail|inr }}
+                    </div>
+                    <div class="text-[10px] text-slate-400 font-mono truncate">Pay-In: ₹{{ uni_payin|inr }}</div>
+                </div>
             </div>
 
-            <!-- Notional Progress Block -->
-            <div class="bg-slate-950/60 border border-bordercolor/80 rounded-xl p-3 space-y-1">
-                <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
-                    <span>Daily Turnover</span>
-                    <span class="font-mono {% if (c.notional_pct or 0) >= 80 %}text-rose-400 font-bold{% else %}text-slate-400{% endif %}">{{ (c.notional_pct or 0)|num }}%</span>
-                </div>
-                <div class="font-mono text-slate-200 font-bold">₹{{ (c.notional_today or 0)|num }} <span class="text-[10px] text-slate-500 font-normal">/ ₹{{ (((c.notional_cap or 10000000)) / 100000)|num }}L</span></div>
-                <div class="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden mt-1 border border-bordercolor/40">
-                    <div class="h-1.5 rounded-full {% if (c.notional_pct or 0) >= 80 %}bg-rose-500{% elif (c.notional_pct or 0) >= 60 %}bg-amber-500{% else %}bg-brand-500{% endif %}" 
-                         style="width: {{ (c.notional_pct or 0) }}%"></div>
-                </div>
+            <!-- Smart Margin Shift Alert Banner -->
+            {% if c.shift_margin_needed %}
+            <div class="bg-amber-950/70 border border-amber-500/50 text-amber-300 px-3 py-2 rounded-xl text-[11px] font-mono flex items-center justify-between shadow-sm animate-pulse">
+                <span class="flex items-center gap-1.5">
+                    <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                    <span><strong>Shift to MCX:</strong> ₹{{ uni_avail|inr }} in Unified</span>
+                </span>
+                <span class="text-[10px] text-amber-400/80 font-sans font-semibold">Action Required</span>
             </div>
+            {% endif %}
         </div>
 
         <!-- 4. Open Positions Preview -->
@@ -387,8 +412,20 @@
                     <td class="px-4 py-3 text-right text-slate-300">
                         ₹{{ c.realized_pnl|inr }}
                     </td>
-                    <td class="px-4 py-3 text-right text-slate-300">
-                        ₹{{ c.available_margin|inr(0) }}
+                    <td class="px-4 py-3 text-right">
+                        {% set t_mcx = c.mcx_margin.available_margin if (c.mcx_margin and c.mcx_margin.available_margin is defined and c.mcx_margin.available_margin is not none) else 0.0 %}
+                        {% set t_uni = c.unified_margin.available_margin if (c.unified_margin and c.unified_margin.available_margin is defined and c.unified_margin.available_margin is not none) else (c.available_margin or 0.0) %}
+                        <div class="font-mono text-xs font-bold {% if (t_mcx or 0) > 0 %}text-emerald-400{% else %}text-slate-400{% endif %}">
+                            MCX: ₹{{ t_mcx|inr(0) }}
+                        </div>
+                        <div class="font-mono text-[11px] text-cyan-400/80">
+                            Uni: ₹{{ t_uni|inr(0) }}
+                        </div>
+                        {% if c.shift_margin_needed %}
+                        <span class="inline-block bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] px-1 rounded mt-0.5 font-mono">
+                            ⚠️ Shift Req
+                        </span>
+                        {% endif %}
                     </td>
                     <td class="px-3 py-3 text-center font-bold text-slate-200">
                         {{ c.positions_count }}

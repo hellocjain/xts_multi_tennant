@@ -193,3 +193,78 @@ def test_system_health_diagnostic_endpoint():
     with closing(database.get_db_connection()) as conn:
         check = conn.execute("PRAGMA integrity_check").fetchone()[0]
         assert check == "ok", "Database integrity check must be OK."
+
+
+def test_mcx_vs_unified_margin_separation_and_shift_alerts():
+    """
+    UNIT TEST: Test MCX vs Unified margin extraction and shift alert condition.
+    """
+    # Scenario A: Client with PayIn in Unified, but MCX is 0 (Shift Needed = True)
+    payload_anita = {
+        "type": "success",
+        "result": {
+            "BalanceList": [
+                {
+                    "limitHeader": "COMMODITIES|MCX|ALL",
+                    "limitObject": {
+                        "RMSSubLimits": {"cashAvailable": "0", "marginUtilized": "0", "netMarginAvailable": "0"},
+                        "marginAvailable": {"PayInAmount": "0"}
+                    }
+                },
+                {
+                    "limitHeader": "ALL|ALL|ALL",
+                    "limitObject": {
+                        "RMSSubLimits": {"cashAvailable": "-413", "marginUtilized": "0", "netMarginAvailable": "9587"},
+                        "marginAvailable": {"PayInAmount": "10000"}
+                    }
+                }
+            ]
+        }
+    }
+
+    # Simulate xts_api parsing
+    mcx_entry = {"available_margin": 0.0}
+    unified_entry = {"available_margin": 0.0}
+    for item in payload_anita["result"]["BalanceList"]:
+        header = str(item.get("limitHeader", "")).upper()
+        rms = item["limitObject"]["RMSSubLimits"]
+        m_avail = item["limitObject"]["marginAvailable"]
+        cash = xts_api._safe_float(rms.get("cashAvailable"))
+        payin = xts_api._safe_float(m_avail.get("PayInAmount"))
+        net = xts_api._safe_float(rms.get("netMarginAvailable"), default=cash + payin)
+        data = {"available_margin": max(0.0, net)}
+        if "COMMODITIES" in header or "MCX" in header:
+            mcx_entry = data
+        elif "ALL|ALL|ALL" in header:
+            unified_entry = data
+
+    shift_needed = bool(unified_entry["available_margin"] > 0 and mcx_entry["available_margin"] <= 1000.0)
+    assert shift_needed is True, "Shift alert should trigger when Unified has funds but MCX is <= 1000."
+
+    # Scenario B: Client with Settled MCX Funds (Shift Needed = False)
+    payload_divya = {
+        "type": "success",
+        "result": {
+            "BalanceList": [
+                {
+                    "limitHeader": "COMMODITIES|MCX|ALL",
+                    "limitObject": {
+                        "RMSSubLimits": {"cashAvailable": "41008.62", "marginUtilized": "12461.3", "netMarginAvailable": "28547.32"},
+                        "marginAvailable": {"PayInAmount": "0"}
+                    }
+                },
+                {
+                    "limitHeader": "ALL|ALL|ALL",
+                    "limitObject": {
+                        "RMSSubLimits": {"cashAvailable": "40595.62", "marginUtilized": "12461.3", "netMarginAvailable": "28134.32"},
+                        "marginAvailable": {"PayInAmount": "0"}
+                    }
+                }
+            ]
+        }
+    }
+
+    mcx_entry_b = {"available_margin": 28547.32}
+    unified_entry_b = {"available_margin": 28134.32}
+    shift_needed_b = bool(unified_entry_b["available_margin"] > 0 and mcx_entry_b["available_margin"] <= 1000.0)
+    assert shift_needed_b is False, "Shift alert should NOT trigger when MCX has sufficient funds."

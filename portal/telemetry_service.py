@@ -40,6 +40,10 @@ def build_client_telemetry_dict(
     recent_signals: list = None,
     supertrend: dict = None,
     custom_strategies: dict = None,
+    mcx_margin: dict = None,
+    unified_margin: dict = None,
+    shift_margin_needed: bool = False,
+    shift_margin_message: str = "",
     error: str = None
 ) -> dict:
     pos_list = positions or []
@@ -49,6 +53,14 @@ def build_client_telemetry_dict(
         "invested_value": 0.0, "current_value": 0.0, "overall_pnl": 0.0,
         "overall_pnl_pct": 0.0, "day_pnl": 0.0, "day_pnl_pct": 0.0,
         "holdings_count": 0, "holdings": []
+    }
+    mcx_dict = mcx_margin or {
+        "available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0,
+        "net_margin_available": 0.0, "cash_available": 0.0, "pay_in_amount": 0.0, "total_account_value": 0.0
+    }
+    unified_dict = unified_margin or {
+        "available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0,
+        "net_margin_available": 0.0, "cash_available": 0.0, "pay_in_amount": 0.0, "total_account_value": 0.0
     }
     return {
         "id": tenant_id or "",
@@ -72,6 +84,10 @@ def build_client_telemetry_dict(
         "total_collateral": float(total_collateral or 0.0),
         "net_margin_available": float(net_margin_available or 0.0),
         "total_account_value": float(total_account_value or 0.0),
+        "mcx_margin": mcx_dict,
+        "unified_margin": unified_dict,
+        "shift_margin_needed": bool(shift_margin_needed),
+        "shift_margin_message": str(shift_margin_message or ""),
         "margin_pct": float(margin_pct or 0.0),
         "notional_today": float(notional_today or 0.0),
         "notional_cap": float(notional_cap or 10000000.0),
@@ -206,6 +222,10 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
         total_collateral=collateral,
         net_margin_available=net_avail,
         total_account_value=tot_val,
+        mcx_margin=margin.get("mcx_margin", {}),
+        unified_margin=margin.get("unified_margin", {}),
+        shift_margin_needed=bool(margin.get("shift_margin_needed", False)),
+        shift_margin_message=margin.get("shift_margin_message", ""),
         margin_pct=margin_pct,
         notional_today=notional_today,
         notional_cap=notional_cap,

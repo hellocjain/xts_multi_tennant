@@ -1486,6 +1486,25 @@ def get_margin_telemetry():
                         best_entry = None
                         best_avail = -1.0
                         
+                        mcx_entry = {
+                            "available_margin": 0.0,
+                            "margin_used": 0.0,
+                            "total_collateral": 0.0,
+                            "net_margin_available": 0.0,
+                            "cash_available": 0.0,
+                            "pay_in_amount": 0.0,
+                            "total_account_value": 0.0
+                        }
+                        unified_entry = {
+                            "available_margin": 0.0,
+                            "margin_used": 0.0,
+                            "total_collateral": 0.0,
+                            "net_margin_available": 0.0,
+                            "cash_available": 0.0,
+                            "pay_in_amount": 0.0,
+                            "total_account_value": 0.0
+                        }
+                        
                         for item in bal_list:
                             limit_obj = item.get('limitObject', {})
                             rms = limit_obj.get('RMSSubLimits', {})
@@ -1511,30 +1530,50 @@ def get_margin_telemetry():
                                 "margin_used": max(0.0, margin_used),
                                 "total_collateral": max(0.0, collateral),
                                 "net_margin_available": effective_avail,
+                                "cash_available": cash_avail,
+                                "pay_in_amount": pay_in,
                                 "total_account_value": total_acct_val,
                                 "is_simulated": False,
                                 "error": None
                             }
                             
-                            header = item.get('limitHeader', '')
-                            if 'COMMODITIES' in header and effective_avail > 0:
+                            header = str(item.get('limitHeader', '')).upper()
+                            if 'COMMODITIES' in header or 'MCX' in header:
+                                mcx_entry = entry_data
+                            elif 'ALL|ALL|ALL' in header or 'NSE' in header:
+                                unified_entry = entry_data
+                            
+                            if ('COMMODITIES' in header or 'MCX' in header) and effective_avail > 0:
                                 best_entry = entry_data
                                 best_avail = effective_avail
-                                break
-                            elif effective_avail > best_avail:
+                            elif effective_avail > best_avail and best_entry is None:
                                 best_entry = entry_data
                                 best_avail = effective_avail
                             elif best_entry is None:
                                 best_entry = entry_data
                         
-                        if best_entry:
-                            return best_entry
+                        # Determine if margin shift to MCX is needed
+                        mcx_avail = mcx_entry.get("available_margin", 0.0)
+                        unified_avail = unified_entry.get("available_margin", 0.0)
+                        shift_needed = bool(unified_avail > 0 and mcx_avail <= 1000.0)
+                        shift_msg = f"₹{unified_avail:,.2f} in Unified account — shift funds to MCX segment before executing commodity trades" if shift_needed else ""
+                        
+                        res = best_entry or unified_entry or mcx_entry
+                        res["mcx_margin"] = mcx_entry
+                        res["unified_margin"] = unified_entry
+                        res["shift_margin_needed"] = shift_needed
+                        res["shift_margin_message"] = shift_msg
+                        return res
         except Exception:
             pass
 
     return {
         "available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0,
         "net_margin_available": 0.0, "total_account_value": 0.0,
+        "mcx_margin": {"available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0, "net_margin_available": 0.0, "cash_available": 0.0, "pay_in_amount": 0.0, "total_account_value": 0.0},
+        "unified_margin": {"available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0, "net_margin_available": 0.0, "cash_available": 0.0, "pay_in_amount": 0.0, "total_account_value": 0.0},
+        "shift_margin_needed": False,
+        "shift_margin_message": "",
         "is_simulated": False, "error": "Margin API Unavailable from Broker Feed"
     }
 

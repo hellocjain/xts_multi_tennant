@@ -587,43 +587,105 @@
 
     <!-- TAB 3: Risk & RMS Margin -->
     <div id="client-tab-risk" class="tab-pane hidden space-y-5">
-        <!-- 1. Symphony RMS Broker Margin Balances -->
+        <!-- 1. Symphony RMS Broker Margin Balances (Segment-Wise Breakdown) -->
         <div class="bg-cardbg border border-bordercolor p-6 rounded-2xl space-y-4 shadow-xl">
             <div class="flex items-center justify-between border-b border-bordercolor pb-3">
                 <div class="flex items-center space-x-2">
                     <i data-lucide="wallet" class="w-4 h-4 text-brand-400"></i>
-                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Symphony XTS RMS Margin Balances</h3>
+                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Symphony XTS RMS Margin Balances (Segment Breakdown)</h3>
                 </div>
                 <span class="text-xs font-mono text-brand-400">{{ client.margin_pct|num }}% Margin Utilized</span>
             </div>
 
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                <div class="bg-slate-950 border border-bordercolor p-3.5 rounded-xl space-y-1">
-                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Available Cash</span>
-                    <div class="text-base font-bold font-mono text-emerald-400">₹{{ client.available_margin|inr }}</div>
+            {% set c_mcx_avail = client.mcx_margin.available_margin if (client.mcx_margin and client.mcx_margin.available_margin is defined and client.mcx_margin.available_margin is not none) else 0.0 %}
+            {% set c_mcx_used = client.mcx_margin.margin_used if (client.mcx_margin and client.mcx_margin.margin_used is defined and client.mcx_margin.margin_used is not none) else (client.margin_used or 0.0) %}
+            {% set c_mcx_collat = client.mcx_margin.total_collateral if (client.mcx_margin and client.mcx_margin.total_collateral is defined and client.mcx_margin.total_collateral is not none) else (client.total_collateral or 0.0) %}
+            {% set c_uni_avail = client.unified_margin.available_margin if (client.unified_margin and client.unified_margin.available_margin is defined and client.unified_margin.available_margin is not none) else (client.available_margin or 0.0) %}
+            {% set c_uni_payin = client.unified_margin.pay_in_amount if (client.unified_margin and client.unified_margin.pay_in_amount is defined and client.unified_margin.pay_in_amount is not none) else 0.0 %}
+            {% set c_uni_total = client.unified_margin.total_account_value if (client.unified_margin and client.unified_margin.total_account_value is defined and client.unified_margin.total_account_value is not none) else (client.total_account_value or 0.0) %}
+
+            <!-- Smart Shift Alert Banner -->
+            {% if client.shift_margin_needed %}
+            <div class="bg-amber-950/80 border border-amber-500/50 text-amber-300 p-4 rounded-xl text-xs font-mono flex items-start gap-3 shadow-md">
+                <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400 shrink-0 mt-0.5 animate-bounce"></i>
+                <div class="space-y-1">
+                    <div class="font-bold text-amber-200 text-sm">Action Required: Margin Shift Needed for MCX Trading</div>
+                    <p class="text-slate-300 font-sans text-xs">
+                        This client account has <strong class="text-cyan-300 font-mono">₹{{ c_uni_avail|inr }}</strong> in the Unified/Equity balance pool, but only <strong class="text-rose-400 font-mono">₹{{ c_mcx_avail|inr }}</strong> allocated to the MCX Commodity segment. Please shift funds to MCX in the broker portal before executing commodity strategies to prevent order rejections.
+                    </p>
                 </div>
-                <div class="bg-slate-950 border border-bordercolor p-3.5 rounded-xl space-y-1">
-                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Collateral Margin</span>
-                    <div class="text-base font-bold font-mono text-slate-200">₹{{ client.total_collateral|inr }}</div>
+            </div>
+            {% endif %}
+
+            <!-- 2-Column Segment Pool Breakdown -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Column 1: MCX Commodity Segment Pool -->
+                <div class="bg-slate-950/80 border {% if (c_mcx_avail or 0) > 0 %}border-emerald-500/40{% else %}border-slate-800{% endif %} p-4 rounded-xl space-y-3">
+                    <div class="flex items-center justify-between border-b border-bordercolor pb-2">
+                        <span class="flex items-center gap-1.5 text-xs font-bold text-slate-200 uppercase tracking-wider">
+                            <span class="w-2 h-2 rounded-full {% if (c_mcx_avail or 0) > 0 %}bg-emerald-400{% else %}bg-slate-600{% endif %}"></span>
+                            MCX Commodity Pool
+                        </span>
+                        <span class="text-[10px] bg-slate-900 text-slate-400 px-2 py-0.5 rounded font-mono">COMMODITIES|MCX</span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div class="bg-slate-900/60 p-2.5 rounded-lg">
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Available</span>
+                            <span class="font-mono text-sm font-bold {% if (c_mcx_avail or 0) > 0 %}text-emerald-400{% else %}text-slate-400{% endif %}">
+                                ₹{{ c_mcx_avail|inr }}
+                            </span>
+                        </div>
+                        <div class="bg-slate-900/60 p-2.5 rounded-lg">
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Blocked/Used</span>
+                            <span class="font-mono text-sm font-bold text-amber-400">
+                                ₹{{ c_mcx_used|inr }}
+                            </span>
+                        </div>
+                        <div class="bg-slate-900/60 p-2.5 rounded-lg">
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Collateral</span>
+                            <span class="font-mono text-sm font-bold text-slate-300">
+                                ₹{{ c_mcx_collat|inr }}
+                            </span>
+                        </div>
+                    </div>
                 </div>
-                <div class="bg-slate-950 border border-bordercolor p-3.5 rounded-xl space-y-1">
-                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Margin Utilized</span>
-                    <div class="text-base font-bold font-mono text-amber-400">₹{{ client.margin_used|inr }}</div>
-                </div>
-                <div class="bg-slate-950 border border-bordercolor p-3.5 rounded-xl space-y-1">
-                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Net Available</span>
-                    <div class="text-base font-bold font-mono text-slate-100">₹{{ client.net_margin_available|inr }}</div>
-                </div>
-                <div class="bg-slate-950 border border-bordercolor p-3.5 rounded-xl space-y-1 col-span-2 sm:col-span-1">
-                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Account Value</span>
-                    <div class="text-base font-bold font-mono text-slate-100">₹{{ client.total_account_value|inr }}</div>
+
+                <!-- Column 2: Unified / All Segments Pool -->
+                <div class="bg-slate-950/80 border border-slate-800 p-4 rounded-xl space-y-3">
+                    <div class="flex items-center justify-between border-b border-bordercolor pb-2">
+                        <span class="flex items-center gap-1.5 text-xs font-bold text-slate-200 uppercase tracking-wider">
+                            <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                            Unified / All Segments Pool
+                        </span>
+                        <span class="text-[10px] bg-slate-900 text-slate-400 px-2 py-0.5 rounded font-mono">ALL|ALL|ALL</span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div class="bg-slate-900/60 p-2.5 rounded-lg">
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Net Available</span>
+                            <span class="font-mono text-sm font-bold text-cyan-400">
+                                ₹{{ c_uni_avail|inr }}
+                            </span>
+                        </div>
+                        <div class="bg-slate-900/60 p-2.5 rounded-lg">
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Pay-In Amount</span>
+                            <span class="font-mono text-sm font-bold text-slate-300">
+                                ₹{{ c_uni_payin|inr }}
+                            </span>
+                        </div>
+                        <div class="bg-slate-900/60 p-2.5 rounded-lg">
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Total Account</span>
+                            <span class="font-mono text-sm font-bold text-slate-300">
+                                ₹{{ c_uni_total|inr }}
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <!-- Margin Progress Bar -->
             <div class="space-y-1.5 pt-2">
                 <div class="flex justify-between text-xs text-slate-400 font-mono">
-                    <span>Margin Utilization: ₹{{ client.margin_used|inr }} of ₹{{ client.total_account_value|inr }}</span>
+                    <span>Overall Margin Utilization: ₹{{ client.margin_used|inr }} of ₹{{ client.total_account_value|inr }}</span>
                     <span>{{ client.margin_pct|num }}%</span>
                 </div>
                 <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-bordercolor">
