@@ -532,6 +532,17 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         tel_data.setdefault("positions_count", len(tel_data.get("positions", [])))
         tel_data.setdefault("all_positions_count", len(tel_data.get("all_positions", [])))
 
+        # Merge live strategy telemetry (virtual_position, strategy_position, current_trend) into st_strategies
+        live_runners = {s["id"]: s for s in tel_data.get("supertrend", {}).get("strategies", [])} if isinstance(tel_data.get("supertrend"), dict) else {}
+        for strat in st_strategies:
+            live_s = live_runners.get(strat["id"])
+            if live_s:
+                strat["virtual_position"] = live_s.get("virtual_position", 0)
+                strat["strategy_position"] = live_s.get("strategy_position", "FLAT")
+                strat["current_trend"] = live_s.get("current_trend", "INITIALIZING")
+                strat["last_close"] = live_s.get("last_close", 0.0)
+                strat["supertrend"] = live_s.get("supertrend", 0.0)
+
     supertrend_config = dict(st_row) if st_row else {
         "tenant_id": tenant_id,
         "is_enabled": 0,
