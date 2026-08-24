@@ -546,11 +546,13 @@ class SingleSuperTrendRunner:
                         self.strategy_position = "SHORT"
                         self.current_broker_quantity = reconciled_lots
                     else:
-                        self.strategy_position = "FLAT"
                         self.current_broker_quantity = 0
+                        if self.strategy_position in ("INITIALIZING", "FLAT"):
+                            self.strategy_position = "FLAT"
                 else:
-                    self.strategy_position = "FLAT"
                     self.current_broker_quantity = 0
+                    if self.strategy_position in ("INITIALIZING", "FLAT"):
+                        self.strategy_position = "FLAT"
             except Exception as e:
                 logger.error(f"SuperTrend [{self.symbol}]: Failed to reconcile broker positions: {e}")
 

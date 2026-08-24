@@ -1106,6 +1106,77 @@ async def test_multi_timeframe_same_symbol_markers_isolation(monkeypatch):
     # 30m runner must have 0 markers (clean isolation)
     assert len(runner_30m.recent_trade_markers) == 0
 
+@pytest.mark.asyncio
+async def test_supertrend_first_trade_sizing_single_leg(monkeypatch):
+    """
+    Verifies that for a 4-lot strategy starting in FLAT position:
+    - Trade 1 (First Bullish Flip): Dispatches strictly 4 Lots BUY (1 leg).
+    - Trade 2 (Subsequent Bearish Flip): Dispatches 4 Lots SELL (Exit) + 4 Lots SELL (Entry) = 8 Lots total.
+    - Trade 3 (Subsequent Bullish Flip): Dispatches 4 Lots BUY (Exit) + 4 Lots BUY (Entry) = 8 Lots total.
+    """
+    dispatched_orders = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched_orders.append((sig_id, payload))
+
+    engine = SuperTrendEngine(dispatch_fn=mock_dispatch)
+    engine.add_or_update_strategy({
+        "id": "st_test_4lots",
+        "symbol": "GOLDPETAL1!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "15m",
+        "quantity": 4,
+        "is_enabled": True
+    })
+
+    runner = engine.get_strategy("st_test_4lots")
+    assert runner.strategy_position in ("FLAT", "INITIALIZING")
+
+    # Mock contract
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 562056, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    # 1. First Flip: Bearish -> Bullish
+    prices_bullish = [130, 128, 126, 124, 122, 120, 118, 116, 114, 112, 110, 100, 50, 40, 30, 150]
+    base_ts = 1787600000
+    candles_1 = generate_synthetic_candles(prices_bullish, base_time=base_ts, interval=900)
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles_1)
+    monkeypatch.setattr(time, "time", lambda: float(base_ts + len(prices_bullish)*900 + 10))
+
+    await runner.evaluate_cycle(xts_api, client_main)
+
+    # Trade 1 must have ONLY 1 order of 4 lots BUY!
+    assert len(dispatched_orders) == 1
+    assert dispatched_orders[0][1]["action"] == "BUY"
+    assert dispatched_orders[0][1]["quantity"] == 4
+    assert runner.strategy_position == "LONG"
+
+    # 2. Second Flip: Bullish -> Bearish
+    dispatched_orders.clear()
+    prices_bearish = [30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 100, 150, 160, 170, 20]
+    base_ts_2 = base_ts + 50000
+    candles_2 = generate_synthetic_candles(prices_bearish, base_time=base_ts_2, interval=900)
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles_2)
+    monkeypatch.setattr(time, "time", lambda: float(base_ts_2 + len(prices_bearish)*900 + 10))
+
+    await runner.evaluate_cycle(xts_api, client_main)
+
+    # Trade 2 (Reversal) must have 2 orders: Exit 4 + Entry 4 (Total 8 Lots sold!)
+    assert len(dispatched_orders) == 2
+    assert dispatched_orders[0][1]["action"] == "SELL"
+    assert dispatched_orders[0][1]["quantity"] == 4
+    assert "EXIT" in dispatched_orders[0][1]["order_ref"]
+    assert dispatched_orders[1][1]["action"] == "SELL"
+    assert dispatched_orders[1][1]["quantity"] == 4
+    assert "ENTRY" in dispatched_orders[1][1]["order_ref"]
+    assert runner.strategy_position == "SHORT"
+
+
+
 
 
 
