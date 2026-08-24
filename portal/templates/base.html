@@ -181,16 +181,16 @@
 
     <!-- Global Utilities & Toast Engine -->
     <script>
-        // Live IST Clock
-        function updateISTClock() {
+        // Live IST Clock Runner
+        function updateLiveIstClock() {
             const clockEl = document.getElementById('live-ist-clock');
             if (!clockEl) return;
             const now = new Date();
             const options = { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
             clockEl.innerText = now.toLocaleTimeString('en-GB', options) + ' IST';
         }
-        setInterval(updateISTClock, 1000);
-        updateISTClock();
+        setInterval(updateLiveIstClock, 1000);
+        updateLiveIstClock();
 
         // Toast Notification System
         function showToast(message, type = 'success') {
@@ -265,10 +265,11 @@
                 }, 2000);
             }
         }
+    </script>
 
     <!-- GLOBAL COMMAND PALETTE MODAL (Cmd+K) -->
     <div id="commandPaletteModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-[100] hidden flex items-start justify-center pt-20 p-4">
-        <div class="bg-cardbg border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden animate-fadeIn space-y-0">
+        <div class="bg-cardbg border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden animate-fadeIn space-y-0" onclick="event.stopPropagation()">
             <!-- Search Header -->
             <div class="flex items-center px-4 py-3.5 border-b border-bordercolor">
                 <i data-lucide="search" class="w-4 h-4 text-brand-400 mr-3 shrink-0"></i>
@@ -315,6 +316,14 @@
                     </span>
                     <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
                 </a>
+                <a href="/admin/audit-logs" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
+                    <span class="flex items-center gap-2.5">
+                        <i data-lucide="shield-check" class="w-4 h-4 text-slate-400"></i>
+                        <span>Security Audit Trail</span>
+                    </span>
+                    <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
+                </a>
+
                 {% if clients %}
                 <div class="text-[10px] font-mono uppercase tracking-wider text-slate-500 px-3 py-1.5 font-bold pt-2 border-t border-bordercolor/60">Client Accounts ({{ clients|length }})</div>
                 {% for c in clients %}
@@ -341,22 +350,6 @@
     </div>
 
     <script>
-        // Live IST Clock Runner
-        function updateLiveIstClock() {
-            const clockEl = document.getElementById('live-ist-clock');
-            if (!clockEl) return;
-            const now = new Date();
-            // Convert to Indian Standard Time (UTC + 5:30)
-            const utcTime = now.getTime() + (now.getTimezoneOffset() * 60 * 1000);
-            const istTime = new Date(utcTime + (5.5 * 60 * 60 * 1000));
-            const hh = String(istTime.getHours()).padStart(2, '0');
-            const mm = String(istTime.getMinutes()).padStart(2, '0');
-            const ss = String(istTime.getSeconds()).padStart(2, '0');
-            clockEl.innerText = `${hh}:${mm}:${ss} IST`;
-        }
-        setInterval(updateLiveIstClock, 1000);
-        updateLiveIstClock();
-
         // Universal Modal Dismissal Helper
         function closeModal() {
             const mc = document.getElementById('modal-container');
