@@ -315,13 +315,21 @@
                     </span>
                     <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
                 </a>
-                <a href="/admin/audit-logs" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
+                {% if clients %}
+                <div class="text-[10px] font-mono uppercase tracking-wider text-slate-500 px-3 py-1.5 font-bold pt-2 border-t border-bordercolor/60">Client Accounts ({{ clients|length }})</div>
+                {% for c in clients %}
+                <a href="/admin/clients/{{ c.id }}" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
                     <span class="flex items-center gap-2.5">
-                        <i data-lucide="shield-check" class="w-4 h-4 text-slate-400"></i>
-                        <span>Security Audit Trail</span>
+                        <div class="w-5 h-5 rounded-md bg-brand-500/10 text-brand-400 font-mono text-[10px] flex items-center justify-center font-bold">{{ c.id[:2]|upper }}</div>
+                        <span class="font-semibold text-slate-100">{{ c.name }}</span>
+                        <span class="text-slate-500 font-mono text-[11px]">({{ c.id }} &bull; {{ c.client_id }})</span>
                     </span>
-                    <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
+                    <span class="text-[10px] font-mono {% if (c.net_mtm or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                        {% if (c.net_mtm or 0) >= 0 %}+{% endif %}₹{{ c.net_mtm|inr }} ➔
+                    </span>
                 </a>
+                {% endfor %}
+                {% endif %}
             </div>
 
             <!-- Footer Hints -->
@@ -333,6 +341,22 @@
     </div>
 
     <script>
+        // Live IST Clock Runner
+        function updateLiveIstClock() {
+            const clockEl = document.getElementById('live-ist-clock');
+            if (!clockEl) return;
+            const now = new Date();
+            // Convert to Indian Standard Time (UTC + 5:30)
+            const utcTime = now.getTime() + (now.getTimezoneOffset() * 60 * 1000);
+            const istTime = new Date(utcTime + (5.5 * 60 * 60 * 1000));
+            const hh = String(istTime.getHours()).padStart(2, '0');
+            const mm = String(istTime.getMinutes()).padStart(2, '0');
+            const ss = String(istTime.getSeconds()).padStart(2, '0');
+            clockEl.innerText = `${hh}:${mm}:${ss} IST`;
+        }
+        setInterval(updateLiveIstClock, 1000);
+        updateLiveIstClock();
+
         // Universal Modal Dismissal Helper
         function closeModal() {
             const mc = document.getElementById('modal-container');
@@ -397,7 +421,10 @@
         });
 
         // Initialize Lucide Icons on initial load and post-HTMX swap
-        document.addEventListener('DOMContentLoaded', () => lucide.createIcons());
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            updateLiveIstClock();
+        });
         if (typeof htmx !== 'undefined') {
             htmx.on('htmx:afterSwap', () => lucide.createIcons());
             htmx.on('htmx:load', () => lucide.createIcons());

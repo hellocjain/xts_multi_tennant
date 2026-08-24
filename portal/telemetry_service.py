@@ -39,6 +39,7 @@ def build_client_telemetry_dict(
     broker_trades: list = None,
     recent_signals: list = None,
     supertrend: dict = None,
+    custom_strategies: dict = None,
     error: str = None
 ) -> dict:
     pos_list = positions or []
@@ -79,6 +80,7 @@ def build_client_telemetry_dict(
         "broker_orders": broker_orders or [],
         "broker_trades": broker_trades or [],
         "supertrend": supertrend or {},
+        "custom_strategies": custom_strategies or {},
         "error": error
     }
 
@@ -212,6 +214,7 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
         broker_trades=broker_trades,
         recent_signals=recent,
         supertrend=data.get("supertrend", {}),
+        custom_strategies=data.get("custom_strategies", {}),
         error=None
     )
 
