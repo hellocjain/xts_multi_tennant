@@ -1060,6 +1060,53 @@ def test_pine_script_v4_sma_atr_mode_parity():
     for c in res_sma["candle_series"][9:]:
         assert c["atr"] == 10.0
 
+@pytest.mark.asyncio
+async def test_multi_timeframe_same_symbol_markers_isolation(monkeypatch):
+    """
+    Validates that when a 15m runner executes a trade flip, trade markers are appended ONLY
+    to that specific runner's recent_trade_markers, and NOT to the 30m runner's recent_trade_markers.
+    """
+    dispatched_orders = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched_orders.append((sig_id, payload))
+
+    engine = SuperTrendEngine(dispatch_fn=mock_dispatch)
+
+    engine.add_or_update_strategy({
+        "id": "st_silver_15m",
+        "symbol": "SILVER1001!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "15m",
+        "quantity": 2,
+        "is_enabled": True
+    })
+    engine.add_or_update_strategy({
+        "id": "st_silver_30m",
+        "symbol": "SILVER1001!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "30m",
+        "quantity": 2,
+        "is_enabled": True
+    })
+
+    runner_15m = engine.get_strategy("st_silver_15m")
+    runner_30m = engine.get_strategy("st_silver_30m")
+
+    # Set 15m runner in LONG position, then trigger exit and entry
+    runner_15m.strategy_position = "LONG"
+    await runner_15m._execute_exit("LONG", 2, "FLIP_EXIT_1001", None, 10000)
+    await runner_15m._execute_entry("SELL", 2, "FLIP_ENTRY_1001", None, 10000)
+
+    # 15m runner must have 2 markers
+    assert len(runner_15m.recent_trade_markers) == 2
+    assert runner_15m.recent_trade_markers[0]["text"] == "EXIT LONG (2)"
+    assert runner_15m.recent_trade_markers[1]["text"] == "SELL 2"
+
+    # 30m runner must have 0 markers (clean isolation)
+    assert len(runner_30m.recent_trade_markers) == 0
+
+
 
 
 

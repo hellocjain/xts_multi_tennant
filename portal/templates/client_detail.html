@@ -1924,6 +1924,9 @@
             stActiveSymbol = strat.symbol;
             stActiveTimeframe = strat.timeframe;
         }
+        if (stCandleSeries && typeof stCandleSeries.setMarkers === 'function') {
+            stCandleSeries.setMarkers([]);
+        }
         const selectEl = document.getElementById('st-chart-symbol-select');
         if (selectEl && selectEl.value !== stratId) selectEl.value = stratId;
         
@@ -1946,11 +1949,17 @@
             }
         }
         stActiveSymbol = sym;
+        if (stCandleSeries && typeof stCandleSeries.setMarkers === 'function') {
+            stCandleSeries.setMarkers([]);
+        }
         refreshSuperTrendChart();
     }
 
     function switchChartTimeframe(tf) {
         stActiveTimeframe = tf;
+        if (stCandleSeries && typeof stCandleSeries.setMarkers === 'function') {
+            stCandleSeries.setMarkers([]);
+        }
         document.querySelectorAll('[id^="chart-tf-btn-"]').forEach(btn => {
             btn.className = "px-2.5 py-1 rounded-lg transition font-bold text-slate-400 hover:text-slate-200";
         });
