@@ -99,6 +99,35 @@ def write_client_config(tenant_id: str):
             })
         config_payload["SUPERTREND_STRATEGIES"] = strategies_payload
 
+        # Query Assigned Custom Python Strategies
+        try:
+            cs_rows = conn.execute("""
+                SELECT t.*, s.name, s.code_content
+                FROM tenant_custom_strategies t
+                JOIN custom_strategies s ON t.strategy_id = s.id
+                WHERE t.tenant_id = ?
+            """, (tenant_id,)).fetchall()
+            custom_payload = []
+            for cs in cs_rows:
+                cs_d = dict(cs)
+                custom_payload.append({
+                    "id": str(cs_d.get("id")),
+                    "strategy_id": str(cs_d.get("strategy_id")),
+                    "name": str(cs_d.get("name") or "Custom Strategy"),
+                    "symbol": str(cs_d.get("symbol") or "").strip(),
+                    "exchange_segment": str(cs_d.get("exchange_segment") or "MCXFO").strip(),
+                    "timeframe": str(cs_d.get("timeframe") or "15m").strip(),
+                    "quantity": int(cs_d.get("quantity") or 1),
+                    "product_type": str(cs_d.get("product_type") or "NRML").strip(),
+                    "execution_mode": str(cs_d.get("execution_mode") or "LIVE").strip(),
+                    "is_enabled": bool(cs_d.get("is_enabled")),
+                    "code_content": str(cs_d.get("code_content") or "")
+                })
+            config_payload["CUSTOM_STRATEGIES"] = custom_payload
+        except Exception as e:
+            logger.warning(f"Error querying custom strategies for config: {e}")
+            config_payload["CUSTOM_STRATEGIES"] = []
+
         # Legacy backward-compatibility single strategy config
         if strategies_payload:
             config_payload["SUPERTREND_CONFIG"] = strategies_payload[0]

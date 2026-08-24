@@ -229,6 +229,42 @@ def init_portal_db():
                     details_json TEXT NOT NULL
                 )
             """)
+
+            # 7. Global Custom Python Strategies Library
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS custom_strategies (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    filename TEXT NOT NULL,
+                    code_content TEXT NOT NULL,
+                    default_timeframe TEXT DEFAULT '15m',
+                    default_symbol TEXT DEFAULT 'GOLDPETAL1!',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+
+            # 8. Tenant Custom Strategy Assignments
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tenant_custom_strategies (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    strategy_id TEXT NOT NULL REFERENCES custom_strategies(id) ON DELETE CASCADE,
+                    symbol TEXT NOT NULL,
+                    exchange_segment TEXT NOT NULL DEFAULT 'MCXFO',
+                    timeframe TEXT NOT NULL DEFAULT '15m',
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    product_type TEXT NOT NULL DEFAULT 'NRML',
+                    execution_mode TEXT NOT NULL DEFAULT 'LIVE',
+                    is_enabled INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(tenant_id, strategy_id, symbol, timeframe)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_tenant_custom_strat ON tenant_custom_strategies(tenant_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_custom_strat_id ON tenant_custom_strategies(strategy_id)")
     logger.info("Portal database initialized successfully.")
 
 def record_audit(actor: str, action: str, details: dict, target_tenant_id: str = None):
@@ -242,3 +278,103 @@ def record_audit(actor: str, action: str, details: dict, target_tenant_id: str =
                 )
     except Exception as e:
         logger.error(f"Failed to record audit log: {e}")
+
+# =========================================================================
+# Custom Python Strategy CRUD Helpers
+# =========================================================================
+
+def get_all_tenants():
+    with closing(get_db_connection()) as conn:
+        rows = conn.execute("SELECT * FROM tenants ORDER BY created_at ASC").fetchall()
+        return [dict(r) for r in rows]
+
+def get_custom_strategies():
+    with closing(get_db_connection()) as conn:
+        rows = conn.execute("""
+            SELECT s.*, 
+                   COUNT(t.id) as assigned_count,
+                   SUM(CASE WHEN t.is_enabled = 1 THEN 1 ELSE 0 END) as active_count
+            FROM custom_strategies s
+            LEFT JOIN tenant_custom_strategies t ON s.id = t.strategy_id
+            GROUP BY s.id
+            ORDER BY s.created_at DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+def get_custom_strategy(strategy_id: str):
+    with closing(get_db_connection()) as conn:
+        row = conn.execute("SELECT * FROM custom_strategies WHERE id=?", (strategy_id,)).fetchone()
+        return dict(row) if row else None
+
+def save_custom_strategy(id: str, name: str, description: str, filename: str, code_content: str, default_timeframe: str = "15m", default_symbol: str = "GOLDPETAL1!"):
+    now = time.time()
+    with closing(get_db_connection()) as conn:
+        with conn:
+            existing = conn.execute("SELECT id FROM custom_strategies WHERE id=?", (id,)).fetchone()
+            if existing:
+                conn.execute("""
+                    UPDATE custom_strategies 
+                    SET name=?, description=?, filename=?, code_content=?, default_timeframe=?, default_symbol=?, updated_at=?
+                    WHERE id=?
+                """, (name, description, filename, code_content, default_timeframe, default_symbol, now, id))
+            else:
+                conn.execute("""
+                    INSERT INTO custom_strategies (id, name, description, filename, code_content, default_timeframe, default_symbol, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (id, name, description, filename, code_content, default_timeframe, default_symbol, now, now))
+    return id
+
+def delete_custom_strategy(strategy_id: str):
+    with closing(get_db_connection()) as conn:
+        with conn:
+            conn.execute("DELETE FROM custom_strategies WHERE id=?", (strategy_id,))
+
+def get_tenant_custom_strategies(tenant_id: str = None, strategy_id: str = None):
+    with closing(get_db_connection()) as conn:
+        query = """
+            SELECT t.*, s.name as strategy_name, s.filename, s.code_content, tn.name as tenant_name
+            FROM tenant_custom_strategies t
+            JOIN custom_strategies s ON t.strategy_id = s.id
+            JOIN tenants tn ON t.tenant_id = tn.id
+            WHERE 1=1
+        """
+        params = []
+        if tenant_id:
+            query += " AND t.tenant_id = ?"
+            params.append(tenant_id)
+        if strategy_id:
+            query += " AND t.strategy_id = ?"
+            params.append(strategy_id)
+        query += " ORDER BY t.created_at DESC"
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+def save_tenant_custom_strategy(id: str, tenant_id: str, strategy_id: str, symbol: str, exchange_segment: str = "MCXFO", timeframe: str = "15m", quantity: int = 1, product_type: str = "NRML", execution_mode: str = "LIVE", is_enabled: int = 0):
+    now = time.time()
+    with closing(get_db_connection()) as conn:
+        with conn:
+            existing = conn.execute("SELECT id FROM tenant_custom_strategies WHERE id=?", (id,)).fetchone()
+            if existing:
+                conn.execute("""
+                    UPDATE tenant_custom_strategies 
+                    SET symbol=?, exchange_segment=?, timeframe=?, quantity=?, product_type=?, execution_mode=?, is_enabled=?, updated_at=?
+                    WHERE id=?
+                """, (symbol, exchange_segment, timeframe, quantity, product_type, execution_mode, is_enabled, now, id))
+            else:
+                conn.execute("""
+                    INSERT INTO tenant_custom_strategies (id, tenant_id, strategy_id, symbol, exchange_segment, timeframe, quantity, product_type, execution_mode, is_enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (id, tenant_id, strategy_id, symbol, exchange_segment, timeframe, quantity, product_type, execution_mode, is_enabled, now, now))
+    return id
+
+def toggle_tenant_custom_strategy(id: str, is_enabled: int):
+    now = time.time()
+    with closing(get_db_connection()) as conn:
+        with conn:
+            conn.execute("UPDATE tenant_custom_strategies SET is_enabled=?, updated_at=? WHERE id=?", (is_enabled, now, id))
+
+def delete_tenant_custom_strategy(id: str):
+    with closing(get_db_connection()) as conn:
+        with conn:
+            conn.execute("DELETE FROM tenant_custom_strategies WHERE id=?", (id,))
+

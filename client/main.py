@@ -22,8 +22,10 @@ import asyncio
 import config
 import xts_api
 from supertrend_engine import SuperTrendEngine
+from custom_strategy_engine import MultiCustomStrategyEngine
 
 supertrend_engine = SuperTrendEngine()
+custom_strategy_engine = MultiCustomStrategyEngine()
 
 # Sanitize string variables
 for _key in ("WEBHOOK_SECRET", "CLIENT_ID", "API_KEY", "API_SECRET", "MD_API_KEY", "MD_API_SECRET", "XTS_API_BASE_URL"):
@@ -374,11 +376,33 @@ async def lifespan(app: FastAPI):
             supertrend_engine.update_config(st_cfg)
             logger.info(f"Loaded initial legacy SuperTrend configuration for {st_cfg.get('symbol')} ({st_cfg.get('timeframe')})")
 
+    # Load initial custom Python strategies
+    cs_strats = getattr(config, "CUSTOM_STRATEGIES", None)
+    if cs_strats and isinstance(cs_strats, list):
+        for cs_cfg in cs_strats:
+            if isinstance(cs_cfg, dict):
+                try:
+                    custom_strategy_engine.add_or_update_strategy(cs_cfg)
+                except Exception as e:
+                    logger.warning(f"Error loading initial custom strategy {cs_cfg}: {e}")
+        logger.info(f"Loaded {len(custom_strategy_engine.strategies)} initial custom Python strategies.")
+
     logger.info(f"--- CLIENT READY [{getattr(config, 'CLIENT_ID', 'UNKNOWN')}]: SESSIONS ACTIVE ---")
     st_task = asyncio.create_task(supertrend_engine.run_loop(xts_api, sys.modules[__name__]))
+
+    async def _custom_strat_loop():
+        while True:
+            try:
+                await custom_strategy_engine.evaluate_cycle(xts_api, sys.modules[__name__])
+            except Exception as e:
+                logger.error(f"Custom Strategy background loop error: {e}", exc_info=True)
+            await asyncio.sleep(5)
+
+    cs_task = asyncio.create_task(_custom_strat_loop())
     yield
     supertrend_engine.stop()
     st_task.cancel()
+    cs_task.cancel()
 
 app = FastAPI(title="XTS Client Execution Gateway", lifespan=lifespan)
 
@@ -514,6 +538,7 @@ async def telemetry(request: Request):
     broker_orders = await anyio.to_thread.run_sync(xts_api.get_broker_orders)
     broker_trades = await anyio.to_thread.run_sync(xts_api.get_broker_trades)
     supertrend_telemetry = supertrend_engine.get_telemetry()
+    custom_strat_telemetry = custom_strategy_engine.get_telemetry()
     
     return {
         "health": health_data,
@@ -524,6 +549,7 @@ async def telemetry(request: Request):
         "broker_orders": broker_orders,
         "broker_trades": broker_trades,
         "supertrend": supertrend_telemetry,
+        "custom_strategies": custom_strat_telemetry,
         "server_time": time.time()
     }
 
@@ -672,6 +698,135 @@ async def evaluate_supertrend_now(
         strategy_id_override=strategy_id,
         timeframe_override=timeframe
     )
+
+# =========================================================================
+# Custom Python Strategy Internal Endpoints
+# =========================================================================
+
+@app.get("/internal/custom-strategies")
+async def get_custom_strategies_endpoint(request: Request):
+    """Returns telemetry of all registered custom Python strategies."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    return {
+        "status": "success",
+        "strategies": custom_strategy_engine.get_telemetry()
+    }
+
+@app.post("/internal/custom-strategies/save")
+async def save_custom_strategy_endpoint(request: Request):
+    """Adds or updates a custom Python strategy runner."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    try:
+        runner = custom_strategy_engine.add_or_update_strategy(data)
+        return {
+            "status": "success",
+            "strategy": {
+                "id": runner.id,
+                "strategy_id": runner.strategy_id,
+                "name": runner.name,
+                "symbol": runner.symbol,
+                "timeframe": runner.timeframe,
+                "quantity": runner.quantity,
+                "is_enabled": runner.is_enabled,
+                "compile_error": runner.compile_error
+            },
+            "telemetry": custom_strategy_engine.get_telemetry()
+        }
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "error", "message": str(e)})
+
+@app.post("/internal/custom-strategies/{strat_id}/toggle")
+async def toggle_custom_strategy_endpoint(strat_id: str, request: Request):
+    """Toggles enable/disable state for a custom strategy runner."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    runner = custom_strategy_engine.get_strategy(strat_id)
+    if not runner:
+        return JSONResponse(status_code=404, content={"status": "error", "message": f"Strategy '{strat_id}' not found"})
+
+    try:
+        body = await request.json()
+        is_enabled = bool(body.get("is_enabled", not runner.is_enabled))
+    except Exception:
+        is_enabled = not runner.is_enabled
+
+    runner.update_config({"is_enabled": is_enabled})
+    return {"status": "success", "strategy_id": strat_id, "is_enabled": runner.is_enabled, "telemetry": custom_strategy_engine.get_telemetry()}
+
+@app.delete("/internal/custom-strategies/{strat_id}")
+async def delete_custom_strategy_endpoint(strat_id: str, request: Request):
+    """Deletes a custom strategy runner."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    custom_strategy_engine.remove_strategy(strat_id)
+    return {"status": "success", "message": f"Strategy '{strat_id}' removed", "telemetry": custom_strategy_engine.get_telemetry()}
+
+@app.post("/internal/custom-strategies/dry-run")
+async def dry_run_custom_strategy_endpoint(request: Request):
+    """Executes a backtest dry-run on historical candles."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    code_str = str(body.get("code_content", ""))
+    symbol = str(body.get("symbol", "GOLDPETAL1!")).strip().upper()
+    timeframe = str(body.get("timeframe", "15m")).strip().lower()
+    params = body.get("params", {})
+
+    # Fetch real historical candles
+    tf_seconds = parse_timeframe_to_seconds(timeframe) if "parse_timeframe_to_seconds" in globals() else 900
+    try:
+        resolved = xts_api.resolve_contract(symbol)
+        inst_id = resolved.get("inst_id") if resolved else None
+        exch_seg = resolved.get("exch_seg", "MCXFO") if resolved else "MCXFO"
+        if not inst_id:
+            return {"status": "error", "message": f"Symbol '{symbol}' not found in contract master."}
+        candles = xts_api.fetch_ohlc_candles(exch_seg, inst_id, tf_seconds, 150)
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to fetch market data: {e}"}
+
+    result = MultiCustomStrategyEngine.evaluate_dry_run(code_str, candles, params=params)
+    if result.get("error"):
+        return {"status": "error", "message": result["error"]}
+
+    return {
+        "status": "success",
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "total_candles": result.get("total_candles"),
+        "signals_count": result.get("signals_count"),
+        "signals": result.get("signals")
+    }
 
 @app.get("/internal/validate-symbol")
 async def validate_symbol_endpoint(request: Request, symbol: str = ""):

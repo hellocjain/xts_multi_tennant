@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager, closing
 from typing import Optional, List, Dict, Any
@@ -17,6 +17,7 @@ import security
 import docker_manager
 import caddy_manager
 import telemetry_service
+import strategy_parser
 
 logging.basicConfig(
     level=logging.INFO,
@@ -548,12 +549,14 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
         supertrend_config["execution_mode"] = "LIVE"
 
     logs = docker_manager.get_container_logs(tenant_id, tail=100)
+    tenant_custom_strats = database.get_tenant_custom_strategies(tenant_id=tenant_id)
 
     return templates.TemplateResponse(request=request, name="client_detail.html", context={
         "client": tel_data,
         "risk": dict(r_row) if r_row else {},
         "supertrend": supertrend_config,
         "supertrend_strategies": st_strategies,
+        "custom_strategies": tenant_custom_strats,
         "logs": logs,
         "domain": DOMAIN_NAME,
         "webhook_url": wb_data["webhook_url"],
@@ -1564,4 +1567,299 @@ async def rotate_master_key(request: Request, new_master_key: str = Form(...), u
     except Exception as e:
         logger.error(f"Key rotation failed: {e}")
         return RedirectResponse(url=f"/admin/settings?err=Key+rotation+failed:+{str(e)}", status_code=303)
+
+
+# =====================================================================
+# CUSTOM PYTHON STRATEGY HUB ROUTES
+# =====================================================================
+
+@app.get("/admin/strategies", response_class=HTMLResponse)
+async def strategies_hub(
+    request: Request,
+    msg: Optional[str] = None,
+    err: Optional[str] = None,
+    user: dict = Depends(require_auth)
+):
+    strategies = database.get_custom_strategies()
+    assignments = database.get_tenant_custom_strategies()
+    tenants = database.get_all_tenants()
+    return templates.TemplateResponse(request=request, name="strategies.html", context={
+        "custom_strategies": strategies,
+        "tenant_custom_strategies": assignments,
+        "tenants": tenants,
+        "msg": msg,
+        "err": err,
+        "current_user": user,
+        "server_info": get_server_info()
+    })
+
+@app.post("/admin/strategies/upload")
+async def upload_strategy_action(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    default_symbol: str = Form("GOLDPETAL1!"),
+    default_timeframe: str = Form("15m"),
+    strategy_file: Optional[UploadFile] = File(None),
+    code_content: Optional[str] = Form(None),
+    user: dict = Depends(require_auth)
+):
+    try:
+        raw_code = ""
+        filename = "custom_strategy.py"
+        if strategy_file and strategy_file.filename:
+            filename = strategy_file.filename
+            contents = await strategy_file.read()
+            raw_code = contents.decode("utf-8")
+        elif code_content:
+            raw_code = code_content.strip()
+
+        if not raw_code:
+            return RedirectResponse(url="/admin/strategies?err=Please+provide+a+Python+strategy+file+or+code.", status_code=303)
+
+        # AST Validation & Security Screening
+        validation = strategy_parser.validate_strategy_code(raw_code)
+        if not validation.get("valid"):
+            err_msg = validation.get("error") or "Invalid strategy code structure."
+            return RedirectResponse(url=f"/admin/strategies?err={httpx.URL('', params={'e': err_msg}).query[2:]}", status_code=303)
+
+        strat_id = f"cs_{uuid.uuid4().hex[:10]}"
+        strat_name = name.strip() or validation.get("class_name") or "Custom Strategy"
+        strat_desc = description.strip() or validation.get("docstring") or ""
+
+        database.save_custom_strategy(
+            id=strat_id,
+            name=strat_name,
+            description=strat_desc,
+            filename=filename,
+            code_content=raw_code,
+            default_timeframe=default_timeframe.strip().lower(),
+            default_symbol=default_symbol.strip().upper()
+        )
+
+        database.record_audit(user["username"], "UPLOAD_CUSTOM_STRATEGY", {
+            "strategy_id": strat_id,
+            "name": strat_name,
+            "filename": filename
+        })
+        return RedirectResponse(url=f"/admin/strategies?msg=Strategy+{strat_name}+uploaded+and+validated+successfully!", status_code=303)
+    except Exception as e:
+        logger.error(f"Failed to upload strategy: {e}", exc_info=True)
+        return RedirectResponse(url=f"/admin/strategies?err=Upload+failed:+{str(e)}", status_code=303)
+
+@app.get("/admin/strategies/template")
+async def download_strategy_template(user: dict = Depends(require_auth)):
+    code = strategy_parser.generate_boilerplate_code()
+    return Response(
+        content=code,
+        media_type="text/x-python",
+        headers={"Content-Disposition": "attachment; filename=xts_strategy_template.py"}
+    )
+
+@app.get("/admin/strategies/{strat_id}/code")
+async def get_strategy_code(strat_id: str, user: dict = Depends(require_auth)):
+    strat = database.get_custom_strategy(strat_id)
+    if not strat:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Strategy not found"})
+    return {"status": "success", "strategy": strat}
+
+@app.post("/admin/strategies/{strat_id}/dry-run")
+async def dry_run_strategy(strat_id: str, request: Request, user: dict = Depends(require_auth)):
+    strat = database.get_custom_strategy(strat_id)
+    if not strat:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Strategy not found"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    symbol = str(body.get("symbol") or strat.get("default_symbol") or "GOLDPETAL1!").strip().upper()
+    timeframe = str(body.get("timeframe") or strat.get("default_timeframe") or "15m").strip().lower()
+    bars = int(body.get("bars", 100))
+
+    # Standalone simulation fallback using synthetic market data
+    import math
+    synth_candles = []
+    base_price = 10500.0 if "GOLD" in symbol else (2500.0 if "SILVER" in symbol else 24000.0)
+    now = int(time.time())
+    tf_secs = 900
+    for i in range(bars, 0, -1):
+        c_time = now - (i * tf_secs)
+        sine_val = math.sin(i * 0.15) * 45.0
+        open_p = base_price + sine_val
+        close_p = open_p + (math.cos(i * 0.15) * 12.0)
+        high_p = max(open_p, close_p) + 8.0
+        low_p = min(open_p, close_p) - 8.0
+        synth_candles.append({
+            "time": c_time,
+            "open": open_p,
+            "high": high_p,
+            "low": low_p,
+            "close": close_p,
+            "volume": 120
+        })
+
+    # Evaluate using client runner
+    try:
+        import sys
+        sys.path.append(os.path.abspath(os.path.join(PORTAL_DIR, "..", "client")))
+        from custom_strategy_engine import MultiCustomStrategyEngine
+        result = MultiCustomStrategyEngine.evaluate_dry_run(strat["code_content"], synth_candles)
+        if result.get("error"):
+            return {"status": "error", "message": result["error"]}
+        return {
+            "status": "success",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "total_candles": result.get("total_candles"),
+            "signals_count": result.get("signals_count"),
+            "signals": result.get("signals")
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Simulation failed: {e}"}
+
+@app.post("/admin/strategies/assign")
+async def assign_strategy_action(
+    request: Request,
+    strategy_id: str = Form(...),
+    symbol: str = Form(...),
+    timeframe: str = Form("15m"),
+    execution_mode: str = Form("LIVE"),
+    user: dict = Depends(require_auth)
+):
+    form_data = await request.form()
+    tenant_ids = form_data.getlist("tenant_ids")
+    if not tenant_ids:
+        return RedirectResponse(url="/admin/strategies?err=Please+select+at+least+one+client+account.", status_code=303)
+
+    strat = database.get_custom_strategy(strategy_id)
+    if not strat:
+        return RedirectResponse(url="/admin/strategies?err=Strategy+not+found.", status_code=303)
+
+    clean_symbol = symbol.strip().upper()
+    clean_tf = timeframe.strip().lower()
+
+    assigned_count = 0
+    for tid in tenant_ids:
+        qty_key = f"qty_{tid}"
+        qty = int(form_data.get(qty_key, 1))
+        assignment_id = f"tcs_{uuid.uuid4().hex[:10]}"
+
+        database.save_tenant_custom_strategy(
+            id=assignment_id,
+            tenant_id=tid,
+            strategy_id=strategy_id,
+            symbol=clean_symbol,
+            exchange_segment="MCXFO",
+            timeframe=clean_tf,
+            quantity=qty,
+            product_type="NRML",
+            execution_mode=execution_mode,
+            is_enabled=1
+        )
+
+        # Update client config and notify running container
+        docker_manager.write_client_config(tid)
+        port = docker_manager.get_tenant_port(tid)
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            try:
+                await client.post(
+                    f"http://127.0.0.1:{port}/internal/custom-strategies/save",
+                    json={
+                        "id": assignment_id,
+                        "strategy_id": strategy_id,
+                        "name": strat["name"],
+                        "symbol": clean_symbol,
+                        "exchange_segment": "MCXFO",
+                        "timeframe": clean_tf,
+                        "quantity": qty,
+                        "product_type": "NRML",
+                        "execution_mode": execution_mode,
+                        "is_enabled": True,
+                        "code_content": strat["code_content"]
+                    }
+                )
+            except Exception:
+                pass
+        assigned_count += 1
+
+    database.record_audit(user["username"], "ASSIGN_CUSTOM_STRATEGY", {
+        "strategy_id": strategy_id,
+        "symbol": clean_symbol,
+        "timeframe": clean_tf,
+        "tenants": tenant_ids
+    })
+    return RedirectResponse(url=f"/admin/strategies?msg=Successfully+assigned+{strat['name']}+to+{assigned_count}+client(s)!", status_code=303)
+
+@app.post("/admin/custom-strategies/assignment/{assignment_id}/toggle")
+async def toggle_assignment_action(
+    assignment_id: str,
+    request: Request,
+    is_enabled: int = Form(...),
+    user: dict = Depends(require_auth)
+):
+    database.toggle_tenant_custom_strategy(assignment_id, is_enabled)
+    # Find tenant for this assignment and notify container
+    assignments = database.get_tenant_custom_strategies()
+    for a in assignments:
+        if a["id"] == assignment_id:
+            tid = a["tenant_id"]
+            docker_manager.write_client_config(tid)
+            port = docker_manager.get_tenant_port(tid)
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                try:
+                    await client.post(
+                        f"http://127.0.0.1:{port}/internal/custom-strategies/{assignment_id}/toggle",
+                        json={"is_enabled": bool(is_enabled)}
+                    )
+                except Exception:
+                    pass
+            break
+
+    database.record_audit(user["username"], "TOGGLE_CUSTOM_STRATEGY_ASSIGNMENT", {
+        "assignment_id": assignment_id,
+        "is_enabled": is_enabled
+    })
+    return RedirectResponse(url="/admin/strategies?msg=Strategy+assignment+state+updated!", status_code=303)
+
+@app.post("/admin/custom-strategies/assignment/{assignment_id}/delete")
+async def delete_assignment_action(
+    assignment_id: str,
+    user: dict = Depends(require_auth)
+):
+    assignments = database.get_tenant_custom_strategies()
+    target_tenant = None
+    for a in assignments:
+        if a["id"] == assignment_id:
+            target_tenant = a["tenant_id"]
+            break
+
+    database.delete_tenant_custom_strategy(assignment_id)
+
+    if target_tenant:
+        docker_manager.write_client_config(target_tenant)
+        port = docker_manager.get_tenant_port(target_tenant)
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            try:
+                await client.delete(f"http://127.0.0.1:{port}/internal/custom-strategies/{assignment_id}")
+            except Exception:
+                pass
+
+    database.record_audit(user["username"], "DELETE_CUSTOM_STRATEGY_ASSIGNMENT", {
+        "assignment_id": assignment_id
+    })
+    return RedirectResponse(url="/admin/strategies?msg=Strategy+assignment+removed!", status_code=303)
+
+@app.post("/admin/strategies/{strat_id}/delete")
+async def delete_strategy_action(
+    strat_id: str,
+    user: dict = Depends(require_auth)
+):
+    strat = database.get_custom_strategy(strat_id)
+    strat_name = strat["name"] if strat else strat_id
+    database.delete_custom_strategy(strat_id)
+    database.record_audit(user["username"], "DELETE_CUSTOM_STRATEGY", {"strategy_id": strat_id, "name": strat_name})
+    return RedirectResponse(url=f"/admin/strategies?msg=Strategy+{strat_name}+deleted+successfully!", status_code=303)
+
 

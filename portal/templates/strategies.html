@@ -1,0 +1,545 @@
+{% extends "base.html" %}
+
+{% block title %}Custom Python Strategy Hub | XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Top Action Banner -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
+        <div class="flex items-center space-x-3.5">
+            <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                <i data-lucide="code-2" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+                    Custom Python Strategy Hub
+                    <span class="bg-brand-500/15 text-brand-400 text-xs px-2 py-0.5 rounded-full font-mono font-medium border border-brand-500/30">Sandboxed Engine</span>
+                </h1>
+                <p class="text-xs text-slate-400 mt-0.5">Upload custom event-driven Python trading strategies and deploy them across multi-tenant broker accounts with isolated lot sizing.</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2.5">
+            <a href="/admin/strategies/template" download="xts_strategy_template.py" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 border border-bordercolor transition shadow-sm">
+                <i data-lucide="download" class="w-3.5 h-3.5 text-slate-400"></i>
+                <span>Download Boilerplate</span>
+            </a>
+            <button onclick="openUploadModal()" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-black text-xs font-bold flex items-center space-x-1.5 transition shadow-sm shadow-brand-500/20">
+                <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+                <span>Upload Strategy (.py)</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Feedback Alerts -->
+    {% if msg %}
+    <div class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs px-4 py-3 rounded-lg flex items-center space-x-2 animate-fadeIn">
+        <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400 flex-shrink-0"></i>
+        <span>{{ msg }}</span>
+    </div>
+    {% endif %}
+    {% if err %}
+    <div class="bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs px-4 py-3 rounded-lg flex items-center space-x-2 animate-fadeIn">
+        <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-400 flex-shrink-0"></i>
+        <span>{{ err }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Metrics Strip -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="bg-cardbg border border-bordercolor rounded-xl p-4 flex items-center justify-between">
+            <div>
+                <span class="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Strategy Library</span>
+                <div class="text-xl font-bold text-slate-100 font-mono mt-0.5">{{ custom_strategies|length }}</div>
+            </div>
+            <div class="w-9 h-9 rounded-lg bg-slate-800/80 border border-slate-700/50 flex items-center justify-center text-slate-300">
+                <i data-lucide="file-code" class="w-4 h-4"></i>
+            </div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor rounded-xl p-4 flex items-center justify-between">
+            <div>
+                <span class="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Total Client Assignments</span>
+                <div class="text-xl font-bold text-slate-100 font-mono mt-0.5">{{ tenant_custom_strategies|length }}</div>
+            </div>
+            <div class="w-9 h-9 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                <i data-lucide="users" class="w-4 h-4"></i>
+            </div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor rounded-xl p-4 flex items-center justify-between">
+            <div>
+                <span class="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Active Live Runners</span>
+                <div class="text-xl font-bold text-emerald-400 font-mono mt-0.5">
+                    {% set active_count = 0 %}
+                    {% for ts in tenant_custom_strategies %}
+                        {% if ts.is_enabled %}{% set active_count = active_count + 1 %}{% endif %}
+                    {% endfor %}
+                    {{ active_count }}
+                </div>
+            </div>
+            <div class="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <i data-lucide="play-circle" class="w-4 h-4"></i>
+            </div>
+        </div>
+    </div>
+
+    <!-- Strategy Library Cards -->
+    <div class="space-y-3">
+        <div class="flex items-center justify-between">
+            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <i data-lucide="layers" class="w-4 h-4 text-brand-400"></i>
+                Uploaded Strategy Library
+            </h2>
+            <span class="text-xs text-slate-400 font-mono">{{ custom_strategies|length }} Strategies</span>
+        </div>
+
+        {% if custom_strategies|length == 0 %}
+        <div class="bg-cardbg border border-dashed border-bordercolor rounded-xl p-8 text-center space-y-3">
+            <div class="w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700/50 flex items-center justify-center text-slate-400 mx-auto">
+                <i data-lucide="code" class="w-6 h-6"></i>
+            </div>
+            <div class="text-slate-300 font-semibold text-sm">No Custom Python Strategies Uploaded Yet</div>
+            <p class="text-slate-400 text-xs max-w-md mx-auto">Upload your first Python strategy script implementing the standard <code class="text-brand-400 font-mono">on_candle()</code> event interface to begin trading.</p>
+            <div class="pt-2">
+                <button onclick="openUploadModal()" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-black text-xs font-bold transition">
+                    Upload Your First Strategy
+                </button>
+            </div>
+        </div>
+        {% else %}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {% for s in custom_strategies %}
+            <div class="bg-cardbg border border-bordercolor hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between space-y-4 transition shadow-sm">
+                <div class="space-y-2">
+                    <div class="flex items-start justify-between gap-2">
+                        <div>
+                            <div class="font-bold text-sm text-slate-100">{{ s.name }}</div>
+                            <div class="text-[11px] font-mono text-slate-400 flex items-center gap-1.5 mt-0.5">
+                                <i data-lucide="file-text" class="w-3 h-3 text-slate-500"></i>
+                                <span>{{ s.filename }}</span>
+                            </div>
+                        </div>
+                        <span class="bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-mono font-semibold px-2 py-0.5 rounded">
+                            {{ s.default_timeframe }}
+                        </span>
+                    </div>
+
+                    {% if s.description %}
+                    <p class="text-xs text-slate-400 line-clamp-2">{{ s.description }}</p>
+                    {% endif %}
+
+                    <div class="flex items-center gap-2 pt-1">
+                        <span class="text-[11px] text-slate-400">Assigned Clients:</span>
+                        <span class="bg-brand-500/10 text-brand-400 text-[11px] font-mono font-bold px-2 py-0.2 rounded border border-brand-500/20">
+                            {{ s.assigned_count }} ({{ s.active_count }} Active)
+                        </span>
+                    </div>
+                </div>
+
+                <div class="pt-3 border-t border-bordercolor/60 flex items-center justify-between gap-2">
+                    <div class="flex items-center space-x-1.5">
+                        <button onclick="viewStrategyCode('{{ s.id }}', '{{ s.name }}')" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition" title="View Code">
+                            <i data-lucide="code" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="openDryRunModal('{{ s.id }}', '{{ s.name }}', '{{ s.default_symbol }}', '{{ s.default_timeframe }}')" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 transition" title="Test / Dry-Run Simulator">
+                            <i data-lucide="flask-conical" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="openAssignModal('{{ s.id }}', '{{ s.name }}', '{{ s.default_symbol }}', '{{ s.default_timeframe }}')" class="px-2.5 py-1.5 rounded-lg bg-brand-600/15 hover:bg-brand-600/25 text-brand-400 text-xs font-semibold flex items-center space-x-1 border border-brand-500/30 transition">
+                            <i data-lucide="user-plus" class="w-3 h-3"></i>
+                            <span>Assign</span>
+                        </button>
+                    </div>
+
+                    <form action="/admin/strategies/{{ s.id }}/delete" method="POST" onsubmit="return confirm('Are you sure you want to delete strategy {{ s.name }}? This will remove all client assignments.');">
+                        <button type="submit" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition" title="Delete Strategy">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Client Assignment Matrix Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-xl overflow-hidden shadow-sm space-y-0">
+        <div class="p-4 border-b border-bordercolor flex items-center justify-between">
+            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <i data-lucide="table" class="w-4 h-4 text-brand-400"></i>
+                Active Client Strategy Assignments
+            </h2>
+            <span class="text-xs text-slate-400 font-mono">{{ tenant_custom_strategies|length }} Active Bindings</span>
+        </div>
+
+        {% if tenant_custom_strategies|length == 0 %}
+        <div class="p-6 text-center text-xs text-slate-400">
+            No active client assignments. Click "Assign" on any strategy above to deploy it to client accounts.
+        </div>
+        {% else %}
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+                <thead class="bg-slate-900/60 text-slate-400 text-[11px] font-mono uppercase border-b border-bordercolor">
+                    <tr>
+                        <th class="px-4 py-3">Client</th>
+                        <th class="px-4 py-3">Strategy</th>
+                        <th class="px-4 py-3">Symbol &amp; TF</th>
+                        <th class="px-4 py-3">Quantity</th>
+                        <th class="px-4 py-3">Mode</th>
+                        <th class="px-4 py-3">State</th>
+                        <th class="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor/60 text-slate-200">
+                    {% for ts in tenant_custom_strategies %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="px-4 py-3 font-semibold text-slate-100 flex items-center gap-2">
+                            <a href="/admin/clients/{{ ts.tenant_id }}" class="hover:text-brand-400 transition underline underline-offset-2">
+                                {{ ts.tenant_id }}
+                            </a>
+                            <span class="text-[11px] text-slate-400 font-normal">({{ ts.tenant_name }})</span>
+                        </td>
+                        <td class="px-4 py-3 font-medium text-slate-300">{{ ts.strategy_name }}</td>
+                        <td class="px-4 py-3 font-mono">
+                            <span class="bg-slate-800 px-1.5 py-0.5 rounded text-[11px] text-slate-200 border border-slate-700/60">{{ ts.symbol }}</span>
+                            <span class="text-slate-400 text-[11px] ml-1">({{ ts.timeframe }})</span>
+                        </td>
+                        <td class="px-4 py-3 font-mono font-bold text-slate-100">{{ ts.quantity }} Lots</td>
+                        <td class="px-4 py-3">
+                            <span class="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded border {% if ts.execution_mode == 'LIVE' %}bg-emerald-500/10 text-emerald-400 border-emerald-500/30{% else %}bg-amber-500/10 text-amber-400 border-amber-500/30{% endif %}">
+                                {{ ts.execution_mode }}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3">
+                            <form action="/admin/custom-strategies/assignment/{{ ts.id }}/toggle" method="POST">
+                                <input type="hidden" name="is_enabled" value="{% if ts.is_enabled %}0{% else %}1{% endif %}">
+                                <button type="submit" class="text-[11px] font-mono font-bold px-2 py-0.5 rounded border transition {% if ts.is_enabled %}bg-emerald-500/15 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/25{% else %}bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700{% endif %}">
+                                    {% if ts.is_enabled %}● RUNNING{% else %}○ PAUSED{% endif %}
+                                </button>
+                            </form>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                            <form action="/admin/custom-strategies/assignment/{{ ts.id }}/delete" method="POST" onsubmit="return confirm('Remove strategy assignment for {{ ts.tenant_id }}?');">
+                                <button type="submit" class="text-rose-400 hover:text-rose-300 p-1 transition" title="Remove Assignment">
+                                    <i data-lucide="x" class="w-4 h-4"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<!-- MODAL: Upload Strategy -->
+<div id="uploadModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-cardbg border border-bordercolor rounded-2xl w-full max-w-xl shadow-2xl p-6 space-y-5 animate-fadeIn">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="upload-cloud" class="w-5 h-5 text-brand-400"></i>
+                Upload Python Strategy (.py)
+            </h3>
+            <button onclick="closeUploadModal()" class="text-slate-400 hover:text-white p-1">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <form action="/admin/strategies/upload" method="POST" enctype="multipart/form-data" class="space-y-4">
+            <div class="space-y-1">
+                <label class="text-xs font-semibold text-slate-300">Strategy Name *</label>
+                <input type="text" name="name" required placeholder="e.g. Dual EMA Momentum Crossover" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs focus:border-brand-500 focus:outline-none font-sans">
+            </div>
+
+            <div class="space-y-1">
+                <label class="text-xs font-semibold text-slate-300">Description</label>
+                <textarea name="description" rows="2" placeholder="Brief description of the trading rules and indicator parameters..." class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs focus:border-brand-500 focus:outline-none font-sans"></textarea>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div class="space-y-1">
+                    <label class="text-xs font-semibold text-slate-300">Default Symbol</label>
+                    <input type="text" name="default_symbol" value="GOLDPETAL1!" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs font-semibold text-slate-300">Default Timeframe</label>
+                    <select name="default_timeframe" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+                        <option value="5m">5m</option>
+                        <option value="15m" selected>15m</option>
+                        <option value="30m">30m</option>
+                        <option value="1h">1h</option>
+                        <option value="1d">1d</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="space-y-1">
+                <label class="text-xs font-semibold text-slate-300">Select Python File (.py) *</label>
+                <input type="file" name="strategy_file" accept=".py" required class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-300 text-xs file:mr-3 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-brand-600 file:text-black hover:file:bg-brand-500 cursor-pointer">
+                <p class="text-[11px] text-slate-400">File must implement <code class="text-brand-400 font-mono">class Strategy(BaseStrategy)</code> with <code class="text-brand-400 font-mono">on_candle()</code>.</p>
+            </div>
+
+            <div class="pt-3 border-t border-bordercolor flex items-center justify-end space-x-2.5">
+                <button type="button" onclick="closeUploadModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
+                <button type="submit" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-black text-xs font-bold shadow-sm shadow-brand-500/20">Validate &amp; Upload</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL: Assign Strategy to Clients -->
+<div id="assignModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-cardbg border border-bordercolor rounded-2xl w-full max-w-2xl shadow-2xl p-6 space-y-5 animate-fadeIn">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="user-plus" class="w-5 h-5 text-brand-400"></i>
+                Assign Strategy: <span id="assignStratName" class="text-brand-400 font-mono"></span>
+            </h3>
+            <button onclick="closeAssignModal()" class="text-slate-400 hover:text-white p-1">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <form action="/admin/strategies/assign" method="POST" class="space-y-4">
+            <input type="hidden" id="assignStratId" name="strategy_id" value="">
+
+            <div class="grid grid-cols-3 gap-3">
+                <div class="space-y-1">
+                    <label class="text-xs font-semibold text-slate-300">Symbol</label>
+                    <input type="text" id="assignSymbol" name="symbol" value="GOLDPETAL1!" required class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs font-semibold text-slate-300">Timeframe</label>
+                    <select id="assignTimeframe" name="timeframe" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+                        <option value="5m">5m</option>
+                        <option value="15m" selected>15m</option>
+                        <option value="30m">30m</option>
+                        <option value="1h">1h</option>
+                        <option value="1d">1d</option>
+                    </select>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs font-semibold text-slate-300">Execution Mode</label>
+                    <select name="execution_mode" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+                        <option value="LIVE" selected>LIVE REAL MONEY</option>
+                        <option value="PAPER">PAPER SANDBOX</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <label class="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                    <span>Select Client Accounts &amp; Customize Lots:</span>
+                    <span class="text-[11px] text-slate-400 font-mono">Available: {{ tenants|length }} Clients</span>
+                </label>
+                
+                <div class="bg-obsidian border border-bordercolor rounded-xl p-3 max-h-48 overflow-y-auto space-y-2">
+                    {% for t in tenants %}
+                    <div class="flex items-center justify-between bg-cardbg/80 border border-bordercolor/60 px-3 py-2 rounded-lg text-xs">
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                            <input type="checkbox" name="tenant_ids" value="{{ t.id }}" class="rounded bg-slate-900 border-bordercolor text-brand-500 focus:ring-brand-500">
+                            <span class="font-bold text-slate-200">{{ t.id }}</span>
+                            <span class="text-slate-400">({{ t.name }})</span>
+                        </label>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[11px] text-slate-400">Lots:</span>
+                            <input type="number" name="qty_{{ t.id }}" value="1" min="1" max="100" class="w-16 px-2 py-1 rounded bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono text-center focus:border-brand-500 focus:outline-none">
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="pt-3 border-t border-bordercolor flex items-center justify-end space-x-2.5">
+                <button type="button" onclick="closeAssignModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
+                <button type="submit" class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-black text-xs font-bold shadow-sm shadow-brand-500/20">Assign &amp; Deploy</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL: View Code -->
+<div id="codeModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-cardbg border border-bordercolor rounded-2xl w-full max-w-3xl shadow-2xl p-6 space-y-4 animate-fadeIn">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="code" class="w-5 h-5 text-brand-400"></i>
+                <span id="codeModalTitle">Strategy Source Code</span>
+            </h3>
+            <button onclick="closeCodeModal()" class="text-slate-400 hover:text-white p-1">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <pre class="bg-obsidian border border-bordercolor rounded-xl p-4 text-xs font-mono text-emerald-400 overflow-x-auto max-h-96 leading-relaxed" id="codeContentDisplay">Loading code...</pre>
+
+        <div class="flex items-center justify-end">
+            <button onclick="closeCodeModal()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Dry-Run Backtest Simulator -->
+<div id="dryRunModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-cardbg border border-bordercolor rounded-2xl w-full max-w-2xl shadow-2xl p-6 space-y-5 animate-fadeIn">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="flask-conical" class="w-5 h-5 text-amber-400"></i>
+                Historical Dry-Run Simulator: <span id="dryRunStratName" class="text-brand-400 font-mono"></span>
+            </h3>
+            <button onclick="closeDryRunModal()" class="text-slate-400 hover:text-white p-1">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+            <div class="space-y-1">
+                <label class="text-xs font-semibold text-slate-300">Symbol</label>
+                <input type="text" id="dryRunSymbol" value="GOLDPETAL1!" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+            </div>
+            <div class="space-y-1">
+                <label class="text-xs font-semibold text-slate-300">Timeframe</label>
+                <select id="dryRunTimeframe" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+                    <option value="5m">5m</option>
+                    <option value="15m" selected>15m</option>
+                    <option value="30m">30m</option>
+                    <option value="1h">1h</option>
+                </select>
+            </div>
+            <div class="space-y-1">
+                <label class="text-xs font-semibold text-slate-300">Candles</label>
+                <select id="dryRunBars" class="w-full px-3 py-2 rounded-lg bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-brand-500 focus:outline-none">
+                    <option value="50">Last 50 Bars</option>
+                    <option value="100" selected>Last 100 Bars</option>
+                    <option value="150">Last 150 Bars</option>
+                </select>
+            </div>
+        </div>
+
+        <button onclick="executeDryRun()" id="btnExecuteDryRun" class="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold flex items-center justify-center space-x-2 transition shadow-sm">
+            <i data-lucide="play" class="w-4 h-4"></i>
+            <span>Run Historical Simulation</span>
+        </button>
+
+        <div id="dryRunResults" class="space-y-3 hidden">
+            <div class="bg-obsidian border border-bordercolor rounded-xl p-4 max-h-60 overflow-y-auto space-y-2 font-mono text-xs" id="dryRunOutput">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentStratId = "";
+
+function openUploadModal() {
+    document.getElementById('uploadModal').classList.remove('hidden');
+}
+function closeUploadModal() {
+    document.getElementById('uploadModal').classList.add('hidden');
+}
+
+function openAssignModal(stratId, name, defSymbol, defTf) {
+    document.getElementById('assignStratId').value = stratId;
+    document.getElementById('assignStratName').innerText = name;
+    if (defSymbol) document.getElementById('assignSymbol').value = defSymbol;
+    if (defTf) document.getElementById('assignTimeframe').value = defTf;
+    document.getElementById('assignModal').classList.remove('hidden');
+}
+function closeAssignModal() {
+    document.getElementById('assignModal').classList.add('hidden');
+}
+
+function openDryRunModal(stratId, name, defSymbol, defTf) {
+    currentStratId = stratId;
+    document.getElementById('dryRunStratName').innerText = name;
+    if (defSymbol) document.getElementById('dryRunSymbol').value = defSymbol;
+    if (defTf) document.getElementById('dryRunTimeframe').value = defTf;
+    document.getElementById('dryRunResults').classList.add('hidden');
+    document.getElementById('dryRunModal').classList.remove('hidden');
+}
+function closeDryRunModal() {
+    document.getElementById('dryRunModal').classList.add('hidden');
+}
+
+async function viewStrategyCode(stratId, name) {
+    document.getElementById('codeModalTitle').innerText = name + ' (Source Code)';
+    document.getElementById('codeContentDisplay').innerText = 'Loading code...';
+    document.getElementById('codeModal').classList.remove('hidden');
+    try {
+        const res = await fetch('/admin/strategies/' + stratId + '/code');
+        const data = await res.json();
+        if (data.strategy && data.strategy.code_content) {
+            document.getElementById('codeContentDisplay').innerText = data.strategy.code_content;
+        } else {
+            document.getElementById('codeContentDisplay').innerText = '// No code content found.';
+        }
+    } catch(e) {
+        document.getElementById('codeContentDisplay').innerText = 'Error loading code: ' + e;
+    }
+}
+function closeCodeModal() {
+    document.getElementById('codeModal').classList.add('hidden');
+}
+
+async function executeDryRun() {
+    const btn = document.getElementById('btnExecuteDryRun');
+    const resultsDiv = document.getElementById('dryRunResults');
+    const outputDiv = document.getElementById('dryRunOutput');
+    
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i><span>Running Simulation...</span>';
+    lucide.createIcons();
+
+    try {
+        const symbol = document.getElementById('dryRunSymbol').value;
+        const timeframe = document.getElementById('dryRunTimeframe').value;
+        const bars = document.getElementById('dryRunBars').value;
+
+        const res = await fetch('/admin/strategies/' + currentStratId + '/dry-run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, timeframe: timeframe, bars: parseInt(bars)})
+        });
+        const data = await res.json();
+
+        resultsDiv.classList.remove('hidden');
+        if (data.status === 'success') {
+            let html = '<div class="text-emerald-400 font-bold mb-2">✅ Simulation Succeeded: ' + (data.signals_count || 0) + ' Signals across ' + (data.total_candles || 0) + ' bars</div>';
+            if (data.signals && data.signals.length > 0) {
+                html += '<div class="space-y-1.5">';
+                data.signals.forEach(s => {
+                    const isBuy = s.signal === 'BUY';
+                    const color = isBuy ? 'text-emerald-400' : 'text-rose-400';
+                    html += '<div class="bg-slate-900/80 p-2 rounded border border-bordercolor/80 flex items-center justify-between">';
+                    html += '<span class="font-bold ' + color + '">[' + s.signal + '] at ₹' + s.price + '</span>';
+                    html += '<span class="text-slate-400 text-[11px]">' + s.prev_position + ' ➔ ' + s.new_position + ' (Bar ' + s.bar_index + ')</span>';
+                    html += '</div>';
+                });
+                html += '</div>';
+            } else {
+                html += '<div class="text-slate-400 text-xs">No Buy/Sell crossovers triggered over this candle window (Strategy maintained FLAT / HOLD).</div>';
+            }
+            outputDiv.innerHTML = html;
+        } else {
+            outputDiv.innerHTML = '<div class="text-rose-400 font-bold">❌ Error: ' + (data.message || 'Dry-run failed') + '</div>';
+        }
+    } catch(e) {
+        resultsDiv.classList.remove('hidden');
+        outputDiv.innerHTML = '<div class="text-rose-400 font-bold">❌ Network Error: ' + e + '</div>';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="play" class="w-4 h-4"></i><span>Run Historical Simulation</span>';
+        lucide.createIcons();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    lucide.createIcons();
+});
+</script>
+{% endblock %}

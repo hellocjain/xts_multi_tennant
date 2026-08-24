@@ -159,6 +159,10 @@
             <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
             <span>SuperTrend Strategy</span>
         </button>
+        <button onclick="switchClientTab('custom-strategies')" id="tab-nav-custom-strategies" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
+            <i data-lucide="code-2" class="w-4 h-4 text-brand-400"></i>
+            <span>Python Strategies ({{ custom_strategies|length }})</span>
+        </button>
         <button onclick="switchClientTab('logs')" id="tab-nav-logs" class="tab-btn px-4 py-3 text-xs font-semibold border-b-2 border-transparent transition flex items-center space-x-2 whitespace-nowrap text-slate-400 hover:text-slate-200">
             <i data-lucide="terminal" class="w-4 h-4"></i>
             <span>Container Logs</span>
@@ -1384,6 +1388,83 @@
                     </tbody>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <!-- TAB 7: Custom Python Strategies -->
+    <div id="client-tab-custom-strategies" class="tab-pane hidden space-y-5">
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl space-y-4">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                        <i data-lucide="code-2" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Assigned Python Trading Strategies</h3>
+                        <p class="text-xs text-slate-400">Custom event-driven Python strategies deployed to this client account.</p>
+                    </div>
+                </div>
+                <a href="/admin/strategies" class="bg-brand-600 hover:bg-brand-500 text-black text-xs font-bold px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+                    <span>Assign New Strategy</span>
+                </a>
+            </div>
+
+            {% if custom_strategies|length == 0 %}
+            <div class="p-6 text-center text-xs text-slate-400 space-y-2">
+                <div>No custom Python strategies currently assigned to {{ client.id }}.</div>
+                <div>
+                    <a href="/admin/strategies" class="text-brand-400 hover:underline font-semibold">Go to Strategy Hub &rarr;</a>
+                </div>
+            </div>
+            {% else %}
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-900/60 text-slate-400 text-[11px] font-mono uppercase border-b border-bordercolor">
+                        <tr>
+                            <th class="px-4 py-3">Strategy Name</th>
+                            <th class="px-4 py-3">Symbol &amp; Timeframe</th>
+                            <th class="px-4 py-3">Lots</th>
+                            <th class="px-4 py-3">Mode</th>
+                            <th class="px-4 py-3">State</th>
+                            <th class="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-bordercolor/60 text-slate-200">
+                        {% for cs in custom_strategies %}
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="px-4 py-3 font-semibold text-slate-100">{{ cs.strategy_name }}</td>
+                            <td class="px-4 py-3 font-mono">
+                                <span class="bg-slate-800 px-1.5 py-0.5 rounded text-[11px] text-slate-200 border border-slate-700/60">{{ cs.symbol }}</span>
+                                <span class="text-slate-400 text-[11px] ml-1">({{ cs.timeframe }})</span>
+                            </td>
+                            <td class="px-4 py-3 font-mono font-bold text-slate-100">{{ cs.quantity }} Lots</td>
+                            <td class="px-4 py-3">
+                                <span class="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded border {% if cs.execution_mode == 'LIVE' %}bg-emerald-500/10 text-emerald-400 border-emerald-500/30{% else %}bg-amber-500/10 text-amber-400 border-amber-500/30{% endif %}">
+                                    {{ cs.execution_mode }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-3">
+                                <form action="/admin/custom-strategies/assignment/{{ cs.id }}/toggle" method="POST">
+                                    <input type="hidden" name="is_enabled" value="{% if cs.is_enabled %}0{% else %}1{% endif %}">
+                                    <button type="submit" class="text-[11px] font-mono font-bold px-2 py-0.5 rounded border transition {% if cs.is_enabled %}bg-emerald-500/15 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/25{% else %}bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700{% endif %}">
+                                        {% if cs.is_enabled %}● RUNNING{% else %}○ PAUSED{% endif %}
+                                    </button>
+                                </form>
+                            </td>
+                            <td class="px-4 py-3 text-right">
+                                <form action="/admin/custom-strategies/assignment/{{ cs.id }}/delete" method="POST" onsubmit="return confirm('Remove strategy assignment for this client?');">
+                                    <button type="submit" class="text-rose-400 hover:text-rose-300 p-1 transition" title="Remove Assignment">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
         </div>
     </div>
 
