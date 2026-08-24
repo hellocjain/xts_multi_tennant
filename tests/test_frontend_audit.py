@@ -417,4 +417,18 @@ def test_multi_strategy_card_actions_id_binding():
     assert "/supertrend/strategy/st_silv_15m/delete" in html
     assert "/supertrend/strategy/st_silv_30m/delete" in html
 
+def test_chart_markers_and_line_clearing_on_strategy_switch():
+    """
+    Verifies that client_detail.html properly passes empty arrays to setMarkers and setData
+    to prevent trade markers from one timeframe (e.g. 15m) bleeding into another (e.g. 30m).
+    """
+    client = get_auth_client()
+    res = client.get("/admin/clients/t_live_profit")
+    assert res.status_code == 200
+    html = res.text
+
+    assert "stCandleSeries.setMarkers(Array.isArray(data.markers) ? data.markers : [])" in html
+    assert "stLineSeries.setData(Array.isArray(data.supertrend_line) ? data.supertrend_line : [])" in html
+
+
 

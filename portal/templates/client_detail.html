@@ -1870,12 +1870,12 @@
             if (data.candlestick && data.candlestick.length > 0 && stCandleSeries) {
                 stCandleSeries.setData(data.candlestick);
                 
-                if (data.supertrend_line && data.supertrend_line.length > 0 && stLineSeries) {
-                    stLineSeries.setData(data.supertrend_line);
+                if (stLineSeries && typeof stLineSeries.setData === 'function') {
+                    stLineSeries.setData(Array.isArray(data.supertrend_line) ? data.supertrend_line : []);
                 }
 
-                if (data.markers && data.markers.length > 0 && stCandleSeries.setMarkers) {
-                    stCandleSeries.setMarkers(data.markers);
+                if (stCandleSeries && typeof stCandleSeries.setMarkers === 'function') {
+                    stCandleSeries.setMarkers(Array.isArray(data.markers) ? data.markers : []);
                 }
 
                 if (stChartInstance) {
