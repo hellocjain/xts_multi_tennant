@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY config.py xts_api.py main.py supertrend_engine.py ./
+COPY config.py xts_api.py main.py supertrend_engine.py custom_strategy_engine.py ./
 
 # Create default data mount directory
 RUN mkdir -p /app/data
