@@ -257,14 +257,32 @@
             }
         }
 
-        // Modal Helpers
+        // Universal Modal Dismissal Helper
         function closeModal() {
             const mc = document.getElementById('modal-container');
             if (mc) mc.innerHTML = '';
+            
+            // Dismiss standard modal overlays if open
+            ['uploadModal', 'assignModal', 'codeModal', 'dryRunModal', 'panicModal', 'deleteModal'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
         }
 
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') closeModal();
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        // Close on backdrop click
+        document.addEventListener('click', function(e) {
+            ['uploadModal', 'assignModal', 'codeModal', 'dryRunModal', 'panicModal', 'deleteModal'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el && e.target === el) {
+                    el.classList.add('hidden');
+                }
+            });
         });
 
         // Initialize Lucide Icons on initial load and post-HTMX swap

@@ -1509,14 +1509,20 @@
             ⚠️ This will immediately <strong>cancel all open pending orders</strong> and route marketable limit square-off orders for <strong>all open positions</strong> held under this account.
         </p>
 
-        <form method="POST" id="client-panic-form" action="/admin/clients/{{ client.id }}/panic" class="space-y-3">
+        <form method="POST" id="client-panic-form" action="/admin/clients/{{ client.id }}/panic" class="space-y-4">
+            <div class="space-y-1.5">
+                <label class="text-[11px] font-mono text-slate-400">Type <strong class="text-rose-400">SQUARE OFF</strong> below to confirm:</label>
+                <input type="text" id="panic-confirm-input" oninput="validatePanicConfirm(this.value)" placeholder="Type SQUARE OFF" 
+                       class="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-rose-500 focus:outline-none">
+            </div>
+
             <div class="flex items-center justify-end space-x-2.5 pt-2">
                 <button type="button" onclick="closeClientPanicModal()" class="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 bg-slate-800 rounded-xl transition">
                     Cancel
                 </button>
-                <button type="submit" class="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-lg shadow-rose-600/30 flex items-center gap-1.5">
+                <button type="submit" id="btn-panic-submit" disabled class="bg-rose-600/50 cursor-not-allowed text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-lg shadow-rose-600/30 flex items-center gap-1.5">
                     <i data-lucide="flame" class="w-4 h-4"></i>
-                    <span>Yes, Square Off Now</span>
+                    <span>Execute Emergency Square Off</span>
                 </button>
             </div>
         </form>
@@ -1679,11 +1685,30 @@
 
     // Modal Handlers
     function openClientPanicModal(clientId, clientName) {
+        const inp = document.getElementById('panic-confirm-input');
+        if (inp) {
+            inp.value = '';
+            validatePanicConfirm('');
+        }
         document.getElementById('client-panic-modal').classList.remove('hidden');
         lucide.createIcons();
     }
     function closeClientPanicModal() {
         document.getElementById('client-panic-modal').classList.add('hidden');
+    }
+
+    function validatePanicConfirm(val) {
+        const btn = document.getElementById('btn-panic-submit');
+        if (!btn) return;
+        if (val.trim().toUpperCase() === 'SQUARE OFF') {
+            btn.disabled = false;
+            btn.classList.remove('bg-rose-600/50', 'cursor-not-allowed');
+            btn.classList.add('bg-rose-600', 'hover:bg-rose-500', 'cursor-pointer');
+        } else {
+            btn.disabled = true;
+            btn.classList.add('bg-rose-600/50', 'cursor-not-allowed');
+            btn.classList.remove('bg-rose-600', 'hover:bg-rose-500', 'cursor-pointer');
+        }
     }
 
     function openClientDeleteModal(clientId, clientName) {
