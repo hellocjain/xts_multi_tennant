@@ -242,22 +242,24 @@ def get_interactive_token(force_refresh=False):
             INTERACTIVE_REFRESH_CV.notify_all()
     return None
 
-def get_marketdata_token():
+def get_marketdata_token(force_refresh: bool = False):
     global MARKET_DATA_TOKEN, VALID_MD_BASE_URL, REFRESHING_MD, MARKET_DATA_TOKEN_ACQUIRED_AT
     wait_timeout = getattr(config, "TOKEN_REFRESH_WAIT_TIMEOUT", 8.0)
     now = time.time()
 
     if MARKET_DATA_TOKEN and (now - MARKET_DATA_TOKEN_ACQUIRED_AT > TOKEN_MAX_LIFESPAN_SECONDS):
         logger.info("MARKET_DATA token exceeded 20h proactive lifespan. Refreshing...")
-        with MD_REFRESH_CV:
-            MARKET_DATA_TOKEN = None
+        force_refresh = True
+
+    if not force_refresh and MARKET_DATA_TOKEN and VALID_MD_BASE_URL:
+        return MARKET_DATA_TOKEN, VALID_MD_BASE_URL
 
     with MD_REFRESH_CV:
-        if MARKET_DATA_TOKEN and VALID_MD_BASE_URL:
+        if not force_refresh and MARKET_DATA_TOKEN and VALID_MD_BASE_URL:
             return MARKET_DATA_TOKEN, VALID_MD_BASE_URL
         if REFRESHING_MD:
             got_it = MD_REFRESH_CV.wait_for(lambda: (not REFRESHING_MD), timeout=wait_timeout)
-            if MARKET_DATA_TOKEN and VALID_MD_BASE_URL:
+            if not force_refresh and MARKET_DATA_TOKEN and VALID_MD_BASE_URL:
                 return MARKET_DATA_TOKEN, VALID_MD_BASE_URL
             if not got_it:
                 logger.error("Timed out waiting for concurrent market-data-token refresh.")
@@ -279,7 +281,7 @@ def get_marketdata_token():
         for base_md in base_urls:
             for url in [f"{base_md.rstrip('/')}/auth/login", f"{base_md.rstrip('/')}/user/session"]:
                 try:
-                    response = api_session.post(url, json=payload, timeout=3)
+                    response = api_session.post(url, json=payload, timeout=5)
                     if response.status_code == 200 and response.json().get('type') == 'success':
                         with MD_REFRESH_CV:
                             MARKET_DATA_TOKEN = response.json()['result']['token']
@@ -314,7 +316,7 @@ def start_token_keepalive():
                                         headers={"authorization": t_int}, timeout=4)
                 
                 if MARKET_DATA_TOKEN and (now - MARKET_DATA_TOKEN_ACQUIRED_AT > TOKEN_MAX_LIFESPAN_SECONDS):
-                    get_marketdata_token()
+                    get_marketdata_token(force_refresh=True)
             except Exception:
                 pass
     threading.Thread(target=_heartbeat, name="token-keepalive", daemon=True).start()
@@ -352,6 +354,16 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
 
     try:
         resp = api_session.get(url, headers=headers, params=params, timeout=6)
+        
+        # If token was invalidated or expired, trigger auto-reauth and retry once immediately
+        if resp.status_code in (400, 401) and any(kw in resp.text.lower() for kw in ("token", "session", "e-session-0007", "invalid token")):
+            logger.warning(f"OHLC: Market Data token invalid ({resp.status_code}). Triggering auto-reauth and retry...")
+            token, base_md_url = get_marketdata_token(force_refresh=True)
+            if token and base_md_url:
+                url = f"{base_md_url}/instruments/ohlc"
+                headers = {"Authorization": token, "Content-Type": "application/json"}
+                resp = api_session.get(url, headers=headers, params=params, timeout=6)
+
         if resp.status_code != 200:
             logger.warning(f"OHLC: Broker returned HTTP {resp.status_code} for {exchange_segment}:{exchange_instrument_id} -> {resp.text[:100]}")
             return []

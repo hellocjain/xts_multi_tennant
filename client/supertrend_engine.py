@@ -456,13 +456,19 @@ class SingleSuperTrendRunner:
         fetch_ms = int((time.time() - t_start) * 1000)
 
         if not candles:
-            return {
-                "status": "ERROR",
-                "error": "No candle data returned from broker OHLC API",
-                "symbol": sym,
-                "inst_id": inst_id,
-                "exch_seg": exch_seg
-            }
+            if self.cached_candles:
+                logger.info(f"SuperTrend [{sym}]: Using {len(self.cached_candles)} cached candles for diagnostic trace.")
+                candles = list(self.cached_candles)
+            else:
+                return {
+                    "status": "ERROR",
+                    "error": "No candle data returned from broker OHLC API",
+                    "symbol": sym,
+                    "inst_id": inst_id,
+                    "exch_seg": exch_seg
+                }
+        else:
+            self.cached_candles = candles
 
         st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
         calc_ms = int((time.time() - t_start) * 1000) - fetch_ms
@@ -638,6 +644,8 @@ class SingleSuperTrendRunner:
             if not candles:
                 self.last_error = "No candle data returned from broker OHLC API"
                 return
+
+            self.cached_candles = candles
 
             # 6. Calculate SuperTrend (for live telemetry & charts)
             st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
