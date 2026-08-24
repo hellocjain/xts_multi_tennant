@@ -1175,6 +1175,49 @@ async def test_supertrend_first_trade_sizing_single_leg(monkeypatch):
     assert "ENTRY" in dispatched_orders[1][1]["order_ref"]
     assert runner.strategy_position == "SHORT"
 
+@pytest.mark.anyio
+async def test_supertrend_sync_trend_on_demand(monkeypatch):
+    dispatched_orders = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched_orders.append((sig_id, payload))
+
+    runner = SingleSuperTrendRunner({
+        "id": "st_test_sync_gold",
+        "symbol": "GOLDM",
+        "exchange_segment": "MCXFO",
+        "timeframe": "15m",
+        "quantity": 2,
+        "product_type": "NRML",
+        "is_enabled": True
+    }, dispatch_fn=mock_dispatch)
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 99999,
+        "exch_seg": "MCXFO",
+        "expiry": datetime.date.today() + datetime.timedelta(days=30),
+        "freeze_qty": 10000,
+        "lot_size": 1
+    })
+
+    # Synthetic bearish candles (rally then sharp drop)
+    prices_bearish = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 125, 50]
+    candles = generate_synthetic_candles(prices_bearish)
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles)
+
+    # 1. Sync from FLAT -> Should enter SHORT 2 lots
+    res1 = await runner.sync_to_current_trend(xts_api, client_main)
+    assert res1["status"] == "SUCCESS"
+    assert res1["trend"] == "BEARISH"
+    assert res1["virtual_position"] == -2
+    assert len(dispatched_orders) == 1
+    assert dispatched_orders[0][1]["action"] == "SELL"
+    assert dispatched_orders[0][1]["quantity"] == 2
+
+    # 2. Sync again -> Already in position
+    res2 = await runner.sync_to_current_trend(xts_api, client_main)
+    assert res2["status"] == "ALREADY_SYNCED"
+
 
 
 

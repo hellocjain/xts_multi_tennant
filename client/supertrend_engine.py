@@ -524,6 +524,87 @@ class SingleSuperTrendRunner:
             }
         }
 
+    async def sync_to_current_trend(self, xts_api_module, main_module) -> dict:
+        """
+        Synchronizes runner's position to its active prevailing SuperTrend trend on-demand.
+        - If FLAT: Enters initial position (BUY if BULLISH, SELL if BEARISH).
+        - If already matching: Returns ALREADY_SYNCED.
+        - If opposite: Reverses position cleanly to match active trend.
+        """
+        sym = self.symbol
+        inst = xts_api_module.resolve_contract(sym)
+        if not inst:
+            return {"status": "ERROR", "error": f"Symbol '{sym}' not found in master cache"}
+
+        inst_id = inst.get("inst_id")
+        exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
+        freeze_limit = int(inst.get("freeze_qty") or 100000)
+        tf_seconds = parse_timeframe_seconds(self.timeframe)
+
+        candles = await asyncio.to_thread(
+            xts_api_module.fetch_ohlc_candles,
+            exch_seg,
+            inst_id,
+            tf_seconds,
+            100
+        )
+        if not candles:
+            if self.cached_candles:
+                candles = list(self.cached_candles)
+            else:
+                return {"status": "ERROR", "error": "No candle data returned from broker OHLC API"}
+
+        st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
+        trend_name = st_res.get("trend_name", "INITIALIZING")
+        if trend_name not in ("BULLISH", "BEARISH"):
+            return {"status": "ERROR", "error": f"Invalid trend state: {trend_name}"}
+
+        self.active_trend = trend_name
+        self.last_close = st_res["last_close"]
+        self.last_atr = st_res["atr"]
+        self.upper_band = st_res["upper_band"]
+        self.lower_band = st_res["lower_band"]
+        candle_ts = st_res["last_candle_time"] or int(time.time())
+
+        # Check current state vs target state
+        if trend_name == "BULLISH":
+            if self.virtual_position == self.quantity:
+                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+            
+            if self.virtual_position < 0:
+                # Two-leg reversal
+                exit_qty = abs(self.virtual_position)
+                await self._execute_exit("SHORT", exit_qty, f"SYNC_EXIT_{candle_ts}", main_module, freeze_limit)
+                self.virtual_position = 0
+                await asyncio.sleep(0.5)
+                await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                self.virtual_position = self.quantity
+                return {"status": "SUCCESS", "message": f"Reversed from SHORT to LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+            else:
+                # Entry from flat
+                await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                self.virtual_position = self.quantity
+                return {"status": "SUCCESS", "message": f"Entered LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+
+        elif trend_name == "BEARISH":
+            if self.virtual_position == -self.quantity:
+                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+
+            if self.virtual_position > 0:
+                # Two-leg reversal
+                exit_qty = abs(self.virtual_position)
+                await self._execute_exit("LONG", exit_qty, f"SYNC_EXIT_{candle_ts}", main_module, freeze_limit)
+                self.virtual_position = 0
+                await asyncio.sleep(0.5)
+                await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                self.virtual_position = -self.quantity
+                return {"status": "SUCCESS", "message": f"Reversed from LONG to SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+            else:
+                # Entry from flat
+                await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                self.virtual_position = -self.quantity
+                return {"status": "SUCCESS", "message": f"Entered SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:
         """Executes a single SuperTrend evaluation and reversal check for this symbol."""
         if not self.is_enabled or not self.is_configured:
@@ -1366,6 +1447,13 @@ class MultiSuperTrendEngine:
         # Standalone diagnostic for un-registered symbol
         temp_runner = SingleSuperTrendRunner({"symbol": target_sym, "timeframe": timeframe_override or "5m", "exchange_segment": "MCXFO"})
         return await temp_runner.evaluate_diagnostic(xts_api_module)
+
+    async def sync_strategy_to_trend(self, strategy_id: str, xts_api_module, main_module) -> dict:
+        """Synchronizes an active strategy runner directly to its prevailing trend on-demand."""
+        runner = self.get_strategy(strategy_id)
+        if not runner:
+            return {"status": "ERROR", "error": f"Strategy '{strategy_id}' not found"}
+        return await runner.sync_to_current_trend(xts_api_module, main_module)
 
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:
         """Evaluates active strategies concurrently across all registered runners."""

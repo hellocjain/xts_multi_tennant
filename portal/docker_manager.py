@@ -200,6 +200,14 @@ def provision_client_container(tenant_id: str) -> dict:
                 restart_policy={"Name": "unless-stopped"},
                 detach=True
             )
+
+            # Ensure xts_portal is also connected to INGRESS_NETWORK for direct telemetry
+            try:
+                ingress_net = client.networks.get(INGRESS_NETWORK)
+                ingress_net.connect("xts_portal")
+            except Exception:
+                pass
+
             return {"status": "success", "container_id": container.id, "mode": "docker"}
         except Exception as e:
             logger.error(f"Failed to provision container {container_name}: {e}")

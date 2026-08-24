@@ -1308,6 +1308,38 @@ async def evaluate_supertrend_now_portal(
 
     return {"status": "ERROR", "error": "Client container unreachable"}
 
+@app.post("/admin/clients/{tenant_id}/supertrend/sync-trend")
+async def sync_supertrend_trend_portal(
+    tenant_id: str,
+    strategy_id: Optional[str] = None,
+    user: dict = Depends(require_auth)
+):
+    """Proxies on-demand trend synchronization request to the client execution gateway."""
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/sync-trend"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/sync-trend"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/sync-trend"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    params = {}
+    if strategy_id:
+        params["strategy_id"] = strategy_id.strip()
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, params=params, timeout=10.0)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                pass
+
+    return {"status": "ERROR", "error": "Client container unreachable"}
+
 # =====================================================================
 # EMERGENCY PANIC SWITCHES
 # =====================================================================

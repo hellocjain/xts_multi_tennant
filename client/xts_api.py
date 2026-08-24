@@ -317,6 +317,13 @@ def start_token_keepalive():
                 
                 if MARKET_DATA_TOKEN and (now - MARKET_DATA_TOKEN_ACQUIRED_AT > TOKEN_MAX_LIFESPAN_SECONDS):
                     get_marketdata_token(force_refresh=True)
+                else:
+                    t_md, base_md = get_marketdata_token()
+                    if t_md and base_md:
+                        try:
+                            api_session.get(f"{base_md}/instruments/quotes", headers={"authorization": t_md}, timeout=4)
+                        except Exception:
+                            pass
             except Exception:
                 pass
     threading.Thread(target=_heartbeat, name="token-keepalive", daemon=True).start()
@@ -915,13 +922,17 @@ def get_live_price(instrument_id, exch_seg):
     }
     try:
         response = api_session.post(url, headers=headers, json=payload, timeout=5)
-        data = response.json()
         
-        if data.get('type') == 'error' and any(kw in str(data).lower() for kw in ("token", "session", "auth", "unauthorized")):
-            logger.error("Market Data Token expired during price fetch. Clearing session tokens.")
-            clear_tokens()
-            return "TOKEN_EXPIRED"
+        # Auto-heal expired Market Data token and retry once
+        if response.status_code in (400, 401) or (response.status_code == 200 and response.json().get('type') == 'error' and any(kw in str(response.json()).lower() for kw in ("token", "session", "auth", "unauthorized", "e-session-0007"))):
+            logger.warning(f"Market Data Token expired during price fetch for {instrument_id}. Auto-refreshing token...")
+            md_token, md_base_url = get_marketdata_token(force_refresh=True)
+            if md_token and md_base_url:
+                url = f"{md_base_url}/instruments/quotes"
+                headers = {"authorization": md_token, "Content-Type": "application/json"}
+                response = api_session.post(url, headers=headers, json=payload, timeout=5)
 
+        data = response.json()
         if data.get('type') == 'success':
             list_quotes = data.get('result', {}).get('listQuotes', [])
             raw = list_quotes[0] if (isinstance(list_quotes, list) and list_quotes) else (list_quotes if isinstance(list_quotes, dict) else None)
@@ -966,6 +977,16 @@ def get_live_prices_batch(instrument_pairs):
     prices = {}
     try:
         response = api_session.post(url, headers=headers, json=payload, timeout=5)
+        
+        # Auto-heal expired Market Data token and retry once
+        if response.status_code in (400, 401) or (response.status_code == 200 and response.json().get('type') == 'error' and any(kw in str(response.json()).lower() for kw in ("token", "session", "auth", "unauthorized", "e-session-0007"))):
+            logger.warning("Market Data Token expired during batch price fetch. Auto-refreshing token...")
+            md_token, md_base_url = get_marketdata_token(force_refresh=True)
+            if md_token and md_base_url:
+                url = f"{md_base_url}/instruments/quotes"
+                headers = {"authorization": md_token, "Content-Type": "application/json"}
+                response = api_session.post(url, headers=headers, json=payload, timeout=5)
+
         data = response.json()
         if data.get('type') == 'success':
             list_quotes = data.get('result', {}).get('listQuotes', [])

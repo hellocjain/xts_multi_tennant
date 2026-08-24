@@ -39,6 +39,7 @@ services:
       - /opt/xts_multi:/opt/xts_multi:rw
     networks:
       - xts_mgmt_net
+      - xts_ingress_net
 
 networks:
   # Isolated Management Network (Portal <-> Caddy)

@@ -1115,8 +1115,13 @@
                     </button>
 
                     <div class="flex items-center gap-2">
-                        <button type="button" onclick="openEvaluateModal('{{ s.symbol }}', '{{ s.id }}')" title="Evaluate Single Strategy"
-                            class="p-1.5 bg-slate-900 hover:bg-slate-800 text-amber-400 rounded-lg border border-bordercolor transition">
+                        <button type="button" onclick="syncStrategyTrend('{{ s.id }}', '{{ s.symbol }}', '{{ s.timeframe }}')" title="Sync position to current trend immediately"
+                            class="p-1.5 bg-slate-900 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-bordercolor hover:border-emerald-500/40 transition">
+                            <i data-lucide="play" class="w-3.5 h-3.5"></i>
+                        </button>
+
+                        <button type="button" onclick="openEvaluateModal('{{ s.symbol }}', '{{ s.id }}')" title="Force Evaluate Strategy & Calculation Trace"
+                            class="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-bordercolor transition">
                             <i data-lucide="zap" class="w-3.5 h-3.5"></i>
                         </button>
 
@@ -2148,6 +2153,30 @@
             activeBtn.className = "px-2.5 py-1 rounded-lg transition font-bold bg-brand-600 text-white shadow";
         }
         refreshSuperTrendChart();
+    }
+
+    // Action: Sync Strategy to Current Prevailing Trend
+    async function syncStrategyTrend(strategyId, symbol, timeframe) {
+        if (!confirm(`Sync position for ${symbol} (${timeframe}) to its prevailing SuperTrend trend now?`)) {
+            return;
+        }
+        try {
+            showToast(`Synchronizing ${symbol} (${timeframe}) to current trend...`, 'info');
+            const tenantId = "{{ client.id }}";
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/sync-trend?strategy_id=${encodeURIComponent(strategyId)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const res = await resp.json();
+            if (res.status === 'SUCCESS' || res.status === 'ALREADY_SYNCED') {
+                showToast(res.message || 'Position synchronized successfully!', 'success');
+                setTimeout(() => window.location.reload(), 1200);
+            } else {
+                showToast(res.error || res.message || 'Failed to sync position', 'error');
+            }
+        } catch (e) {
+            showToast('Network error synchronizing trend', 'error');
+        }
     }
 
     // Modal: Force Evaluate Strategy Cycle (Single or All)

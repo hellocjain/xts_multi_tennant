@@ -742,6 +742,24 @@ async def evaluate_supertrend_now(
         timeframe_override=timeframe
     )
 
+@app.post("/internal/supertrend/sync-trend")
+async def sync_supertrend_trend_endpoint(
+    request: Request,
+    strategy_id: Optional[str] = None
+):
+    """Executes on-demand position synchronization to active prevailing SuperTrend trend."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    target_id = strategy_id or (supertrend_engine.primary_runner.id if supertrend_engine.primary_runner else "")
+    if not target_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "No active strategy found to sync"})
+
+    return await supertrend_engine.sync_strategy_to_trend(target_id, xts_api, sys.modules[__name__])
+
 # =========================================================================
 # Custom Python Strategy Internal Endpoints
 # =========================================================================
