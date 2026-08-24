@@ -1473,20 +1473,55 @@ def get_margin_telemetry():
                 if data.get('type') == 'success':
                     bal_list = data.get('result', {}).get('BalanceList', [])
                     if bal_list and isinstance(bal_list, list):
-                        rms = bal_list[0].get('limitObject', {}).get('RMSSubLimits', {})
-                        cash_avail = float(rms.get('cashAvailable', 0.0) or 0.0)
-                        collateral = float(rms.get('collateralMargin', 0.0) or 0.0)
-                        margin_used = float(rms.get('marginUtilized', 0.0) or 0.0)
-                        net_avail = float(rms.get('netMarginAvailable', cash_avail + collateral - margin_used) or (cash_avail + collateral - margin_used))
-                        return {
-                            "available_margin": cash_avail,
-                            "margin_used": margin_used,
-                            "total_collateral": collateral,
-                            "net_margin_available": net_avail,
-                            "total_account_value": cash_avail + collateral,
-                            "is_simulated": False,
-                            "error": None
-                        }
+                        best_entry = None
+                        best_avail = -1.0
+                        
+                        for item in bal_list:
+                            limit_obj = item.get('limitObject', {})
+                            rms = limit_obj.get('RMSSubLimits', {})
+                            margin_avail_obj = limit_obj.get('marginAvailable', {})
+                            
+                            cash_avail = float(rms.get('cashAvailable', 0.0) or 0.0)
+                            pay_in = float(margin_avail_obj.get('PayInAmount', 0.0) or 0.0)
+                            adhoc = float(margin_avail_obj.get('AdhocMargin', 0.0) or 0.0)
+                            collateral = float(rms.get('collateral', 0.0) or rms.get('collateralMargin', 0.0) or 0.0)
+                            margin_used = float(rms.get('marginUtilized', 0.0) or 0.0)
+                            
+                            raw_net_avail = rms.get('netMarginAvailable')
+                            if raw_net_avail is not None:
+                                try:
+                                    net_avail = float(raw_net_avail)
+                                except Exception:
+                                    net_avail = cash_avail + pay_in + adhoc + collateral - margin_used
+                            else:
+                                net_avail = cash_avail + pay_in + adhoc + collateral - margin_used
+                            
+                            effective_avail = max(0.0, net_avail)
+                            total_acct_val = max(0.0, cash_avail + pay_in + adhoc + collateral)
+                            
+                            entry_data = {
+                                "available_margin": max(0.0, cash_avail + pay_in + adhoc),
+                                "margin_used": max(0.0, margin_used),
+                                "total_collateral": max(0.0, collateral),
+                                "net_margin_available": effective_avail,
+                                "total_account_value": total_acct_val,
+                                "is_simulated": False,
+                                "error": None
+                            }
+                            
+                            header = item.get('limitHeader', '')
+                            if 'COMMODITIES' in header and effective_avail > 0:
+                                best_entry = entry_data
+                                best_avail = effective_avail
+                                break
+                            elif effective_avail > best_avail:
+                                best_entry = entry_data
+                                best_avail = effective_avail
+                            elif best_entry is None:
+                                best_entry = entry_data
+                        
+                        if best_entry:
+                            return best_entry
         except Exception:
             pass
 
