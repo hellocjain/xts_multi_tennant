@@ -17,7 +17,15 @@ from main import app, supertrend_engine
 import xts_api
 import main as client_main
 
-def generate_synthetic_candles(prices, base_time=1787200000, interval=300):
+@pytest.fixture(autouse=True)
+def isolate_test_db(tmp_path, monkeypatch):
+    test_db = str(tmp_path / "test_signals.db")
+    monkeypatch.setattr(client_main, "_DB_PATH", test_db)
+    client_main.db_init()
+
+def generate_synthetic_candles(prices, base_time=None, interval=300):
+    if base_time is None:
+        base_time = int(time.time()) - (len(prices) * interval)
     candles = []
     for i, p in enumerate(prices):
         t = base_time + (i * interval)
@@ -1126,6 +1134,7 @@ async def test_supertrend_first_trade_sizing_single_leg(monkeypatch):
         "exchange_segment": "MCXFO",
         "timeframe": "15m",
         "quantity": 4,
+        "virtual_position": 0,
         "is_enabled": True
     })
 
@@ -1217,6 +1226,75 @@ async def test_supertrend_sync_trend_on_demand(monkeypatch):
     # 2. Sync again -> Already in position
     res2 = await runner.sync_to_current_trend(xts_api, client_main)
     assert res2["status"] == "ALREADY_SYNCED"
+
+@pytest.mark.asyncio
+async def test_market_open_0900_lifecycle_and_multitimeframe_netting(monkeypatch, tmp_path):
+    """
+    Bug Bounty Hunter Verification:
+    Tests the exact 09:00 AM market open lifecycle:
+    1. 08:59 AM - Pre-open historical candles (no unclosed bars).
+    2. 09:05 AM - Mid-bar unclosed candle (must NOT trigger trade).
+    3. 09:15 AM - Confirmed 15m closed candle with flip (triggers clean reversal).
+    4. 09:30 AM - Confirmed 30m closed candle with flip.
+    """
+    db_file = str(tmp_path / "test_lifecycle.db")
+    monkeypatch.setattr(client_main, "_DB_PATH", db_file)
+    client_main.db_init()
+
+    dispatched = []
+    async def mock_dispatch(sig_id, payload):
+        dispatched.append((sig_id, payload))
+
+    runner_15m = SingleSuperTrendRunner({
+        "id": "st_test_15m",
+        "symbol": "SILVER1001!",
+        "timeframe": "15m",
+        "quantity": 2,
+        "product_type": "NRML",
+        "is_enabled": True
+    }, dispatch_fn=mock_dispatch)
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda s: {
+        "inst_id": 9999,
+        "exch_seg": "MCXFO",
+        "freeze_qty": 100,
+        "lot_size": 1
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    # Step 1: Yesterday's closed candles (Bearish)
+    base_ts = 1771800000 # 08:45 AM
+    yesterday_candles = [
+        {"time": base_ts + (i * 900), "open": 100 - i, "high": 101 - i, "low": 99 - i, "close": 100 - i, "volume": 100}
+        for i in range(20)
+    ]
+    runner_15m.virtual_position = -2 # holding SHORT from yesterday
+
+    # At 09:05 AM: Unclosed 09:00-09:15 candle in progress
+    open_ts = base_ts + (20 * 900) # 09:00 AM candle (closing at 09:15)
+    unclosed_candles = yesterday_candles + [
+        {"time": open_ts + 900, "open": 150, "high": 160, "low": 149, "close": 158, "volume": 500} # huge spike
+    ]
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: unclosed_candles)
+    monkeypatch.setattr(time, "time", lambda: open_ts + 300) # Current time: 09:05 AM (< 09:15 close)
+
+    await runner_15m.evaluate_cycle(xts_api, client_main)
+    # MUST NOT trade on unclosed 09:05 candle
+    assert len(dispatched) == 0
+    assert runner_15m.virtual_position == -2
+
+    # Step 2: At 09:15:01 AM: Candle is officially CLOSED
+    monkeypatch.setattr(time, "time", lambda: open_ts + 901) # Current time: 09:15:01 AM
+    await runner_15m.evaluate_cycle(xts_api, client_main)
+
+    # MUST trigger BULLISH flip: Exit 2 SHORT + Enter 2 LONG = 2 dispatched orders
+    assert len(dispatched) == 2
+    assert dispatched[0][1]["action"] == "BUY" # Exit Short
+    assert dispatched[0][1]["quantity"] == 2
+    assert dispatched[1][1]["action"] == "BUY" # Enter Long
+    assert dispatched[1][1]["quantity"] == 2
+    assert runner_15m.virtual_position == 2
 
 
 

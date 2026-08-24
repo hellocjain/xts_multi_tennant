@@ -667,7 +667,7 @@ class SingleSuperTrendRunner:
                     reconciled_lots = (raw_qty // lot_size) if (is_derivative and lot_size > 1) else raw_qty
                     self.current_broker_quantity = reconciled_lots
                     self.broker_side = side
-                    if self.active_trend == "INITIALIZING" and self.virtual_position == 0 and reconciled_lots > 0:
+                    if self.last_processed_candle_time == 0 and self.virtual_position == 0 and reconciled_lots > 0:
                         self.virtual_position = -reconciled_lots if side == "SHORT" else reconciled_lots
                 else:
                     self.current_broker_quantity = 0
@@ -723,10 +723,13 @@ class SingleSuperTrendRunner:
             )
 
             if not candles:
-                self.last_error = "No candle data returned from broker OHLC API"
-                return
+                if self.cached_candles:
+                    candles = list(self.cached_candles)
+                else:
+                    self.last_error = "No candle data returned from broker OHLC API"
+                    return
 
-            self.cached_candles = candles
+            self.cached_candles = list(candles)
 
             # 6. Calculate SuperTrend (for live telemetry & charts)
             st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
@@ -740,7 +743,6 @@ class SingleSuperTrendRunner:
             self.lower_band = st_res["lower_band"]
             self.last_close = st_res["last_close"]
             self.last_candle_time = st_res["last_candle_time"]
-            self.cached_candles = st_res.get("candle_series", [])
             self.last_error = None
             self.status = "RUNNING"
 
