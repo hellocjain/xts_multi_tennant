@@ -888,7 +888,6 @@ async def save_supertrend_strategy_action(
         raise HTTPException(status_code=400, detail="Trading symbol is required.")
 
     now = time.time()
-    strat_id = id.strip() if id.strip() else f"st_{clean_sym.lower()}_{clean_tf}"
 
     with closing(database.get_db_connection()) as conn:
         with conn:
@@ -898,8 +897,24 @@ async def save_supertrend_strategy_action(
                 existing_rec = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND id=?", (tenant_id, id.strip())).fetchone()
             if not existing_rec:
                 existing_rec = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=? AND timeframe=?", (tenant_id, clean_sym, clean_tf)).fetchone()
-                if existing_rec:
-                    strat_id = existing_rec["id"]
+
+            if existing_rec:
+                strat_id = existing_rec["id"]
+            elif id.strip():
+                clash = conn.execute("SELECT tenant_id FROM tenant_supertrend_strategies WHERE id=?", (id.strip(),)).fetchone()
+                if clash and clash["tenant_id"] != tenant_id:
+                    import uuid
+                    strat_id = f"st_{tenant_id}_{clean_sym.lower()}_{clean_tf}_{uuid.uuid4().hex[:6]}"
+                else:
+                    strat_id = id.strip()
+            else:
+                candidate_id = f"st_{tenant_id}_{clean_sym.lower()}_{clean_tf}"
+                clash = conn.execute("SELECT tenant_id FROM tenant_supertrend_strategies WHERE id=?", (candidate_id,)).fetchone()
+                if clash and clash["tenant_id"] != tenant_id:
+                    import uuid
+                    strat_id = f"st_{tenant_id}_{clean_sym.lower()}_{clean_tf}_{uuid.uuid4().hex[:6]}"
+                else:
+                    strat_id = candidate_id
 
             if not existing_rec:
                 cur_count = conn.execute("SELECT COUNT(*) FROM tenant_supertrend_strategies WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
