@@ -228,13 +228,53 @@ async def get_single_client_telemetry(tenant_id: str) -> dict:
             LEFT JOIN tenant_credentials c ON t.id = c.tenant_id
             WHERE t.id = ?
         """, (tenant_id,)).fetchone()
+        
+        try:
+            st_rows = [dict(r) for r in conn.execute("""
+                SELECT id, symbol, timeframe, quantity, product_type, atr_period, multiplier, execution_mode, is_enabled
+                FROM tenant_supertrend_strategies
+                WHERE tenant_id = ?
+                ORDER BY created_at ASC
+            """, (tenant_id,)).fetchall()]
+        except Exception:
+            st_rows = []
+        
+        try:
+            cs_rows = [dict(r) for r in conn.execute("""
+                SELECT t.strategy_id, t.quantity as lots, t.is_enabled, s.name, COALESCE(t.symbol, s.default_symbol) as symbol, COALESCE(t.timeframe, s.default_timeframe) as timeframe, t.product_type
+                FROM tenant_custom_strategies t
+                JOIN custom_strategies s ON t.strategy_id = s.id
+                WHERE t.tenant_id = ?
+            """, (tenant_id,)).fetchall()]
+        except Exception:
+            cs_rows = []
     
     if not row:
         return build_client_telemetry_dict(tenant_id=tenant_id, name=tenant_id, status="NOT_FOUND", error="Tenant not found in database")
     
     tenant_dict = dict(row)
     async with httpx.AsyncClient() as client:
-        return await fetch_single_client_telemetry(client, tenant_dict)
+        res = await fetch_single_client_telemetry(client, tenant_dict)
+    
+    if not res.get("supertrend", {}).get("strategies") and st_rows:
+        if "supertrend" not in res or not isinstance(res["supertrend"], dict):
+            res["supertrend"] = {}
+        res["supertrend"]["strategies"] = st_rows
+        res["supertrend"]["total_strategies"] = len(st_rows)
+        res["supertrend"]["active_strategies_count"] = sum(1 for s in st_rows if s.get("is_enabled"))
+        if not res["supertrend"].get("symbol") and st_rows:
+            res["supertrend"]["symbol"] = st_rows[0]["symbol"]
+            res["supertrend"]["timeframe"] = st_rows[0]["timeframe"]
+            res["supertrend"]["is_enabled"] = bool(st_rows[0]["is_enabled"])
+    
+    if not res.get("custom_strategies", {}).get("strategies") and cs_rows:
+        if "custom_strategies" not in res or not isinstance(res["custom_strategies"], dict):
+            res["custom_strategies"] = {}
+        res["custom_strategies"]["strategies"] = cs_rows
+        res["custom_strategies"]["total_strategies"] = len(cs_rows)
+        res["custom_strategies"]["active_strategies_count"] = sum(1 for s in cs_rows if s.get("is_enabled"))
+    
+    return res
 
 async def aggregate_all_telemetry() -> dict:
     with closing(get_db_connection()) as conn:
@@ -244,6 +284,24 @@ async def aggregate_all_telemetry() -> dict:
             LEFT JOIN tenant_risk_limits r ON t.id = r.tenant_id
             LEFT JOIN tenant_credentials c ON t.id = c.tenant_id
         """).fetchall()]
+        
+        try:
+            st_rows = [dict(r) for r in conn.execute("""
+                SELECT tenant_id, id, symbol, timeframe, quantity, product_type, atr_period, multiplier, execution_mode, is_enabled
+                FROM tenant_supertrend_strategies
+                ORDER BY created_at ASC
+            """).fetchall()]
+        except Exception:
+            st_rows = []
+        
+        try:
+            cs_rows = [dict(r) for r in conn.execute("""
+                SELECT t.tenant_id, t.strategy_id, t.quantity as lots, t.is_enabled, s.name, COALESCE(t.symbol, s.default_symbol) as symbol, COALESCE(t.timeframe, s.default_timeframe) as timeframe, t.product_type
+                FROM tenant_custom_strategies t
+                JOIN custom_strategies s ON t.strategy_id = s.id
+            """).fetchall()]
+        except Exception:
+            cs_rows = []
 
     async with httpx.AsyncClient() as client:
         tasks = [fetch_single_client_telemetry(client, t) for t in tenants]
@@ -256,10 +314,11 @@ async def aggregate_all_telemetry() -> dict:
     healthy_count = 0
 
     for idx, res in enumerate(results):
+        t = tenants[idx]
+        t_id = t["id"]
         if isinstance(res, Exception):
-            t = tenants[idx]
             res = build_client_telemetry_dict(
-                tenant_id=t["id"],
+                tenant_id=t_id,
                 name=t["name"],
                 status="ERROR",
                 docker_status="UNKNOWN",
@@ -267,6 +326,28 @@ async def aggregate_all_telemetry() -> dict:
                 paper_mode=bool(t.get("paper_trade_mode", False)),
                 error=str(res)
             )
+        
+        # Merge authoritative strategies from Portal DB
+        t_st_rows = [s for s in st_rows if s["tenant_id"] == t_id]
+        if not res.get("supertrend", {}).get("strategies") and t_st_rows:
+            if "supertrend" not in res or not isinstance(res["supertrend"], dict):
+                res["supertrend"] = {}
+            res["supertrend"]["strategies"] = t_st_rows
+            res["supertrend"]["total_strategies"] = len(t_st_rows)
+            res["supertrend"]["active_strategies_count"] = sum(1 for s in t_st_rows if s.get("is_enabled"))
+            if not res["supertrend"].get("symbol") and t_st_rows:
+                res["supertrend"]["symbol"] = t_st_rows[0]["symbol"]
+                res["supertrend"]["timeframe"] = t_st_rows[0]["timeframe"]
+                res["supertrend"]["is_enabled"] = bool(t_st_rows[0]["is_enabled"])
+        
+        t_cs_rows = [s for s in cs_rows if s["tenant_id"] == t_id]
+        if not res.get("custom_strategies", {}).get("strategies") and t_cs_rows:
+            if "custom_strategies" not in res or not isinstance(res["custom_strategies"], dict):
+                res["custom_strategies"] = {}
+            res["custom_strategies"]["strategies"] = t_cs_rows
+            res["custom_strategies"]["total_strategies"] = len(t_cs_rows)
+            res["custom_strategies"]["active_strategies_count"] = sum(1 for s in t_cs_rows if s.get("is_enabled"))
+
         client_data.append(res)
         total_unrealized += float(res.get("unrealized_mtm") or 0.0)
         total_realized += float(res.get("realized_pnl") or 0.0)
