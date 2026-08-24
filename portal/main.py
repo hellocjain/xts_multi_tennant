@@ -1887,7 +1887,7 @@ async def get_system_health_api(user: dict = Depends(require_auth)):
         "database": {"status": "HEALTHY", "integrity": "OK", "tenants_count": 0, "strategies_count": 0},
         "clients": {},
         "system": {
-            "server_ip": telemetry_service.get_server_ip(),
+            "server_ip": os.environ.get("SERVER_IP", "139.59.20.239"),
             "uptime_seconds": time.time() - getattr(app.state, "start_time", time.time())
         }
     }
