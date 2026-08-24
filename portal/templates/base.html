@@ -121,15 +121,6 @@
         </div>
 
         <div class="flex items-center space-x-3">
-            {% if current_user %}
-            <!-- Quick Command Palette Trigger (Cmd+K) -->
-            <button type="button" onclick="openCommandPalette()" class="hidden sm:flex items-center space-x-2 bg-slate-900 hover:bg-slate-800 border border-bordercolor text-slate-400 hover:text-slate-200 px-3 py-1.5 rounded-lg text-xs transition font-sans shadow-sm">
-                <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500"></i>
-                <span>Quick Jump...</span>
-                <kbd class="bg-obsidian border border-slate-700 text-slate-400 text-[10px] font-mono px-1.5 py-0.5 rounded">⌘K</kbd>
-            </button>
-            {% endif %}
-
             <!-- Server Telemetry Strip -->
             {% if server_info %}
             <div class="hidden lg:flex items-center space-x-2 text-[11px] bg-obsidian border border-bordercolor px-3 py-1 rounded-lg font-mono text-slate-300">
@@ -267,87 +258,8 @@
         }
     </script>
 
-    <!-- GLOBAL COMMAND PALETTE MODAL (Cmd+K) -->
-    <div id="commandPaletteModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-[100] hidden flex items-start justify-center pt-20 p-4">
-        <div class="bg-cardbg border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden animate-fadeIn space-y-0" onclick="event.stopPropagation()">
-            <!-- Search Header -->
-            <div class="flex items-center px-4 py-3.5 border-b border-bordercolor">
-                <i data-lucide="search" class="w-4 h-4 text-brand-400 mr-3 shrink-0"></i>
-                <input type="text" id="paletteSearchInput" oninput="filterPaletteItems(this.value)" placeholder="Search profiles, pages, strategies (e.g. abk01, orders, strategies)..." 
-                       class="w-full bg-transparent text-slate-100 text-sm focus:outline-none placeholder-slate-500 font-medium">
-                <kbd class="bg-obsidian border border-slate-700 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded ml-2">ESC</kbd>
-            </div>
-
-            <!-- Palette Results List -->
-            <div class="max-h-80 overflow-y-auto p-2 space-y-1" id="paletteResultsList">
-                <div class="text-[10px] font-mono uppercase tracking-wider text-slate-500 px-3 py-1.5 font-bold">Quick Navigation</div>
-                <a href="/admin/dashboard" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
-                    <span class="flex items-center gap-2.5">
-                        <i data-lucide="layout-dashboard" class="w-4 h-4 text-slate-400"></i>
-                        <span>Client Profiles</span>
-                    </span>
-                    <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
-                </a>
-                <a href="/admin/orders" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
-                    <span class="flex items-center gap-2.5">
-                        <i data-lucide="activity" class="w-4 h-4 text-slate-400"></i>
-                        <span>Orders &amp; Execution Stream</span>
-                    </span>
-                    <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
-                </a>
-                <a href="/admin/strategies" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
-                    <span class="flex items-center gap-2.5">
-                        <i data-lucide="code-2" class="w-4 h-4 text-brand-400"></i>
-                        <span>Python Strategy Hub</span>
-                    </span>
-                    <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
-                </a>
-                <a href="/admin/clients/add" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
-                    <span class="flex items-center gap-2.5">
-                        <i data-lucide="user-plus" class="w-4 h-4 text-slate-400"></i>
-                        <span>Add New Client Account</span>
-                    </span>
-                    <span class="text-[10px] font-mono text-slate-500">Action ➔</span>
-                </a>
-                <a href="/admin/settings" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
-                    <span class="flex items-center gap-2.5">
-                        <i data-lucide="sliders" class="w-4 h-4 text-slate-400"></i>
-                        <span>Security &amp; System Settings</span>
-                    </span>
-                    <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
-                </a>
-                <a href="/admin/audit-logs" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
-                    <span class="flex items-center gap-2.5">
-                        <i data-lucide="shield-check" class="w-4 h-4 text-slate-400"></i>
-                        <span>Security Audit Trail</span>
-                    </span>
-                    <span class="text-[10px] font-mono text-slate-500">Jump ➔</span>
-                </a>
-
-                {% if clients %}
-                <div class="text-[10px] font-mono uppercase tracking-wider text-slate-500 px-3 py-1.5 font-bold pt-2 border-t border-bordercolor/60">Client Accounts ({{ clients|length }})</div>
-                {% for c in clients %}
-                <a href="/admin/clients/{{ c.id }}" class="palette-item flex items-center justify-between px-3 py-2 rounded-xl text-xs text-slate-200 hover:bg-slate-800 hover:text-white transition">
-                    <span class="flex items-center gap-2.5">
-                        <div class="w-5 h-5 rounded-md bg-brand-500/10 text-brand-400 font-mono text-[10px] flex items-center justify-center font-bold">{{ c.id[:2]|upper }}</div>
-                        <span class="font-semibold text-slate-100">{{ c.name }}</span>
-                        <span class="text-slate-500 font-mono text-[11px]">({{ c.id }} &bull; {{ c.client_id }})</span>
-                    </span>
-                    <span class="text-[10px] font-mono {% if (c.net_mtm or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
-                        {% if (c.net_mtm or 0) >= 0 %}+{% endif %}₹{{ c.net_mtm|inr }} ➔
-                    </span>
-                </a>
-                {% endfor %}
-                {% endif %}
-            </div>
-
-            <!-- Footer Hints -->
-            <div class="px-4 py-2 bg-obsidian border-t border-bordercolor flex items-center justify-between text-[11px] text-slate-500 font-mono">
-                <span>Navigation &amp; Quick Actions</span>
-                <span>Press <kbd class="bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 text-slate-400">ESC</kbd> to exit</span>
-            </div>
-        </div>
-    </div>
+    <!-- Modal Container for dynamic HTMX modals -->
+    <div id="modal-container"></div>
 
     <script>
         // Universal Modal Dismissal Helper
@@ -356,56 +268,21 @@
             if (mc) mc.innerHTML = '';
             
             // Dismiss standard modal overlays if open
-            ['uploadModal', 'assignModal', 'codeModal', 'dryRunModal', 'panicModal', 'deleteModal', 'commandPaletteModal'].forEach(id => {
+            ['uploadModal', 'assignModal', 'codeModal', 'dryRunModal', 'panicModal', 'deleteModal'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.classList.add('hidden');
             });
         }
 
-        function openCommandPalette() {
-            const modal = document.getElementById('commandPaletteModal');
-            if (modal) {
-                modal.classList.remove('hidden');
-                const inp = document.getElementById('paletteSearchInput');
-                if (inp) {
-                    inp.value = '';
-                    filterPaletteItems('');
-                    setTimeout(() => inp.focus(), 50);
-                }
-                lucide.createIcons();
-            }
-        }
-
-        function filterPaletteItems(query) {
-            const q = query.toLowerCase().trim();
-            const items = document.querySelectorAll('#paletteResultsList .palette-item');
-            items.forEach(item => {
-                const text = item.innerText.toLowerCase();
-                if (!q || text.includes(q)) {
-                    item.style.display = 'flex';
-                } else {
-                    item.style.display = 'none';
-                }
-            });
-        }
-
         document.addEventListener('keydown', function(e) {
-            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-                e.preventDefault();
-                const modal = document.getElementById('commandPaletteModal');
-                if (modal && !modal.classList.contains('hidden')) {
-                    closeModal();
-                } else {
-                    openCommandPalette();
-                }
-            } else if (e.key === 'Escape') {
+            if (e.key === 'Escape') {
                 closeModal();
             }
         });
 
         // Close on backdrop click
         document.addEventListener('click', function(e) {
-            ['uploadModal', 'assignModal', 'codeModal', 'dryRunModal', 'panicModal', 'deleteModal', 'commandPaletteModal'].forEach(id => {
+            ['uploadModal', 'assignModal', 'codeModal', 'dryRunModal', 'panicModal', 'deleteModal'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el && e.target === el) {
                     el.classList.add('hidden');
