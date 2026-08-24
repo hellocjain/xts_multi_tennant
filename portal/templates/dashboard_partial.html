@@ -1,7 +1,7 @@
 <!-- Top 4 KPI Hero Metric Cards Strip -->
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <!-- 1. Total Net P&L (Aggregate) -->
-    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden">
+    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden group hover:border-slate-700 transition">
         <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Net P&amp;L Today</span>
             <div class="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
@@ -16,10 +16,11 @@
             <span class="text-slate-600">|</span>
             <span>Realized: <strong class="{% if (summary.total_realized_pnl or 0) >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">{% if (summary.total_realized_pnl or 0) >= 0 %}+{% endif %}₹{{ summary.total_realized_pnl|inr }}</strong></span>
         </div>
+        <p class="text-[10px] text-slate-500 mt-2 border-t border-bordercolor/60 pt-1.5">Combined profit/loss across all accounts today</p>
     </div>
 
     <!-- 2. Active Trading Engines -->
-    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden">
+    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden group hover:border-slate-700 transition">
         <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Trading Engines Health</span>
             <div class="w-7 h-7 rounded-lg bg-brand-500/10 flex items-center justify-center text-brand-400">
@@ -36,6 +37,7 @@
         <div class="text-[11px] text-slate-400 font-mono mt-1">
             <span>{{ summary.active_clients }} running</span> &bull; <span class="text-slate-500">{{ summary.total_clients - summary.healthy_clients }} offline/paused</span>
         </div>
+        <p class="text-[10px] text-slate-500 mt-2 border-t border-bordercolor/60 pt-1.5">Multi-tenant isolated container status</p>
     </div>
 
     <!-- 3. Total Margin Utilization -->
@@ -43,7 +45,7 @@
     {% set total_used = clients|map(attribute='margin_used', default=0.0)|reject('none')|sum|default(0.0) %}
     {% set total_val = (total_avail or 0.0) + (total_used or 0.0) %}
     {% set agg_margin_pct = ((total_used / total_val) * 100)|round(1) if total_val > 0 else 0.0 %}
-    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden">
+    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden group hover:border-slate-700 transition">
         <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Broker Capital Deployed</span>
             <div class="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
@@ -61,12 +63,13 @@
             <span>Blocked: ₹{{ total_used|inr(0) }}</span>
             <span>{{ agg_margin_pct }}% Used</span>
         </div>
+        <p class="text-[10px] text-slate-500 mt-2 border-t border-bordercolor/60 pt-1.5">Free capital for orders vs blocked margin</p>
     </div>
 
     <!-- 4. Total Daily Turnover -->
     {% set total_notional = clients|map(attribute='notional_today', default=0.0)|reject('none')|sum|default(0.0) %}
     {% set total_open_positions = clients|map(attribute='positions_count', default=0)|reject('none')|sum|default(0) %}
-    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden">
+    <div class="bg-cardbg border border-bordercolor p-5 rounded-2xl shadow-lg relative overflow-hidden group hover:border-slate-700 transition">
         <div class="flex items-center justify-between">
             <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Turnover &amp; Exposure</span>
             <div class="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400">
@@ -80,6 +83,7 @@
             <span>Open Positions: <strong class="text-emerald-400">{{ total_open_positions }}</strong></span>
             <span class="text-slate-500">Intraday Total</span>
         </div>
+        <p class="text-[10px] text-slate-500 mt-2 border-t border-bordercolor/60 pt-1.5">Aggregate daily traded contract turnover</p>
     </div>
 </div>
 
