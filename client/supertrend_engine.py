@@ -256,12 +256,23 @@ class SingleSuperTrendRunner:
 
         self.is_configured: bool = bool(self.symbol and self.exchange_segment and self.quantity > 0)
         self.is_enabled: bool = bool(config_dict.get("is_enabled", False)) and self.is_configured
+        self.strategy_key: str = f"{self.symbol}_{self.timeframe}"
+
+        # Virtual Position Tracking (Signed Lots: +Q for LONG, -Q for SHORT, 0 for FLAT)
+        if "virtual_position" in config_dict:
+            self._virtual_position: int = int(config_dict.get("virtual_position", 0))
+        else:
+            try:
+                import main
+                self._virtual_position = int(main.db_get_virtual_position(self.strategy_key))
+            except Exception:
+                self._virtual_position = 0
 
         # Live Dynamic Telemetry
         self.status: str = "RUNNING" if self.is_enabled else "DISABLED"
         self.active_trend: str = "INITIALIZING"
-        self.strategy_position: str = "FLAT" # FLAT, LONG, SHORT
         self.current_broker_quantity: int = 0
+        self.broker_side: str = "FLAT"
         self.last_atr: float = 0.0
         self.upper_band: float = 0.0
         self.lower_band: float = 0.0
@@ -279,6 +290,32 @@ class SingleSuperTrendRunner:
         self.recent_trade_markers: List[Dict[str, Any]] = []
         self.pending_order_first_seen: Dict[str, float] = {}
 
+    @property
+    def virtual_position(self) -> int:
+        return self._virtual_position
+
+    @virtual_position.setter
+    def virtual_position(self, val: int):
+        self._virtual_position = int(val)
+
+    @property
+    def strategy_position(self) -> str:
+        if self._virtual_position > 0:
+            return "LONG"
+        elif self._virtual_position < 0:
+            return "SHORT"
+        return "FLAT"
+
+    @strategy_position.setter
+    def strategy_position(self, val: str):
+        v = str(val).strip().upper()
+        if v == "LONG":
+            self._virtual_position = self.quantity if self._virtual_position <= 0 else self._virtual_position
+        elif v == "SHORT":
+            self._virtual_position = -self.quantity if self._virtual_position >= 0 else self._virtual_position
+        elif v in ("FLAT", "INITIALIZING"):
+            self._virtual_position = 0
+
     def update_config(self, config_dict: dict):
         """Updates parameters for this single runner safely."""
         if "id" in config_dict:
@@ -291,6 +328,7 @@ class SingleSuperTrendRunner:
             new_tf = str(config_dict["timeframe"]).strip().lower()
             if new_tf and new_tf != self.timeframe:
                 self.timeframe = new_tf
+                self.strategy_key = f"{self.symbol}_{self.timeframe}"
                 self.cached_candles = []
                 self.recent_trade_markers = []
         if "quantity" in config_dict:
@@ -305,19 +343,24 @@ class SingleSuperTrendRunner:
             m = str(config_dict["execution_mode"]).strip().upper()
             if m in ("LIVE", "PAPER"):
                 self.execution_mode = m
+        if "virtual_position" in config_dict:
+            self.virtual_position = int(config_dict["virtual_position"])
+            self.strategy_position = "LONG" if self.virtual_position > 0 else ("SHORT" if self.virtual_position < 0 else "FLAT")
 
+        self.strategy_key = f"{self.symbol}_{self.timeframe}"
         self.is_configured = bool(self.symbol and self.exchange_segment and self.quantity > 0)
         if "is_enabled" in config_dict:
             req_en = bool(config_dict["is_enabled"])
             self.is_enabled = req_en and self.is_configured
             self.status = "RUNNING" if self.is_enabled else "DISABLED"
 
-        logger.info(f"SingleRunner [{self.symbol}] updated: enabled={self.is_enabled}, mode={self.execution_mode}, tf={self.timeframe}, qty={self.quantity}")
+        logger.info(f"SingleRunner [{self.symbol} ({self.timeframe})] updated: enabled={self.is_enabled}, mode={self.execution_mode}, qty={self.quantity}, virtual_pos={self.virtual_position}")
 
     def get_telemetry(self) -> dict:
         """Returns single strategy telemetry payload."""
         return {
             "id": self.id,
+            "strategy_key": self.strategy_key,
             "symbol": self.symbol,
             "exchange_segment": self.exchange_segment,
             "timeframe": self.timeframe,
@@ -331,8 +374,10 @@ class SingleSuperTrendRunner:
             "is_configured": self.is_configured,
             "status": self.status,
             "current_trend": self.active_trend,
+            "virtual_position": self.virtual_position,
             "strategy_position": self.strategy_position,
             "current_broker_quantity": self.current_broker_quantity,
+            "broker_side": self.broker_side,
             "atr": self.last_atr,
             "upper_band": self.upper_band,
             "lower_band": self.lower_band,
@@ -516,7 +561,7 @@ class SingleSuperTrendRunner:
                     self.status = "EXPIRED_PAUSED"
                     return
 
-            # 3. Position Reconciliation
+            # 3. Position Telemetry Observation (Non-Destructive for Multi-Timeframe Isolation)
             try:
                 pos_telemetry = await asyncio.to_thread(xts_api_module.get_positions_telemetry)
                 positions = pos_telemetry.get("positions", []) or pos_telemetry.get("all_positions", [])
@@ -532,29 +577,16 @@ class SingleSuperTrendRunner:
                 if target_pos:
                     side = target_pos.get("side", "").upper()
                     raw_qty = int(target_pos.get("quantity", 0))
-                    # Reconcile raw broker units to strategy lots for derivative segments
-                    if is_derivative and lot_size > 1 and raw_qty > 0 and (raw_qty % lot_size != 0):
-                        logger.critical(
-                            f"🚨 DATA INTEGRITY WARNING: Position raw quantity {raw_qty} for {self.symbol} is NOT an exact multiple of lot size {lot_size}! "
-                            f"Remainder: {raw_qty % lot_size}. Reconciling with floor division: {raw_qty // lot_size} lots."
-                        )
                     reconciled_lots = (raw_qty // lot_size) if (is_derivative and lot_size > 1) else raw_qty
-                    if side == "LONG" and reconciled_lots > 0:
-                        self.strategy_position = "LONG"
-                        self.current_broker_quantity = reconciled_lots
-                    elif side == "SHORT" and reconciled_lots > 0:
-                        self.strategy_position = "SHORT"
-                        self.current_broker_quantity = reconciled_lots
-                    else:
-                        self.current_broker_quantity = 0
-                        if self.strategy_position in ("INITIALIZING", "FLAT"):
-                            self.strategy_position = "FLAT"
+                    self.current_broker_quantity = reconciled_lots
+                    self.broker_side = side
+                    if self.active_trend == "INITIALIZING" and self.virtual_position == 0 and reconciled_lots > 0:
+                        self.virtual_position = -reconciled_lots if side == "SHORT" else reconciled_lots
                 else:
                     self.current_broker_quantity = 0
-                    if self.strategy_position in ("INITIALIZING", "FLAT"):
-                        self.strategy_position = "FLAT"
+                    self.broker_side = "FLAT"
             except Exception as e:
-                logger.error(f"SuperTrend [{self.symbol}]: Failed to reconcile broker positions: {e}")
+                logger.error(f"SuperTrend [{self.symbol}]: Failed to inspect broker positions: {e}")
 
             # 4. Pending Order Protection (Scoped to strategy orders with 60s stale timeout)
             try:
@@ -623,11 +655,7 @@ class SingleSuperTrendRunner:
             self.last_error = None
             self.status = "RUNNING"
 
-            # 7. Evaluate Flip & Execute Reversal (Strict ON_CANDLE_CLOSE Rule)
-            # Verify if the last candle is actually closed before evaluating signals.
-            # In Symphony XTS OHLC API, candle 'time' is the bar-close timestamp (e.g. hh:mm:59).
-            # An actively forming bar has candle_time in the future relative to current time (candle_time > now_ts).
-            # The bar is confirmed closed as soon as now_ts >= last_candle_close_time.
+            # 7. Evaluate Flip & Execute Virtual Delta Netting (Strict ON_CANDLE_CLOSE Rule)
             now_ts = int(time.time())
             last_candle_close_time = int(candles[-1].get("time") or candles[-1].get("timestamp", 0))
             is_last_candle_closed = (now_ts >= last_candle_close_time)
@@ -635,7 +663,6 @@ class SingleSuperTrendRunner:
             if is_last_candle_closed:
                 eval_st_res = st_res
             else:
-                # The latest bar is still in-progress/forming. Evaluate signals strictly on the last confirmed closed bar.
                 closed_candles = candles[:-1]
                 if len(closed_candles) < self.atr_period + 1:
                     return
@@ -648,31 +675,114 @@ class SingleSuperTrendRunner:
             flip_dir = eval_st_res["flip_direction"]
 
             if is_flip and candle_ts != self.last_processed_candle_time:
-                logger.info(f"🚨 [SUPERTREND FLIP] Symbol: {self.symbol} ({self.timeframe}) | Direction: {flip_dir} at confirmed candle close {candle_ts}. Current Position: {self.strategy_position} | Mode: {self.execution_mode}")
-                
+                logger.info(
+                    f"🚨 [SUPERTREND FLIP] Symbol: {self.symbol} ({self.timeframe}) | "
+                    f"Direction: {flip_dir} at confirmed candle close {candle_ts}. "
+                    f"Current Position: {self.strategy_position} ({self.virtual_position} lots) | "
+                    f"Mode: {self.execution_mode}"
+                )
+
                 if flip_dir == "BULLISH":
-                    if self.strategy_position == "SHORT":
-                        exit_qty = self.quantity
+                    if self.virtual_position < 0:
+                        exit_qty = abs(self.virtual_position)
                         await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
+                        self.virtual_position = 0
                         await asyncio.sleep(0.5)
                         await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.strategy_position = "LONG"
-                    elif self.strategy_position in ("FLAT", "INITIALIZING"):
+                        self.virtual_position = self.quantity
+                    else:
                         await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.strategy_position = "LONG"
-                
+                        self.virtual_position = self.quantity
+
                 elif flip_dir == "BEARISH":
-                    if self.strategy_position == "LONG":
-                        exit_qty = self.quantity
+                    if self.virtual_position > 0:
+                        exit_qty = abs(self.virtual_position)
                         await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
+                        self.virtual_position = 0
                         await asyncio.sleep(0.5)
                         await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.strategy_position = "SHORT"
-                    elif self.strategy_position in ("FLAT", "INITIALIZING"):
+                        self.virtual_position = -self.quantity
+                    else:
                         await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.strategy_position = "SHORT"
+                        self.virtual_position = -self.quantity
 
                 self.last_processed_candle_time = candle_ts
+
+    async def _execute_delta(self, delta: int, candle_ts: int, main_module, freeze_limit: int = 100000) -> None:
+        """Dispatches a Delta order (+BUY / -SELL) with freeze-quantity slicing and SQLite persistence."""
+        abs_qty = abs(delta)
+        if abs_qty <= 0:
+            return
+
+        max_allowed_lots = max(self.quantity * 5, 50)
+        if abs_qty > max_allowed_lots:
+            logger.critical(
+                f"🚨 CRITICAL SAFETY GUARD: Disallowed delta quantity {abs_qty} lots for {self.symbol} ({self.timeframe}) "
+                f"(limit: {max_allowed_lots}). Refusing dispatch!"
+            )
+            return
+
+        action = "BUY" if delta > 0 else "SELL"
+        is_paper = (self.execution_mode == "PAPER")
+
+        chunks = slice_quantity_for_freeze(abs_qty, freeze_limit)
+        payload = None
+        for chunk_idx, chunk_qty in enumerate(chunks, start=1):
+            order_ref = (
+                f"ST_REV_{self.symbol}_{self.timeframe.upper()}_DELTA_{action}_{candle_ts}"
+                if chunk_idx == 1
+                else f"ST_REV_{self.symbol}_{self.timeframe.upper()}_DELTA_{action}_{candle_ts}_{chunk_idx}"
+            )
+            sig_id = f"st_delta_{str(uuid.uuid4())[:8]}"
+
+            payload = {
+                "action": action,
+                "symbol": self.symbol,
+                "quantity": chunk_qty,
+                "price": 0.0,
+                "product_type": self.product_type,
+                "order_ref": order_ref,
+                "source": "supertrend_engine",
+                "is_paper": is_paper,
+            }
+
+            logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Delta Order [Chunk {chunk_idx}/{len(chunks)}]: {payload}")
+            if self.dispatch_fn:
+                await self.dispatch_fn(sig_id, payload)
+            elif main_module:
+                if hasattr(main_module, "db_insert_pending"):
+                    main_module.db_insert_pending(sig_id, payload)
+                if hasattr(main_module, "_dispatch_and_record"):
+                    await asyncio.to_thread(
+                        main_module._dispatch_and_record,
+                        sig_id,
+                        action,
+                        self.symbol,
+                        chunk_qty,
+                        0.0,
+                        order_ref,
+                        is_paper,
+                    )
+
+            if chunk_idx < len(chunks):
+                await asyncio.sleep(0.2)
+
+        # Persist to SQLite state
+        if main_module and hasattr(main_module, "db_set_virtual_position"):
+            new_pos = self.virtual_position + delta
+            main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, new_pos)
+
+        self.last_signal_time = time.time()
+        self.last_signal_action = f"DELTA_{action}_{abs_qty}"
+        self.last_signal_details = payload or {}
+
+        self.recent_trade_markers.append({
+            "time": self.last_candle_time or int(time.time()),
+            "position": "aboveBar" if action == "SELL" else "belowBar",
+            "color": "#f43f5e" if action == "SELL" else "#10b981",
+            "shape": "arrowDown" if action == "SELL" else "arrowUp",
+            "text": f"{action} {abs_qty}",
+        })
 
     async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
         """Dispatches an Exit order with freeze-quantity slicing."""
@@ -689,6 +799,7 @@ class SingleSuperTrendRunner:
         is_paper = (self.execution_mode == "PAPER")
         
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
+        payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             order_ref = f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}_{chunk_idx}"
             sig_id = f"st_exit_{str(uuid.uuid4())[:8]}"
@@ -716,9 +827,13 @@ class SingleSuperTrendRunner:
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
 
+        # Persist to SQLite state (0 FLAT on Exit)
+        if main_module and hasattr(main_module, "db_set_virtual_position"):
+            main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, 0)
+
         self.last_signal_time = time.time()
         self.last_signal_action = f"EXIT_{side}"
-        self.last_signal_details = payload
+        self.last_signal_details = payload or {}
         
         self.recent_trade_markers.append({
             "time": self.last_candle_time or int(time.time()),
@@ -742,6 +857,7 @@ class SingleSuperTrendRunner:
         is_paper = (self.execution_mode == "PAPER")
         
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
+        payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             order_ref = f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}_{chunk_idx}"
             sig_id = f"st_entry_{str(uuid.uuid4())[:8]}"
@@ -769,9 +885,14 @@ class SingleSuperTrendRunner:
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
 
+        # Persist to SQLite state (+Q for BUY, -Q for SELL)
+        if main_module and hasattr(main_module, "db_set_virtual_position"):
+            new_pos = qty if action.upper() == "BUY" else -qty
+            main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, new_pos)
+
         self.last_signal_time = time.time()
-        self.last_signal_action = f"ENTRY_{action}"
-        self.last_signal_details = payload
+        self.last_signal_action = f"ENTRY_{action.upper()}"
+        self.last_signal_details = payload or {}
 
         self.recent_trade_markers.append({
             "time": self.last_candle_time or int(time.time()),
@@ -1040,12 +1161,21 @@ class MultiSuperTrendEngine:
     def get_all_strategies(self) -> List[dict]:
         return [r.get_telemetry() for r in self.strategies.values()]
 
+    def get_portfolio_target_positions(self) -> Dict[str, int]:
+        """Calculates expected net target lots for each symbol across all active runners."""
+        targets: Dict[str, int] = {}
+        for runner in self.strategies.values():
+            if runner.is_enabled and runner.symbol:
+                targets[runner.symbol] = targets.get(runner.symbol, 0) + runner.virtual_position
+        return targets
+
     def get_telemetry(self) -> dict:
         """Returns consolidated portfolio telemetry along with list of all individual strategies."""
         all_strats = self.get_all_strategies()
         active_count = sum(1 for s in all_strats if s["is_enabled"])
-        total_long_lots = sum(s["current_broker_quantity"] for s in all_strats if s["strategy_position"] == "LONG")
-        total_short_lots = sum(s["current_broker_quantity"] for s in all_strats if s["strategy_position"] == "SHORT")
+        total_long_lots = sum(s["quantity"] for s in all_strats if s["is_enabled"] and s["strategy_position"] == "LONG")
+        total_short_lots = sum(s["quantity"] for s in all_strats if s["is_enabled"] and s["strategy_position"] == "SHORT")
+        portfolio_targets = self.get_portfolio_target_positions()
 
         primary = self.primary_runner
         p_tel = primary.get_telemetry() if primary else {
@@ -1062,8 +1192,10 @@ class MultiSuperTrendEngine:
             "is_configured": False,
             "status": "DISABLED",
             "current_trend": "INITIALIZING",
+            "virtual_position": 0,
             "strategy_position": "FLAT",
             "current_broker_quantity": 0,
+            "broker_side": "FLAT",
             "atr": 0.0,
             "upper_band": 0.0,
             "lower_band": 0.0,
@@ -1079,6 +1211,7 @@ class MultiSuperTrendEngine:
             "max_strategies": self.max_strategies,
             "total_long_lots": total_long_lots,
             "total_short_lots": total_short_lots,
+            "portfolio_targets": portfolio_targets,
             "strategies": all_strats
         }
 

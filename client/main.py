@@ -86,7 +86,22 @@ def db_init():
                 )
             """)
             conn.execute("CREATE TABLE IF NOT EXISTS signal_dedup (hash TEXT PRIMARY KEY, timestamp REAL)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS strategy_virtual_positions (
+                    strategy_key TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    virtual_position INTEGER NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
             conn.commit()
+
+# Ensure database tables exist on module load
+try:
+    db_init()
+except Exception:
+    pass
 
 def _sanitize_dict(d):
     if not isinstance(d, dict):
@@ -171,6 +186,34 @@ def db_prune_old(max_age_seconds=7 * 24 * 3600):
                 (cutoff,),
             )
             conn.commit()
+
+def db_get_virtual_position(strategy_key: str) -> int:
+    try:
+        with _DB_LOCK:
+            with closing(_db_conn()) as conn:
+                row = conn.execute(
+                    "SELECT virtual_position FROM strategy_virtual_positions WHERE strategy_key=?",
+                    (strategy_key,)
+                ).fetchone()
+                return int(row[0]) if row else 0
+    except Exception as e:
+        logger.warning(f"Error fetching virtual position for {strategy_key}: {e}")
+        return 0
+
+def db_set_virtual_position(strategy_key: str, symbol: str, timeframe: str, virtual_position: int):
+    try:
+        with _DB_LOCK:
+            with closing(_db_conn()) as conn:
+                now = time.time()
+                conn.execute(
+                    "INSERT INTO strategy_virtual_positions (strategy_key, symbol, timeframe, virtual_position, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(strategy_key) DO UPDATE SET virtual_position=excluded.virtual_position, updated_at=excluded.updated_at",
+                    (strategy_key, symbol, timeframe, virtual_position, now)
+                )
+                conn.commit()
+    except Exception as e:
+        logger.error(f"Error saving virtual position for {strategy_key}: {e}")
 
 def send_execution_notification(action: str, symbol: str, quantity: int, price: float, status: str, result: dict):
     """
