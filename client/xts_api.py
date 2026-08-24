@@ -1432,6 +1432,16 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
     else:
         return dispatched_results[0] if dispatched_results else {"status": "error", "message": "Order slicing dispatch failed"}
 
+def _safe_float(val, default=0.0):
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        import math
+        return default if math.isnan(f) or math.isinf(f) else f
+    except (ValueError, TypeError):
+        return default
+
 def get_margin_telemetry():
     """Fetches RMS balance and margin sub-limits from Symphony XTS broker."""
     if getattr(config, "PAPER_TRADE_MODE", False):
@@ -1481,18 +1491,15 @@ def get_margin_telemetry():
                             rms = limit_obj.get('RMSSubLimits', {})
                             margin_avail_obj = limit_obj.get('marginAvailable', {})
                             
-                            cash_avail = float(rms.get('cashAvailable', 0.0) or 0.0)
-                            pay_in = float(margin_avail_obj.get('PayInAmount', 0.0) or 0.0)
-                            adhoc = float(margin_avail_obj.get('AdhocMargin', 0.0) or 0.0)
-                            collateral = float(rms.get('collateral', 0.0) or rms.get('collateralMargin', 0.0) or 0.0)
-                            margin_used = float(rms.get('marginUtilized', 0.0) or 0.0)
+                            cash_avail = _safe_float(rms.get('cashAvailable'))
+                            pay_in = _safe_float(margin_avail_obj.get('PayInAmount'))
+                            adhoc = _safe_float(margin_avail_obj.get('AdhocMargin'))
+                            collateral = _safe_float(rms.get('collateral') or rms.get('collateralMargin'))
+                            margin_used = _safe_float(rms.get('marginUtilized'))
                             
                             raw_net_avail = rms.get('netMarginAvailable')
                             if raw_net_avail is not None:
-                                try:
-                                    net_avail = float(raw_net_avail)
-                                except Exception:
-                                    net_avail = cash_avail + pay_in + adhoc + collateral - margin_used
+                                net_avail = _safe_float(raw_net_avail, default=cash_avail + pay_in + adhoc + collateral - margin_used)
                             else:
                                 net_avail = cash_avail + pay_in + adhoc + collateral - margin_used
                             

@@ -1878,3 +1878,64 @@ async def delete_strategy_action(
     return RedirectResponse(url=f"/admin/strategies?msg=Strategy+{strat_name}+deleted+successfully!", status_code=303)
 
 
+@app.get("/admin/api/system-health")
+async def get_system_health_api(user: dict = Depends(require_auth)):
+    """Comprehensive real-time diagnostic health check across database, client containers, and memory."""
+    health_data = {
+        "status": "HEALTHY",
+        "timestamp": time.time(),
+        "database": {"status": "HEALTHY", "integrity": "OK", "tenants_count": 0, "strategies_count": 0},
+        "clients": {},
+        "system": {
+            "server_ip": telemetry_service.get_server_ip(),
+            "uptime_seconds": time.time() - getattr(app.state, "start_time", time.time())
+        }
+    }
+
+    # 1. Database Integrity Verification
+    try:
+        with closing(database.get_db_connection()) as conn:
+            check = conn.execute("PRAGMA integrity_check").fetchone()[0]
+            health_data["database"]["integrity"] = check
+            if check != "ok":
+                health_data["database"]["status"] = "CORRUPTED"
+                health_data["status"] = "DEGRADED"
+
+            t_count = conn.execute("SELECT COUNT(*) FROM tenants").fetchone()[0]
+            st_count = conn.execute("SELECT COUNT(*) FROM tenant_supertrend_strategies").fetchone()[0]
+            cs_count = conn.execute("SELECT COUNT(*) FROM tenant_custom_strategies").fetchone()[0]
+            health_data["database"]["tenants_count"] = t_count
+            health_data["database"]["supertrend_strategies_count"] = st_count
+            health_data["database"]["custom_strategies_count"] = cs_count
+    except Exception as e:
+        health_data["database"]["status"] = f"ERROR: {e}"
+        health_data["status"] = "DEGRADED"
+
+    # 2. Client Container Health & Margin Diagnostics
+    try:
+        telemetry = await telemetry_service.aggregate_all_telemetry()
+        for c in telemetry.get("clients", []):
+            cid = c.get("id")
+            c_status = c.get("status", "UNKNOWN")
+            avail_margin = c.get("available_margin", 0.0)
+            margin_used = c.get("margin_used", 0.0)
+            active_st = c.get("supertrend", {}).get("active_strategies_count", 0)
+            
+            health_data["clients"][cid] = {
+                "name": c.get("name"),
+                "status": c_status,
+                "available_margin": avail_margin,
+                "margin_used": margin_used,
+                "active_strategies": active_st,
+                "is_healthy": c_status in ("HEALTHY", "ONLINE")
+            }
+            if c_status not in ("HEALTHY", "ONLINE"):
+                health_data["status"] = "DEGRADED"
+    except Exception as e:
+        health_data["clients_error"] = str(e)
+        health_data["status"] = "DEGRADED"
+
+    return health_data
+
+
+
