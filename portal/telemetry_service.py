@@ -276,16 +276,27 @@ async def get_single_client_telemetry(tenant_id: str) -> dict:
     async with httpx.AsyncClient() as client:
         res = await fetch_single_client_telemetry(client, tenant_dict)
     
-    if not res.get("supertrend", {}).get("strategies") and st_rows:
-        if "supertrend" not in res or not isinstance(res["supertrend"], dict):
-            res["supertrend"] = {}
-        res["supertrend"]["strategies"] = st_rows
-        res["supertrend"]["total_strategies"] = len(st_rows)
-        res["supertrend"]["active_strategies_count"] = sum(1 for s in st_rows if s.get("is_enabled"))
-        if not res["supertrend"].get("symbol") and st_rows:
-            res["supertrend"]["symbol"] = st_rows[0]["symbol"]
-            res["supertrend"]["timeframe"] = st_rows[0]["timeframe"]
-            res["supertrend"]["is_enabled"] = bool(st_rows[0]["is_enabled"])
+    # Authoritative strategy list from Portal DB enriched with live runner telemetry
+    t_st_rows = [dict(s) for s in st_rows]
+    live_runners = {s["id"]: s for s in res.get("supertrend", {}).get("strategies", [])} if isinstance(res.get("supertrend"), dict) else {}
+    for strat in t_st_rows:
+        live_s = live_runners.get(strat["id"])
+        if live_s:
+            strat["virtual_position"] = live_s.get("virtual_position", 0)
+            strat["strategy_position"] = live_s.get("strategy_position", "FLAT")
+            strat["current_trend"] = live_s.get("current_trend", "INITIALIZING")
+            strat["last_close"] = live_s.get("last_close", 0.0)
+            strat["supertrend"] = live_s.get("supertrend", 0.0)
+
+    if "supertrend" not in res or not isinstance(res["supertrend"], dict):
+        res["supertrend"] = {}
+    res["supertrend"]["strategies"] = t_st_rows
+    res["supertrend"]["total_strategies"] = len(t_st_rows)
+    res["supertrend"]["active_strategies_count"] = sum(1 for s in t_st_rows if s.get("is_enabled"))
+    if not res["supertrend"].get("symbol") and t_st_rows:
+        res["supertrend"]["symbol"] = t_st_rows[0]["symbol"]
+        res["supertrend"]["timeframe"] = t_st_rows[0]["timeframe"]
+        res["supertrend"]["is_enabled"] = bool(t_st_rows[0]["is_enabled"])
     
     if not res.get("custom_strategies", {}).get("strategies") and cs_rows:
         if "custom_strategies" not in res or not isinstance(res["custom_strategies"], dict):
@@ -347,18 +358,27 @@ async def aggregate_all_telemetry() -> dict:
                 error=str(res)
             )
         
-        # Merge authoritative strategies from Portal DB
-        t_st_rows = [s for s in st_rows if s["tenant_id"] == t_id]
-        if not res.get("supertrend", {}).get("strategies") and t_st_rows:
-            if "supertrend" not in res or not isinstance(res["supertrend"], dict):
-                res["supertrend"] = {}
-            res["supertrend"]["strategies"] = t_st_rows
-            res["supertrend"]["total_strategies"] = len(t_st_rows)
-            res["supertrend"]["active_strategies_count"] = sum(1 for s in t_st_rows if s.get("is_enabled"))
-            if not res["supertrend"].get("symbol") and t_st_rows:
-                res["supertrend"]["symbol"] = t_st_rows[0]["symbol"]
-                res["supertrend"]["timeframe"] = t_st_rows[0]["timeframe"]
-                res["supertrend"]["is_enabled"] = bool(t_st_rows[0]["is_enabled"])
+        # Merge authoritative strategies from Portal DB enriched with live runner telemetry
+        t_st_rows = [dict(s) for s in st_rows if s["tenant_id"] == t_id]
+        live_runners = {s["id"]: s for s in res.get("supertrend", {}).get("strategies", [])} if isinstance(res.get("supertrend"), dict) else {}
+        for strat in t_st_rows:
+            live_s = live_runners.get(strat["id"])
+            if live_s:
+                strat["virtual_position"] = live_s.get("virtual_position", 0)
+                strat["strategy_position"] = live_s.get("strategy_position", "FLAT")
+                strat["current_trend"] = live_s.get("current_trend", "INITIALIZING")
+                strat["last_close"] = live_s.get("last_close", 0.0)
+                strat["supertrend"] = live_s.get("supertrend", 0.0)
+
+        if "supertrend" not in res or not isinstance(res["supertrend"], dict):
+            res["supertrend"] = {}
+        res["supertrend"]["strategies"] = t_st_rows
+        res["supertrend"]["total_strategies"] = len(t_st_rows)
+        res["supertrend"]["active_strategies_count"] = sum(1 for s in t_st_rows if s.get("is_enabled"))
+        if not res["supertrend"].get("symbol") and t_st_rows:
+            res["supertrend"]["symbol"] = t_st_rows[0]["symbol"]
+            res["supertrend"]["timeframe"] = t_st_rows[0]["timeframe"]
+            res["supertrend"]["is_enabled"] = bool(t_st_rows[0]["is_enabled"])
         
         t_cs_rows = [s for s in cs_rows if s["tenant_id"] == t_id]
         if not res.get("custom_strategies", {}).get("strategies") and t_cs_rows:

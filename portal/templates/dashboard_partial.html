@@ -241,6 +241,35 @@
             {% endif %}
         </div>
 
+        <!-- 3.5. Configured Autonomous Strategies Strip -->
+        {% set st_list = c.supertrend.strategies if (c.supertrend and c.supertrend.strategies is defined) else [] %}
+        {% if st_list and st_list|length > 0 %}
+        <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                <span class="flex items-center gap-1.5">
+                    <i data-lucide="layers" class="w-3.5 h-3.5 text-brand-400"></i>
+                    <span>Strategies ({{ st_list|length }})</span>
+                </span>
+                <span class="text-[10px] font-mono text-emerald-400">{{ st_list|selectattr('is_enabled')|list|length }} Active</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+                {% for st in st_list %}
+                <div class="bg-slate-950/80 border border-bordercolor/80 rounded-lg px-2 py-1 text-[11px] font-mono flex items-center gap-1.5 shadow-sm">
+                    <span class="font-bold text-slate-300">{{ st.symbol }}</span>
+                    <span class="text-slate-500 text-[10px]">({{ st.timeframe }})</span>
+                    {% if st.virtual_position is defined and st.virtual_position > 0 %}
+                        <span class="text-emerald-400 font-bold bg-emerald-500/10 px-1 py-0.2 rounded border border-emerald-500/20">+{{ st.virtual_position }}L</span>
+                    {% elif st.virtual_position is defined and st.virtual_position < 0 %}
+                        <span class="text-rose-400 font-bold bg-rose-500/10 px-1 py-0.2 rounded border border-rose-500/20">{{ st.virtual_position }}S</span>
+                    {% else %}
+                        <span class="text-slate-400 font-medium bg-slate-900 px-1 py-0.2 rounded border border-bordercolor">FLAT</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <!-- 4. Open Positions Preview -->
         <div class="space-y-1.5">
             <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
