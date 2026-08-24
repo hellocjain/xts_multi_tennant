@@ -317,12 +317,14 @@ def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref, is_
 
         db_update_status(sig_id, status, audit_result)
         send_execution_notification(action, symbol, quantity, price, status, audit_result)
+        return {"status": status, "result": audit_result}
     except Exception as e:
         logger.error(f"UNCAUGHT ERROR dispatching signal {sig_id}: {e}")
         err_res = {"error": str(e), "code": "e-uncaught"}
         db_update_status(sig_id, "failed", err_res)
         xts_api.send_ops_alert(f"XTS bot: uncaught error executing signal {sig_id} ({symbol}): {e}")
         send_execution_notification(action, symbol, quantity, price, "failed", err_res)
+        return {"status": "failed", "error": str(e)}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

@@ -844,7 +844,7 @@ class SingleSuperTrendRunner:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
-                    await asyncio.to_thread(
+                    res = await asyncio.to_thread(
                         main_module._dispatch_and_record,
                         sig_id,
                         action,
@@ -854,6 +854,9 @@ class SingleSuperTrendRunner:
                         order_ref,
                         is_paper,
                     )
+                    if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Delta order rejected ({res.get('status')}). Skipping virtual position advance.")
+                        return
 
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
@@ -862,6 +865,7 @@ class SingleSuperTrendRunner:
         if main_module and hasattr(main_module, "db_set_virtual_position"):
             new_pos = self.virtual_position + delta
             main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, new_pos)
+        self.virtual_position = self.virtual_position + delta
 
         self.last_signal_time = time.time()
         self.last_signal_action = f"DELTA_{action}_{abs_qty}"
@@ -913,7 +917,10 @@ class SingleSuperTrendRunner:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
-                    await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, self.symbol, chunk_qty, 0.0, order_ref, is_paper)
+                    res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, self.symbol, chunk_qty, 0.0, order_ref, is_paper)
+                    if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected ({res.get('status')}). Skipping virtual position update.")
+                        return
             
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
@@ -921,6 +928,7 @@ class SingleSuperTrendRunner:
         # Persist to SQLite state (0 FLAT on Exit)
         if main_module and hasattr(main_module, "db_set_virtual_position"):
             main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, 0)
+        self.virtual_position = 0
 
         self.last_signal_time = time.time()
         self.last_signal_action = f"EXIT_{side}"
@@ -971,15 +979,19 @@ class SingleSuperTrendRunner:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
-                    await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), self.symbol, chunk_qty, 0.0, order_ref, is_paper)
+                    res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), self.symbol, chunk_qty, 0.0, order_ref, is_paper)
+                    if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected ({res.get('status')}). Skipping virtual position update.")
+                        return
 
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
 
         # Persist to SQLite state (+Q for BUY, -Q for SELL)
+        new_pos = qty if action.upper() == "BUY" else -qty
         if main_module and hasattr(main_module, "db_set_virtual_position"):
-            new_pos = qty if action.upper() == "BUY" else -qty
             main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, new_pos)
+        self.virtual_position = new_pos
 
         self.last_signal_time = time.time()
         self.last_signal_action = f"ENTRY_{action.upper()}"
