@@ -1558,12 +1558,22 @@ def get_margin_telemetry():
                         shift_needed = bool(unified_avail > 0 and mcx_avail <= 1000.0)
                         shift_msg = f"₹{unified_avail:,.2f} in Unified account — shift funds to MCX segment before executing commodity trades" if shift_needed else ""
                         
-                        res = best_entry or unified_entry or mcx_entry
-                        res["mcx_margin"] = mcx_entry
-                        res["unified_margin"] = unified_entry
-                        res["shift_margin_needed"] = shift_needed
-                        res["shift_margin_message"] = shift_msg
-                        return res
+                        chosen = best_entry or unified_entry or mcx_entry
+                        return {
+                            "available_margin": chosen.get("available_margin", 0.0),
+                            "margin_used": chosen.get("margin_used", 0.0),
+                            "total_collateral": chosen.get("total_collateral", 0.0),
+                            "net_margin_available": chosen.get("net_margin_available", 0.0),
+                            "cash_available": chosen.get("cash_available", 0.0),
+                            "pay_in_amount": chosen.get("pay_in_amount", 0.0),
+                            "total_account_value": chosen.get("total_account_value", 0.0),
+                            "mcx_margin": dict(mcx_entry),
+                            "unified_margin": dict(unified_entry),
+                            "shift_margin_needed": shift_needed,
+                            "shift_margin_message": shift_msg,
+                            "is_simulated": False,
+                            "error": None
+                        }
         except Exception:
             pass
 
