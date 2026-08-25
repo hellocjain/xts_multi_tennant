@@ -848,25 +848,15 @@ class SingleSuperTrendRunner:
                     if self.virtual_position < 0:
                         exit_qty = abs(self.virtual_position)
                         await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
-                        self.virtual_position = 0
                         await asyncio.sleep(0.5)
-                        await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.virtual_position = self.quantity
-                    else:
-                        await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.virtual_position = self.quantity
+                    await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
 
                 elif flip_dir == "BEARISH":
                     if self.virtual_position > 0:
                         exit_qty = abs(self.virtual_position)
                         await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
-                        self.virtual_position = 0
                         await asyncio.sleep(0.5)
-                        await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.virtual_position = -self.quantity
-                    else:
-                        await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
-                        self.virtual_position = -self.quantity
+                    await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
 
                 self.last_processed_candle_time = candle_ts
 
@@ -988,22 +978,25 @@ class SingleSuperTrendRunner:
             logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Exit Leg [Chunk {chunk_idx}]: {payload}")
             if self.dispatch_fn:
                 await self.dispatch_fn(sig_id, payload)
+                chunk_delta = chunk_qty if side.upper() == "SHORT" else -chunk_qty
+                self.virtual_position += chunk_delta
+                if main_module and hasattr(main_module, "db_set_virtual_position"):
+                    main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
             elif main_module:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, self.symbol, chunk_qty, 0.0, order_ref, is_paper)
                     if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
-                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected ({res.get('status')}). Skipping virtual position update.")
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected ({res.get('status')}). Halting further slices.")
                         return
+                    chunk_delta = chunk_qty if side.upper() == "SHORT" else -chunk_qty
+                    self.virtual_position += chunk_delta
+                    if hasattr(main_module, "db_set_virtual_position"):
+                        main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
             
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
-
-        # Persist to SQLite state (0 FLAT on Exit)
-        if main_module and hasattr(main_module, "db_set_virtual_position"):
-            main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, 0)
-        self.virtual_position = 0
 
         self.last_signal_time = time.time()
         self.last_signal_action = f"EXIT_{side}"
@@ -1050,23 +1043,25 @@ class SingleSuperTrendRunner:
             logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Entry Leg [Chunk {chunk_idx}]: {payload}")
             if self.dispatch_fn:
                 await self.dispatch_fn(sig_id, payload)
+                chunk_delta = chunk_qty if action.upper() == "BUY" else -chunk_qty
+                self.virtual_position += chunk_delta
+                if main_module and hasattr(main_module, "db_set_virtual_position"):
+                    main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
             elif main_module:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), self.symbol, chunk_qty, 0.0, order_ref, is_paper)
                     if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
-                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected ({res.get('status')}). Skipping virtual position update.")
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected ({res.get('status')}). Halting further slices.")
                         return
+                    chunk_delta = chunk_qty if action.upper() == "BUY" else -chunk_qty
+                    self.virtual_position += chunk_delta
+                    if hasattr(main_module, "db_set_virtual_position"):
+                        main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
 
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
-
-        # Persist to SQLite state (+Q for BUY, -Q for SELL)
-        new_pos = qty if action.upper() == "BUY" else -qty
-        if main_module and hasattr(main_module, "db_set_virtual_position"):
-            main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, new_pos)
-        self.virtual_position = new_pos
 
         self.last_signal_time = time.time()
         self.last_signal_action = f"ENTRY_{action.upper()}"
