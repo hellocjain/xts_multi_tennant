@@ -847,8 +847,8 @@ class SingleSuperTrendRunner:
             # 4.1. Position Drift Detection (Observability only, never auto-corrects)
             try:
                 broker_signed_lots = (
-                    self.current_broker_quantity if self.broker_side == "LONG"
-                    else (-self.current_broker_quantity if self.broker_side == "SHORT" else 0)
+                    abs(self.current_broker_quantity) if self.broker_side == "LONG"
+                    else (-abs(self.current_broker_quantity) if self.broker_side == "SHORT" else 0)
                 )
                 has_inflight = len(self.pending_order_first_seen) > 0
                 
