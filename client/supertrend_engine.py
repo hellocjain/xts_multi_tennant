@@ -851,7 +851,20 @@ class SingleSuperTrendRunner:
                     else (-self.current_broker_quantity if self.broker_side == "SHORT" else 0)
                 )
                 has_inflight = len(self.pending_order_first_seen) > 0
-                if not has_inflight and (self.virtual_position != broker_signed_lots):
+                
+                # Check portfolio-level symbol target if multi-strategy engine is present
+                st_engine = getattr(main_module, "supertrend_engine", None)
+                if st_engine and hasattr(st_engine, "strategies"):
+                    matching_runners = [r for r in st_engine.strategies.values() if r.is_enabled and (r.symbol == self.symbol or r.symbol in self.symbol)]
+                    if len(matching_runners) > 1:
+                        symbol_target = sum(r.virtual_position for r in matching_runners)
+                        is_drift = (symbol_target != broker_signed_lots)
+                    else:
+                        is_drift = (self.virtual_position != broker_signed_lots)
+                else:
+                    is_drift = (self.virtual_position != broker_signed_lots)
+
+                if not has_inflight and is_drift:
                     logger.warning(
                         f"⚠️ [POSITION DRIFT WARNING] Strategy '{self.strategy_key}': "
                         f"Persisted virtual_position={self.virtual_position} lots ({self.strategy_position}), "
