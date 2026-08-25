@@ -371,6 +371,17 @@ class SingleSuperTrendRunner:
 
         self.strategy_key = f"{self.symbol}_{self.timeframe}"
         self.is_configured = bool(self.symbol and self.exchange_segment and self.quantity > 0)
+
+        # Pre-resolve contract info for telemetry if available
+        try:
+            import xts_api
+            inst = xts_api.resolve_contract(self.symbol)
+            if inst:
+                self.last_resolved_inst_id = inst.get("inst_id")
+                self.last_resolved_symbol_desc = inst.get("desc")
+        except Exception:
+            pass
+
         if "is_enabled" in config_dict:
             req_en = bool(config_dict["is_enabled"])
             self.is_enabled = req_en and self.is_configured
