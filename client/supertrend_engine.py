@@ -25,7 +25,13 @@ import re
 from typing import List, Dict, Optional, Any, Callable
 from xts_api import slice_quantity_for_freeze
 
+try:
+    import config
+except ImportError:
+    config = None
+
 logger = logging.getLogger("supertrend_engine")
+CONTINUOUS_SUFFIX = re.compile(r'(\d+)!$')
 
 TIMEFRAME_SECONDS_MAP = {
     "1m": 60,
@@ -302,6 +308,10 @@ class SingleSuperTrendRunner:
         self.recent_trade_markers: List[Dict[str, Any]] = []
         self.pending_order_first_seen: Dict[str, float] = {}
 
+        # Resolved Contract Tracking (Autonomous Rollover)
+        self.last_resolved_inst_id: Optional[int] = None
+        self.last_resolved_symbol_desc: Optional[str] = None
+
     @property
     def virtual_position(self) -> int:
         return self._virtual_position
@@ -400,6 +410,8 @@ class SingleSuperTrendRunner:
             "last_signal_details": self.last_signal_details,
             "next_poll_seconds": self.next_poll_seconds,
             "cached_candles_count": len(self.cached_candles),
+            "resolved_inst_id": self.last_resolved_inst_id,
+            "resolved_symbol_desc": self.last_resolved_symbol_desc,
             "last_error": self.last_error,
         }
 
@@ -674,30 +686,83 @@ class SingleSuperTrendRunner:
                 return
 
             inst_id = inst.get("inst_id")
+            inst_desc = inst.get("desc") or self.symbol
             exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
             freeze_limit = int(inst.get("freeze_qty") or 100000)
             lot_size = int(inst.get("lot_size") or 1)
             is_derivative = exch_seg not in ["NSECM", "BSECM"]
             tf_seconds = parse_timeframe_seconds(self.timeframe)
+            is_continuous = bool(CONTINUOUS_SUFFIX.search(self.symbol))
 
-            # 2. Expiry Protection Guard
-            expiry_date = inst.get("expiry")
-            if expiry_date:
-                days_to_expiry = (expiry_date - datetime.date.today()).days
-                min_days = 3 if exch_seg in ("MCXFO", "NCDEX") else 0
-                if days_to_expiry <= min_days:
-                    logger.warning(f"SuperTrend [{self.symbol}]: Contract expires in {days_to_expiry} days (<= {min_days}). Squaring off & Pausing.")
-                    if self.strategy_position != "FLAT":
-                        await self._execute_exit(
-                            self.strategy_position,
-                            self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity,
-                            f"EXPIRY_SQOFF_{int(time.time())}",
-                            main_module,
-                            freeze_limit
+            # 1.5 Autonomous Contract Rollover Check for Continuous Symbols
+            if is_continuous:
+                if self.last_resolved_inst_id is not None and self.last_resolved_inst_id != inst_id:
+                    old_desc = self.last_resolved_symbol_desc or self.symbol
+                    logger.warning(
+                        f"🔄 SuperTrend [{self.symbol} ({self.timeframe})]: Autonomous Rollover Detected! "
+                        f"Contract switched from {old_desc} (ID: {self.last_resolved_inst_id}) -> {inst_desc} (ID: {inst_id})."
+                    )
+                    if self.virtual_position != 0:
+                        current_pos_side = self.strategy_position
+                        roll_qty = abs(self.virtual_position)
+                        roll_ts = int(time.time())
+                        logger.info(
+                            f"🔄 SuperTrend [{self.symbol}]: Auto-rolling active position of {roll_qty} lots ({current_pos_side}) "
+                            f"from {old_desc} to {inst_desc}."
                         )
-                    self.is_enabled = False
-                    self.status = "EXPIRED_PAUSED"
-                    return
+                        # 1. Exit expiring near-month contract
+                        await self._execute_exit(
+                            current_pos_side,
+                            roll_qty,
+                            f"ROLL_EXIT_{roll_ts}",
+                            main_module,
+                            freeze_limit,
+                            target_symbol=old_desc
+                        )
+                        await asyncio.sleep(0.5)
+                        # 2. Enter new next-month contract in same direction
+                        entry_action = "BUY" if current_pos_side == "LONG" else "SELL"
+                        await self._execute_entry(
+                            entry_action,
+                            roll_qty,
+                            f"ROLL_ENTRY_{roll_ts}",
+                            main_module,
+                            freeze_limit,
+                            target_symbol=inst_desc
+                        )
+                        logger.info(
+                            f"✅ SuperTrend [{self.symbol}]: Position auto-roll complete! "
+                            f"Current virtual position: {self.virtual_position} lots on {inst_desc}."
+                        )
+                    else:
+                        logger.info(f"SuperTrend [{self.symbol}]: Auto-rolled contract from {old_desc} to {inst_desc} while FLAT (0 lots).")
+
+                self.last_resolved_inst_id = inst_id
+                self.last_resolved_symbol_desc = inst_desc
+            else:
+                self.last_resolved_inst_id = inst_id
+                self.last_resolved_symbol_desc = inst_desc
+
+            # 2. Expiry Protection Guard for Fixed (Non-Continuous) Contracts
+            if not is_continuous:
+                expiry_date = inst.get("expiry")
+                if expiry_date:
+                    days_to_expiry = (expiry_date - datetime.date.today()).days
+                    min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 5) if exch_seg in ("MCXFO", "NCDEX") \
+                        else getattr(config, "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES", 0)
+                    if days_to_expiry <= min_days:
+                        logger.warning(f"SuperTrend [{self.symbol}]: Fixed contract expires in {days_to_expiry} days (<= {min_days}). Squaring off & Pausing.")
+                        if self.strategy_position != "FLAT":
+                            await self._execute_exit(
+                                self.strategy_position,
+                                self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity,
+                                f"EXPIRY_SQOFF_{int(time.time())}",
+                                main_module,
+                                freeze_limit
+                            )
+                        self.is_enabled = False
+                        self.status = "EXPIRED_PAUSED"
+                        return
 
             # 3. Position Telemetry Observation (Non-Destructive for Multi-Timeframe Isolation)
             try:
@@ -944,7 +1009,7 @@ class SingleSuperTrendRunner:
             "text": f"{action} {abs_qty}",
         })
 
-    async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
+    async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> None:
         """Dispatches an Exit order with freeze-quantity slicing."""
         # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
         max_allowed_lots = max(self.quantity * 5, 50)
@@ -957,6 +1022,7 @@ class SingleSuperTrendRunner:
 
         action = "BUY" if side.upper() == "SHORT" else "SELL"
         is_paper = (self.execution_mode == "PAPER")
+        symbol_to_trade = str(target_symbol).strip() if target_symbol else self.symbol
         
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
         payload = None
@@ -966,7 +1032,7 @@ class SingleSuperTrendRunner:
             
             payload = {
                 "action": action,
-                "symbol": self.symbol,
+                "symbol": symbol_to_trade,
                 "quantity": chunk_qty,
                 "price": 0.0,
                 "product_type": self.product_type,
@@ -975,7 +1041,7 @@ class SingleSuperTrendRunner:
                 "is_paper": is_paper
             }
             
-            logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Exit Leg [Chunk {chunk_idx}]: {payload}")
+            logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Exit Leg [Chunk {chunk_idx}] on {symbol_to_trade}: {payload}")
             if self.dispatch_fn:
                 await self.dispatch_fn(sig_id, payload)
                 chunk_delta = chunk_qty if side.upper() == "SHORT" else -chunk_qty
@@ -986,7 +1052,7 @@ class SingleSuperTrendRunner:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
-                    res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, self.symbol, chunk_qty, 0.0, order_ref, is_paper)
+                    res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
                     if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
                         logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected ({res.get('status')}). Halting further slices.")
                         return
@@ -1010,7 +1076,7 @@ class SingleSuperTrendRunner:
             "text": f"EXIT {side} ({qty})"
         })
 
-    async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
+    async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> None:
         """Dispatches an Entry order with freeze-quantity slicing."""
         # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
         max_allowed_lots = max(self.quantity * 5, 50)
@@ -1022,6 +1088,7 @@ class SingleSuperTrendRunner:
             return
 
         is_paper = (self.execution_mode == "PAPER")
+        symbol_to_trade = str(target_symbol).strip() if target_symbol else self.symbol
         
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
         payload = None
@@ -1031,7 +1098,7 @@ class SingleSuperTrendRunner:
             
             payload = {
                 "action": action.upper(),
-                "symbol": self.symbol,
+                "symbol": symbol_to_trade,
                 "quantity": chunk_qty,
                 "price": 0.0,
                 "product_type": self.product_type,
@@ -1040,7 +1107,7 @@ class SingleSuperTrendRunner:
                 "is_paper": is_paper
             }
             
-            logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Entry Leg [Chunk {chunk_idx}]: {payload}")
+            logger.info(f"SuperTrend [{self.symbol} ({self.timeframe})]: Dispatching Entry Leg [Chunk {chunk_idx}] on {symbol_to_trade}: {payload}")
             if self.dispatch_fn:
                 await self.dispatch_fn(sig_id, payload)
                 chunk_delta = chunk_qty if action.upper() == "BUY" else -chunk_qty
@@ -1051,7 +1118,7 @@ class SingleSuperTrendRunner:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
-                    res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), self.symbol, chunk_qty, 0.0, order_ref, is_paper)
+                    res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
                     if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
                         logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected ({res.get('status')}). Halting further slices.")
                         return
