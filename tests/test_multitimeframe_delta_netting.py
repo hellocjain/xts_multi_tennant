@@ -32,6 +32,7 @@ class MockMainModule:
             "order_ref": order_ref,
             "is_paper": is_paper
         })
+        return {"status": "done", "result": {"AppOrderID": 123}}
 
     def db_get_virtual_position(self, strategy_key):
         return self.virtual_positions.get(strategy_key, 0)

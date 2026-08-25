@@ -388,7 +388,10 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
             parts = row.split("|")
             if len(parts) >= 5:
                 try:
-                    ts = int(parts[0])
+                    raw_ts = int(parts[0])
+                    # Symphony XTS Market Data API returns timestamps encoded in IST-epoch (+19,800s / 5h30m ahead of POSIX UTC).
+                    # Normalize to true POSIX UTC epoch at ingestion for all downstream engines and charts.
+                    ts = raw_ts - 19800
                     o = float(parts[1])
                     h = float(parts[2])
                     l = float(parts[3])

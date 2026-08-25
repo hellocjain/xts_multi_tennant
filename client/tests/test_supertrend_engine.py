@@ -109,6 +109,7 @@ async def test_supertrend_sequential_reversal_execution(monkeypatch):
     })
 
     # 1. Case A: Currently holding SHORT 2 lots, Bullish Flip detected
+    engine.primary_runner.virtual_position = -2
     monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {
         "positions": [{"symbol": "CRUDEOIL 31AUG2026", "instrument_id": 574823, "side": "SHORT", "quantity": 2}],
         "all_positions": [{"symbol": "CRUDEOIL 31AUG2026", "instrument_id": 574823, "side": "SHORT", "quantity": 2}]
@@ -562,6 +563,8 @@ async def test_sec_xts_001_reversal_exit_lot_vs_unit_reconciliation(monkeypatch)
         "atr_period": 10,
         "multiplier": 3.0
     })
+    # Explicitly set pre-existing SHORT position for the runner
+    engine.primary_runner.virtual_position = -1
 
     # Mock contract resolution with lot_size = 1250
     monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {

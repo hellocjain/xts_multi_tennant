@@ -1012,6 +1012,17 @@ async def panic(request: Request):
 
     status = "done" if (isinstance(result, dict) and result.get("status") == "success") else "partial_failure" if (isinstance(result, dict) and result.get("status") == "partial_failure") else "failed"
     db_update_status(sig_id, status, result, payload=panic_payload)
+
+    # Finding #7 Fix: Reset virtual positions in memory and SQLite on Panic Square-off
+    if supertrend_engine:
+        for r in getattr(supertrend_engine, "strategies", {}).values():
+            r.virtual_position = 0
+            db_set_virtual_position(r.strategy_key, r.symbol, r.timeframe, 0)
+    if custom_strategy_engine:
+        for r in getattr(custom_strategy_engine, "strategies", {}).values():
+            if hasattr(r, "virtual_position"):
+                r.virtual_position = 0
+
     return result
 
 @app.post("/")
