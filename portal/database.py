@@ -60,7 +60,7 @@ def init_portal_db():
                     telegram_bot_token TEXT DEFAULT '',
                     telegram_chat_id TEXT DEFAULT '',
                     discord_webhook_url TEXT DEFAULT '',
-                    min_days_before_expiry_mcx INTEGER DEFAULT 3,
+                    min_days_before_expiry_mcx INTEGER DEFAULT 5,
                     min_days_before_expiry_derivatives INTEGER DEFAULT 0,
                     cancel_lingering_partial_fills INTEGER DEFAULT 1,
                     partial_fill_timeout_seconds REAL DEFAULT 2.0,

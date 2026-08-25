@@ -440,7 +440,7 @@ async def add_client_action(
     telegram_chat_id: str = Form(""),
     discord_webhook_url: str = Form(""),
     slippage_buffer_pct: float = Form(0.005),
-    min_days_before_expiry_mcx: int = Form(3),
+    min_days_before_expiry_mcx: int = Form(5),
     paper_trade_mode: int = Form(1),
     user: dict = Depends(require_auth)
 ):
