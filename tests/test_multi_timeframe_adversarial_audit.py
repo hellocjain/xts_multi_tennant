@@ -47,7 +47,9 @@ class MockMainModule:
 
 
 def generate_ohlc_series(closes, base_time=1700000000, interval=900):
-    """Generates synthetic OHLC candles with strict monotonic timestamps."""
+    """Generates synthetic OHLC candles with strict monotonic timestamps ending in :59."""
+    if base_time % 60 != 59:
+        base_time = (base_time // 60) * 60 + 59
     candles = []
     for i, c in enumerate(closes):
         t = base_time + (i * interval)

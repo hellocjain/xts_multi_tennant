@@ -47,7 +47,9 @@ class MockMainModule:
 
 
 def generate_ohlc_series(closes, base_time=1700000000, interval=1800):
-    """Generates synthetic OHLC candles with strict monotonic timestamps."""
+    """Generates synthetic OHLC candles with strict monotonic timestamps ending in :59."""
+    if base_time % 60 != 59:
+        base_time = (base_time // 60) * 60 + 59
     candles = []
     for i, c in enumerate(closes):
         t = base_time + (i * interval)
@@ -751,3 +753,38 @@ async def test_regression_task_b2_widened_drift_detection(monkeypatch, tmp_path)
     # 2. Assert zero orders were dispatched (observability only)
     assert len(dispatched) == 0
     assert runner.virtual_position == -2
+
+
+# ==============================================================================
+# TASK 3 REGRESSION TEST: Final-Seconds Boundary Precision Test
+# ==============================================================================
+def test_regression_task_3_final_seconds_boundary_precision():
+    """
+    Phase 3.8 Task 3:
+    Explicitly verifies the exact boundary transition point across the final seconds:
+    1. T + tf_seconds - 3 (11:14:57 IST) -> False (Forming bar, tick :57 != :59).
+    2. T + tf_seconds - 1 (11:14:58 IST) -> False (Forming bar, tick :58 != :59).
+    3. T + tf_seconds     (11:14:59 IST) -> True  (Sealed bar stamped :59, now == close_ts).
+    4. T + tf_seconds + 1 (11:15:00 IST) -> True  (Sealed bar stamped :59, now > close_ts).
+    """
+    tf_seconds = 900 # 15m
+    prev_closed_bar = {"time": 1787635799, "open": 2400.0, "high": 2405.0, "low": 2398.0, "close": 2402.0} # 10:59:59 IST
+
+    # 1. T + tf_seconds - 3 (11:14:57 IST)
+    bar_t_minus_3 = {"time": 1787636697, "open": 2402.0, "high": 2410.0, "low": 2401.0, "close": 2408.0}
+    res_minus_3 = SingleSuperTrendRunner.is_candle_closed([prev_closed_bar, bar_t_minus_3], tf_seconds, now_ts=1787636697)
+    assert res_minus_3 is False, "T+(tf_seconds-3) forming bar must be False"
+
+    # 2. T + tf_seconds - 1 (11:14:58 IST)
+    bar_t_minus_1 = {"time": 1787636698, "open": 2402.0, "high": 2410.0, "low": 2401.0, "close": 2408.0}
+    res_minus_1 = SingleSuperTrendRunner.is_candle_closed([prev_closed_bar, bar_t_minus_1], tf_seconds, now_ts=1787636698)
+    assert res_minus_1 is False, "T+(tf_seconds-1) forming bar must be False"
+
+    # 3. T + tf_seconds (11:14:59 IST) - Exact close timestamp
+    bar_closed = {"time": 1787636699, "open": 2402.0, "high": 2410.0, "low": 2401.0, "close": 2408.0}
+    res_exact_close = SingleSuperTrendRunner.is_candle_closed([prev_closed_bar, bar_closed], tf_seconds, now_ts=1787636699)
+    assert res_exact_close is True, "T+tf_seconds sealed bar at close timestamp must be True"
+
+    # 4. T + tf_seconds + 1 (11:15:00 IST / 11:15:01 IST)
+    res_plus_1 = SingleSuperTrendRunner.is_candle_closed([prev_closed_bar, bar_closed], tf_seconds, now_ts=1787636701)
+    assert res_plus_1 is True, "T+(tf_seconds+1) sealed bar must be True"

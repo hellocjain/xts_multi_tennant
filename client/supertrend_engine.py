@@ -449,11 +449,11 @@ class SingleSuperTrendRunner:
     @staticmethod
     def is_candle_closed(candles: List[Dict[str, Any]], tf_seconds: int, now_ts: Optional[int] = None) -> bool:
         """
-        Universal bar close determination:
-        1. If timestamp step from previous bar is less than timeframe (minus 5s tolerance),
-           the last bar is an intra-bar forming candle.
-        2. If current clock is before the candle timestamp, candle scheduled close is not yet reached.
-        3. Otherwise, candle is fully closed.
+        Universal structural bar close determination:
+        1. In Symphony XTS, all completed/closed bars structurally end in second :59.
+           A forming bar has an intra-bar tick timestamp (e.g. :17, :32, :48, :57) that does not end in :59.
+        2. If the latest candle's timestamp does not end in :59, it is structurally an intra-bar forming candle.
+        3. If it ends in :59, it is closed if the system clock has reached or passed that close timestamp.
         """
         if not candles:
             return False
@@ -461,11 +461,11 @@ class SingleSuperTrendRunner:
         now = int(time.time()) if now_ts is None else int(now_ts)
         last_ts = int(candles[-1].get("time") or candles[-1].get("timestamp", 0))
 
-        if len(candles) >= 2:
-            prev_ts = int(candles[-2].get("time") or candles[-2].get("timestamp", 0))
-            if 0 <= (last_ts - prev_ts) < (tf_seconds - 5):
-                return False
+        # Structural check: In Symphony XTS, closed candle bar-end timestamps ALWAYS end in :59
+        if last_ts % 60 != 59:
+            return False
 
+        # Guard against future / clock-skew timestamps
         if now < last_ts:
             return False
 

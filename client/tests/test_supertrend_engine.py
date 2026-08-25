@@ -26,6 +26,8 @@ def isolate_test_db(tmp_path, monkeypatch):
 def generate_synthetic_candles(prices, base_time=None, interval=300):
     if base_time is None:
         base_time = int(time.time()) - (len(prices) * interval)
+    if base_time % 60 != 59:
+        base_time = (base_time // 60) * 60 + 59
     candles = []
     for i, p in enumerate(prices):
         t = base_time + (i * interval)
@@ -749,8 +751,8 @@ async def test_sec_xts_002_confirmed_closed_bar_execution(monkeypatch):
     candles = generate_synthetic_candles(candle_prices, base_time=base_time, interval=tf_seconds)
     monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: candles)
 
-    # 1. Mock clock is past close timestamp (1787204505 >= 1787204500)
-    mock_now = 1787204505.0
+    # 1. Mock clock is past close timestamp
+    mock_now = float(candles[-1]["time"] + 5)
     monkeypatch.setattr(time, "time", lambda: mock_now)
 
     await engine.evaluate_cycle(xts_api, client_main)
@@ -765,10 +767,10 @@ async def test_sec_xts_002_confirmed_closed_bar_execution(monkeypatch):
     assert payload["symbol"] == "CRUDEOIL1!"
 
     runner = engine.get_strategy("CRUDEOIL1!")
-    assert runner.last_processed_candle_time == 1787204500
+    assert runner.last_processed_candle_time == candles[-1]["time"]
 
     # 2. Subsequent cycle with same closed candle (e.g. 5 seconds later)
-    mock_now = 1787204510.0
+    mock_now = float(candles[-1]["time"] + 10)
     monkeypatch.setattr(time, "time", lambda: mock_now)
 
     await engine.evaluate_cycle(xts_api, client_main)
@@ -1266,18 +1268,18 @@ async def test_market_open_0900_lifecycle_and_multitimeframe_netting(monkeypatch
     monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": []})
     monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
 
-    # Step 1: Yesterday's closed candles (Bearish)
-    base_ts = 1771800000 # 08:45 AM
+    # Step 1: Yesterday's closed candles (Bearish) ending at :59
+    base_ts = 1771799999 # 08:44:59 AM
     yesterday_candles = [
         {"time": base_ts + (i * 900), "open": 100 - i, "high": 101 - i, "low": 99 - i, "close": 100 - i, "volume": 100}
         for i in range(20)
     ]
     runner_15m.virtual_position = -2 # holding SHORT from yesterday
 
-    # At 09:05 AM: Unclosed 09:00-09:15 candle in progress
-    open_ts = base_ts + (20 * 900) # 09:00 AM candle (closing at 09:15)
+    # At 09:05 AM: Unclosed 09:00-09:15 candle in progress (tick at 09:05:00)
+    open_ts = base_ts + (20 * 900) + 1 # 09:00:00 AM candle open
     unclosed_candles = yesterday_candles + [
-        {"time": open_ts + 900, "open": 150, "high": 160, "low": 149, "close": 158, "volume": 500} # huge spike
+        {"time": open_ts + 300, "open": 150, "high": 160, "low": 149, "close": 158, "volume": 500} # quote at 09:05:00
     ]
     monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: unclosed_candles)
     monkeypatch.setattr(time, "time", lambda: open_ts + 300) # Current time: 09:05 AM (< 09:15 close)
@@ -1287,7 +1289,11 @@ async def test_market_open_0900_lifecycle_and_multitimeframe_netting(monkeypatch
     assert len(dispatched) == 0
     assert runner_15m.virtual_position == -2
 
-    # Step 2: At 09:15:01 AM: Candle is officially CLOSED
+    # Step 2: At 09:15:01 AM: Candle is officially CLOSED (stamped 09:14:59)
+    closed_candles = yesterday_candles + [
+        {"time": open_ts + 899, "open": 150, "high": 160, "low": 149, "close": 158, "volume": 500} # closed at 09:14:59
+    ]
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: closed_candles)
     monkeypatch.setattr(time, "time", lambda: open_ts + 901) # Current time: 09:15:01 AM
     await runner_15m.evaluate_cycle(xts_api, client_main)
 
