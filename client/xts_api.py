@@ -711,7 +711,7 @@ def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
                         valid_contracts.append(c)
                         continue
                     days_left = (exp_date - today).days
-                    min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 5) if exch_seg in ("MCXFO", "NCDEX") \
+                    min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 7) if exch_seg in ("MCXFO", "NCDEX") \
                         else getattr(config, "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES", 0)
                     
                     if days_left > min_days:

@@ -66,40 +66,35 @@ def generate_synthetic_series(closes, base_time=1787600000, interval=900):
 
 
 # ==============================================================================
-# TEST 1: Expiry Resolution Threshold Check (>5 vs <=5 days)
+# TEST 1: Expiry Resolution Threshold Check (>7 vs <=7 days)
 # ==============================================================================
-def test_expiry_resolution_5_day_boundary(monkeypatch):
+def test_expiry_resolution_7_day_boundary(monkeypatch):
     """
-    Verifies that with MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX = 5:
-    - 7 days to expiry -> Resolves near month (31AUG2026)
-    - 6 days to expiry -> Resolves near month (31AUG2026)
+    Verifies that with MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX = 7:
+    - 8 days to expiry -> Resolves near month (31AUG2026)
+    - 7 days to expiry -> Resolves next month (30SEP2026)
+    - 6 days to expiry -> Resolves next month (30SEP2026)
     - 5 days to expiry -> Resolves next month (30SEP2026)
-    - 4 days to expiry -> Resolves next month (30SEP2026)
     """
-    monkeypatch.setattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 5)
+    monkeypatch.setattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 7)
 
     exp_aug = datetime.date(2026, 8, 31)
     exp_sep = datetime.date(2026, 9, 30)
 
+    # 8 days to expiry (today = 2026-08-23)
+    today_8d = datetime.date(2026, 8, 23)
+    res_8d = exp_aug if (exp_aug - today_8d).days > 7 else exp_sep
+    assert res_8d == exp_aug
+
     # 7 days to expiry (today = 2026-08-24)
     today_7d = datetime.date(2026, 8, 24)
-    res_7d = exp_aug if (exp_aug - today_7d).days > 5 else exp_sep
-    assert res_7d == exp_aug
+    res_7d = exp_aug if (exp_aug - today_7d).days > 7 else exp_sep
+    assert res_7d == exp_sep  # Rolled to September!
 
     # 6 days to expiry (today = 2026-08-25)
     today_6d = datetime.date(2026, 8, 25)
-    res_6d = exp_aug if (exp_aug - today_6d).days > 5 else exp_sep
-    assert res_6d == exp_aug
-
-    # 5 days to expiry (today = 2026-08-26)
-    today_5d = datetime.date(2026, 8, 26)
-    res_5d = exp_aug if (exp_aug - today_5d).days > 5 else exp_sep
-    assert res_5d == exp_sep  # Rolled to September!
-
-    # 4 days to expiry (today = 2026-08-27)
-    today_4d = datetime.date(2026, 8, 27)
-    res_4d = exp_aug if (exp_aug - today_4d).days > 5 else exp_sep
-    assert res_4d == exp_sep
+    res_6d = exp_aug if (exp_aug - today_6d).days > 7 else exp_sep
+    assert res_6d == exp_sep  # Rolled to September!
 
 
 # ==============================================================================

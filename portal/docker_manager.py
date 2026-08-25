@@ -70,7 +70,7 @@ def write_client_config(tenant_id: str):
             "MAX_UNITS_LIMIT": int(risk_dict.get("max_units_limit", 100000) or 100000),
             "MAX_ORDER_VALUE_INR": float(risk_dict.get("max_order_value_inr", 5000000.0) or 5000000.0),
             "DAILY_NOTIONAL_CAP_INR": float(risk_dict.get("daily_notional_cap_inr", 10000000.0) or 10000000.0),
-            "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX": int(risk_dict.get("min_days_before_expiry_mcx", 5) or 5),
+            "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX": int(risk_dict.get("min_days_before_expiry_mcx", 7) or 7),
             "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES": int(risk_dict.get("min_days_before_expiry_derivatives", 0) or 0),
             "CANCEL_LINGERING_PARTIAL_FILLS": bool(risk_dict.get("cancel_lingering_partial_fills", True)),
             "PARTIAL_FILL_TIMEOUT_SECONDS": float(risk_dict.get("partial_fill_timeout_seconds", 2.0) or 2.0),
