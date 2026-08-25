@@ -580,6 +580,13 @@ class SingleSuperTrendRunner:
                 await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                 self.virtual_position = self.quantity
                 return {"status": "SUCCESS", "message": f"Reversed from SHORT to LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+            elif self.virtual_position > 0:
+                diff = self.quantity - self.virtual_position
+                if diff > 0:
+                    await self._execute_entry("BUY", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                    self.virtual_position = self.quantity
+                    return {"status": "SUCCESS", "message": f"Topped up LONG by +{diff} lots (total +{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already LONG (+{self.virtual_position} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
             else:
                 # Entry from flat
                 await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
@@ -599,6 +606,13 @@ class SingleSuperTrendRunner:
                 await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                 self.virtual_position = -self.quantity
                 return {"status": "SUCCESS", "message": f"Reversed from LONG to SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+            elif self.virtual_position < 0:
+                diff = self.quantity - abs(self.virtual_position)
+                if diff > 0:
+                    await self._execute_entry("SELL", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                    self.virtual_position = -self.quantity
+                    return {"status": "SUCCESS", "message": f"Topped up SHORT by -{diff} lots (total -{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already SHORT ({self.virtual_position} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
             else:
                 # Entry from flat
                 await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
