@@ -756,7 +756,16 @@ async def sync_supertrend_trend_endpoint(
         if not hmac.compare_digest(req_token, internal_auth_token):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
-    target_id = strategy_id or (supertrend_engine.primary_runner.id if supertrend_engine.primary_runner else "")
+    target_id = strategy_id
+    if not target_id:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                target_id = body.get("strategy_id")
+        except Exception:
+            pass
+
+    target_id = target_id or (supertrend_engine.primary_runner.id if supertrend_engine.primary_runner else "")
     if not target_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "No active strategy found to sync"})
 
