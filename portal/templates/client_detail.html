@@ -1079,16 +1079,28 @@
                         </form>
                     </div>
 
-                    <!-- Indicator & Virtual Target Metrics -->
-                    <div class="grid grid-cols-3 gap-1.5 bg-slate-900/80 rounded-xl p-2.5 text-[11px] font-mono border border-bordercolor/50">
+                    <!-- Indicator, Trend & Virtual Target Metrics -->
+                    <div class="grid grid-cols-4 gap-1 bg-slate-900/80 rounded-xl p-2 text-[10.5px] font-mono border border-bordercolor/50">
                         <div>
-                            <div class="text-[10px] text-slate-400">ATR/MULT</div>
-                            <div class="text-slate-200 font-bold mt-0.5">{{ s.atr_period }} / {{ s.multiplier }}x</div>
+                            <div class="text-[9.5px] text-slate-400 uppercase tracking-wider">ATR/MULT</div>
+                            <div class="text-slate-200 font-bold mt-0.5">{{ s.atr_period }}/{{ s.multiplier }}x</div>
                         </div>
-                        <div class="text-center border-x border-bordercolor/40 px-1">
-                            <div class="text-[10px] text-slate-400">TARGET</div>
+                        <div class="text-center border-l border-bordercolor/40 px-0.5">
+                            <div class="text-[9.5px] text-slate-400 uppercase tracking-wider">TREND</div>
+                            <div class="font-bold mt-0.5">
+                                {% if s.current_trend == 'BULLISH' or s.current_trend == 1 %}
+                                    <span class="text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded border border-emerald-500/20 text-[10px]">BULL</span>
+                                {% elif s.current_trend == 'BEARISH' or s.current_trend == -1 %}
+                                    <span class="text-rose-400 bg-rose-500/10 px-1 py-0.5 rounded border border-rose-500/20 text-[10px]">BEAR</span>
+                                {% else %}
+                                    <span class="text-slate-400 bg-slate-800 px-1 py-0.5 rounded border border-slate-700 text-[10px]">INIT</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="text-center border-x border-bordercolor/40 px-0.5">
+                            <div class="text-[9.5px] text-slate-400 uppercase tracking-wider">TARGET</div>
                             <button type="button" onclick="openResetFlatModal('{{ s.id }}', '{{ s.symbol }}', '{{ s.timeframe }}', '{{ s.virtual_position|default(0) }}', '{{ s.strategy_position|default('FLAT') }}', '{{ s.quantity|default(1) }}', '{{ s.execution_mode|default('LIVE') }}')"
-                                class="font-bold mt-0.5 px-1.5 py-0.5 rounded hover:bg-slate-800 transition inline-block cursor-pointer"
+                                class="font-bold mt-0.5 px-1 py-0.5 rounded hover:bg-slate-800 transition inline-block cursor-pointer"
                                 title="Click to reset target to FLAT">
                                 {% if s.virtual_position is defined and s.virtual_position > 0 %}
                                     <span class="text-emerald-400 hover:underline">+{{ s.virtual_position }} L</span>
@@ -1100,7 +1112,7 @@
                             </button>
                         </div>
                         <div class="text-right">
-                            <div class="text-[10px] text-slate-400">STATUS</div>
+                            <div class="text-[9.5px] text-slate-400 uppercase tracking-wider">STATUS</div>
                             <div class="font-bold mt-0.5 {% if s.is_enabled %}text-emerald-400{% else %}text-slate-500{% endif %}">
                                 {% if s.is_enabled %}RUNNING{% else %}PAUSED{% endif %}
                             </div>
