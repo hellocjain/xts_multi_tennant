@@ -94,8 +94,7 @@ def calculate_supertrend(
     Matches TradingView Pine Script v4 (KivancOzbilgic formula).
     Candles format: [{"time": int, "open": float, "high": float, "low": float, "close": float, "volume": int}, ...]
     """
-    n = len(candles)
-    if n < atr_period + 1:
+    if not isinstance(candles, list) or not candles:
         return {
             "trend": 0,
             "trend_name": "INITIALIZING",
@@ -103,14 +102,64 @@ def calculate_supertrend(
             "upper_band": 0.0,
             "lower_band": 0.0,
             "atr": 0.0,
-            "last_close": candles[-1]["close"] if candles else 0.0,
-            "last_candle_time": candles[-1]["time"] if candles else 0,
+            "last_close": 0.0,
+            "last_candle_time": 0,
             "prev_trend": 0,
             "is_flip": False,
             "flip_direction": None,
             "candle_series": [],
-            "error": f"Insufficient candles ({n}/{atr_period + 1} required)"
+            "error": "Empty or invalid candle data provided"
         }
+
+    # Validate parameters
+    safe_period = max(1, int(atr_period) if atr_period is not None else 10)
+    safe_mult = max(0.1, float(multiplier) if multiplier is not None else 3.0)
+
+    # Sanitize and validate candle data
+    clean_candles = []
+    for c in candles:
+        if not isinstance(c, dict):
+            continue
+        try:
+            o = float(c.get("open", 0.0))
+            h = float(c.get("high", 0.0))
+            l = float(c.get("low", 0.0))
+            cl = float(c.get("close", 0.0))
+            t = int(c.get("time", 0))
+            if math.isnan(o) or math.isnan(h) or math.isnan(l) or math.isnan(cl) or math.isinf(cl):
+                continue
+            clean_candles.append({
+                "time": t,
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": cl,
+                "volume": int(c.get("volume", 0)) if c.get("volume") is not None else 0
+            })
+        except (ValueError, TypeError):
+            continue
+
+    n = len(clean_candles)
+    if n < safe_period + 1:
+        return {
+            "trend": 0,
+            "trend_name": "INITIALIZING",
+            "supertrend": 0.0,
+            "upper_band": 0.0,
+            "lower_band": 0.0,
+            "atr": 0.0,
+            "last_close": clean_candles[-1]["close"] if clean_candles else 0.0,
+            "last_candle_time": clean_candles[-1]["time"] if clean_candles else 0,
+            "prev_trend": 0,
+            "is_flip": False,
+            "flip_direction": None,
+            "candle_series": [],
+            "error": f"Insufficient candles ({n}/{safe_period + 1} required)"
+        }
+
+    candles = clean_candles
+    atr_period = safe_period
+    multiplier = safe_mult
 
     # 1. Compute True Range for all candles
     tr_list = []

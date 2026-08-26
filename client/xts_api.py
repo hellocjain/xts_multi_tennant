@@ -1223,6 +1223,8 @@ def slice_quantity_for_freeze(quantity: int, freeze_limit: int) -> list:
     Splits an order quantity into an array of chunks compliant with the exchange/broker freeze limit.
     If freeze_limit is None or <= 0 or quantity <= freeze_limit, returns [quantity].
     """
+    if quantity <= 0:
+        return []
     if not freeze_limit or freeze_limit <= 0 or quantity <= freeze_limit:
         return [quantity]
     chunks = []
