@@ -679,6 +679,55 @@ class SingleSuperTrendRunner:
                 self.virtual_position = -self.quantity
                 return {"status": "SUCCESS", "message": f"Entered SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
 
+    async def reset_to_flat(self, square_off_broker: bool, xts_api_module, main_module) -> dict:
+        """
+        Resets this strategy's target to FLAT (0 lots).
+        If square_off_broker is True, dispatches an exit order to close any active broker leg.
+        Persists virtual_position = 0 in SQLite and updates memory state.
+        """
+        async with self.lock:
+            prev_pos = self.virtual_position
+            prev_side = self.strategy_position
+            old_qty = abs(prev_pos)
+            
+            inst = xts_api_module.resolve_contract(self.symbol) if xts_api_module else None
+            freeze_limit = int(inst.get("freeze_qty") or 100000) if inst else 100000
+            target_sym = self.last_resolved_symbol_desc or (inst.get("desc") if inst else self.symbol)
+
+            order_result = None
+            if square_off_broker and prev_pos != 0:
+                logger.info(
+                    f"🧹 SuperTrend [{self.symbol} ({self.timeframe})]: Reset to FLAT with Broker Square-Off! "
+                    f"Exiting {old_qty} lots ({prev_side}) on {target_sym}."
+                )
+                ts_now = int(time.time())
+                await self._execute_exit(
+                    prev_side,
+                    old_qty,
+                    f"RESET_FLAT_{ts_now}",
+                    main_module,
+                    freeze_limit,
+                    target_symbol=target_sym
+                )
+                order_result = f"Dispatched exit order for {old_qty} lots on {target_sym}"
+            else:
+                logger.info(
+                    f"🧹 SuperTrend [{self.symbol} ({self.timeframe})]: Force Virtual Reset to FLAT (0 broker orders). "
+                    f"Previous target: {prev_pos} lots ({prev_side})."
+                )
+                order_result = "Virtual target reset to 0 (No broker order sent)"
+
+            self.virtual_position = 0
+            self.strategy_position = "FLAT"
+            if main_module and hasattr(main_module, "db_set_virtual_position"):
+                main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, 0)
+
+            return {
+                "status": "SUCCESS",
+                "message": f"Strategy {self.symbol} ({self.timeframe}) reset to 0 FLAT. {order_result}.",
+                "strategy": self.get_telemetry()
+            }
+
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:
         """Executes a single SuperTrend evaluation and reversal check for this symbol."""
         if not self.is_enabled or not self.is_configured:
@@ -1636,6 +1685,13 @@ class MultiSuperTrendEngine:
         if not runner:
             return {"status": "ERROR", "error": f"Strategy '{strategy_id}' not found"}
         return await runner.sync_to_current_trend(xts_api_module, main_module)
+
+    async def reset_strategy_to_flat(self, strategy_id: str, square_off_broker: bool, xts_api_module, main_module) -> dict:
+        """Resets an active strategy runner's target to FLAT (0 lots), optionally squaring off at the broker."""
+        runner = self.get_strategy(strategy_id)
+        if not runner:
+            return {"status": "ERROR", "error": f"Strategy '{strategy_id}' not found"}
+        return await runner.reset_to_flat(square_off_broker, xts_api_module, main_module)
 
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:
         """Evaluates active strategies concurrently across all registered runners."""

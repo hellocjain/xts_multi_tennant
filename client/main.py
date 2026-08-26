@@ -769,7 +769,35 @@ async def sync_supertrend_trend_endpoint(
     if not target_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "No active strategy found to sync"})
 
-    return await supertrend_engine.sync_strategy_to_trend(target_id, xts_api, sys.modules[__name__])
+    this_mod = sys.modules.get(__name__) or sys.modules.get("main") or sys.modules.get("client_main")
+    return await supertrend_engine.sync_strategy_to_trend(target_id, xts_api, this_mod)
+
+@app.post("/internal/supertrend/strategy/reset-flat")
+async def reset_supertrend_strategy_flat_endpoint(
+    request: Request
+):
+    """Resets an individual strategy target to 0 FLAT, optionally squaring off at the broker."""
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    target_id = body.get("strategy_id") or body.get("id")
+    square_off_broker = bool(body.get("square_off_broker", False))
+
+    target_id = target_id or (supertrend_engine.primary_runner.id if supertrend_engine.primary_runner else "")
+    if not target_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "No active strategy found to reset"})
+
+    this_mod = sys.modules.get(__name__) or sys.modules.get("main") or sys.modules.get("client_main")
+    res = await supertrend_engine.reset_strategy_to_flat(target_id, square_off_broker, xts_api, this_mod)
+    return res
 
 # =========================================================================
 # Custom Python Strategy Internal Endpoints

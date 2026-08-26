@@ -1351,6 +1351,66 @@ async def sync_supertrend_trend_portal(
 
     return {"status": "ERROR", "error": "Client container unreachable"}
 
+@app.post("/admin/clients/{tenant_id}/supertrend/strategy/{strategy_id}/reset-flat")
+@app.post("/admin/clients/{tenant_id}/supertrend/reset-flat")
+async def reset_supertrend_strategy_flat_portal(
+    tenant_id: str,
+    strategy_id: Optional[str] = None,
+    square_off_broker: Optional[int] = Form(None),
+    request: Request = None,
+    user: dict = Depends(require_auth)
+):
+    """Proxies reset-to-flat request to the client container and records audit."""
+    target_strat_id = strategy_id
+    sq_broker = bool(square_off_broker) if square_off_broker is not None else False
+
+    if request and request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                target_strat_id = target_strat_id or body.get("strategy_id") or body.get("id")
+                if "square_off_broker" in body:
+                    sq_broker = bool(body.get("square_off_broker"))
+        except Exception:
+            pass
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/strategy/reset-flat"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/supertrend/strategy/reset-flat"
+    url_local = f"http://127.0.0.1:{port}/internal/supertrend/strategy/reset-flat"
+
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    payload = {
+        "strategy_id": target_strat_id,
+        "square_off_broker": sq_broker
+    }
+
+    res = None
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, json=payload, timeout=10.0)
+                if resp.status_code == 200:
+                    res = resp.json()
+                    break
+            except Exception:
+                pass
+
+    if not res:
+        res = {"status": "ERROR", "error": "Client container unreachable"}
+
+    database.record_audit(
+        user["username"],
+        "RESET_SUPERTREND_STRATEGY_FLAT",
+        {"strategy_id": target_strat_id, "square_off_broker": sq_broker, "result": res},
+        tenant_id
+    )
+    return res
+
 # =====================================================================
 # EMERGENCY PANIC SWITCHES
 # =====================================================================

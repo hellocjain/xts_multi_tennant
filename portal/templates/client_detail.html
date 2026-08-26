@@ -1087,15 +1087,17 @@
                         </div>
                         <div class="text-center border-x border-bordercolor/40 px-1">
                             <div class="text-[10px] text-slate-400">TARGET</div>
-                            <div class="font-bold mt-0.5">
+                            <button type="button" onclick="openResetFlatModal('{{ s.id }}', '{{ s.symbol }}', '{{ s.timeframe }}', '{{ s.virtual_position|default(0) }}', '{{ s.strategy_position|default('FLAT') }}', '{{ s.quantity|default(1) }}', '{{ s.execution_mode|default('LIVE') }}')"
+                                class="font-bold mt-0.5 px-1.5 py-0.5 rounded hover:bg-slate-800 transition inline-block cursor-pointer"
+                                title="Click to reset target to FLAT">
                                 {% if s.virtual_position is defined and s.virtual_position > 0 %}
-                                    <span class="text-emerald-400">+{{ s.virtual_position }} L</span>
+                                    <span class="text-emerald-400 hover:underline">+{{ s.virtual_position }} L</span>
                                 {% elif s.virtual_position is defined and s.virtual_position < 0 %}
-                                    <span class="text-rose-400">{{ s.virtual_position }} S</span>
+                                    <span class="text-rose-400 hover:underline">{{ s.virtual_position }} S</span>
                                 {% else %}
-                                    <span class="text-slate-400">0 FLAT</span>
+                                    <span class="text-slate-400 hover:text-slate-200">0 FLAT</span>
                                 {% endif %}
-                            </div>
+                            </button>
                         </div>
                         <div class="text-right">
                             <div class="text-[10px] text-slate-400">STATUS</div>
@@ -1115,6 +1117,12 @@
                     </button>
 
                     <div class="flex items-center gap-2">
+                        <button type="button" onclick="openResetFlatModal('{{ s.id }}', '{{ s.symbol }}', '{{ s.timeframe }}', '{{ s.virtual_position|default(0) }}', '{{ s.strategy_position|default('FLAT') }}', '{{ s.quantity|default(1) }}', '{{ s.execution_mode|default('LIVE') }}')"
+                            title="Reset Strategy Target to FLAT (0 lots)"
+                            class="p-1.5 bg-slate-900 hover:bg-amber-500/20 text-amber-400 rounded-lg border border-bordercolor hover:border-amber-500/40 transition">
+                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                        </button>
+
                         <button type="button" onclick="syncStrategyTrend('{{ s.id }}', '{{ s.symbol }}', '{{ s.timeframe }}')" title="Sync position to current trend immediately"
                             class="p-1.5 bg-slate-900 hover:bg-emerald-500/20 text-emerald-400 rounded-lg border border-bordercolor hover:border-emerald-500/40 transition">
                             <i data-lucide="play" class="w-3.5 h-3.5"></i>
@@ -2319,6 +2327,98 @@
         }, 10000);
     });
 
+    // Modal: Reset Strategy Target to FLAT (0 lots)
+    let resetTargetStrategyId = null;
+    let resetTargetSymbol = '';
+    let resetTargetTimeframe = '';
+
+    function openResetFlatModal(stratId, symbol, timeframe, vpos, side, qty, mode) {
+        resetTargetStrategyId = stratId;
+        resetTargetSymbol = symbol;
+        resetTargetTimeframe = timeframe;
+
+        const modal = document.getElementById('st-reset-flat-modal');
+        if (!modal) return;
+
+        const vposNum = parseInt(vpos, 10) || 0;
+        let badgeHtml = '<span class="text-slate-400 font-bold">0 FLAT</span>';
+        if (vposNum > 0) {
+            badgeHtml = `<span class="text-emerald-400 font-bold">+${vposNum} LONG (${qty || 1} lots)</span>`;
+        } else if (vposNum < 0) {
+            badgeHtml = `<span class="text-rose-400 font-bold">${vposNum} SHORT (${qty || 1} lots)</span>`;
+        }
+
+        const nameEl = document.getElementById('reset-modal-strategy-name');
+        const metaEl = document.getElementById('reset-modal-meta');
+        const targetEl = document.getElementById('reset-modal-current-target');
+        if (nameEl) nameEl.textContent = `${symbol} (${timeframe})`;
+        if (metaEl) metaEl.textContent = `Mode: ${mode || 'LIVE'} • Configured Qty: ${qty || 1} Lots`;
+        if (targetEl) targetEl.innerHTML = badgeHtml;
+
+        const brokerBtn = document.getElementById('reset-modal-broker-btn');
+        if (brokerBtn) {
+            if (vposNum === 0) {
+                brokerBtn.disabled = true;
+                brokerBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                brokerBtn.title = "Strategy is already 0 FLAT";
+            } else {
+                brokerBtn.disabled = false;
+                brokerBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                brokerBtn.title = `Send market exit order for ${Math.abs(vposNum)} lots to broker`;
+            }
+        }
+
+        modal.classList.remove('hidden');
+        if (window.lucide) lucide.createIcons();
+    }
+
+    function closeResetFlatModal() {
+        const modal = document.getElementById('st-reset-flat-modal');
+        if (modal) modal.classList.add('hidden');
+        resetTargetStrategyId = null;
+    }
+
+    async function executeResetFlat(squareOffBroker) {
+        if (!resetTargetStrategyId) return;
+
+        const stratId = resetTargetStrategyId;
+        const symbol = resetTargetSymbol;
+        const tf = resetTargetTimeframe;
+        const tenantId = "{{ client.id }}";
+        const isBroker = Boolean(squareOffBroker);
+
+        const actionText = isBroker
+            ? `Square off position at broker and reset ${symbol} (${tf}) to 0 FLAT?`
+            : `Set virtual target for ${symbol} (${tf}) to 0 FLAT (NO broker order)?`;
+
+        if (!confirm(actionText)) {
+            return;
+        }
+
+        closeResetFlatModal();
+        showToast(isBroker ? `Dispatching square-off order for ${symbol}...` : `Resetting target to 0 FLAT...`, 'info');
+
+        try {
+            const resp = await fetch(`/admin/clients/${tenantId}/supertrend/strategy/${encodeURIComponent(stratId)}/reset-flat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    strategy_id: stratId,
+                    square_off_broker: isBroker
+                })
+            });
+            const res = await resp.json();
+            if (res.status === 'SUCCESS') {
+                showToast(res.message || 'Strategy reset to 0 FLAT successfully!', 'success');
+                setTimeout(() => window.location.reload(), 1200);
+            } else {
+                showToast(res.error || res.message || 'Failed to reset strategy', 'error');
+            }
+        } catch (e) {
+            showToast('Network error resetting strategy', 'error');
+        }
+    }
+
     // Hook tab switch to trigger chart render and resize
     const originalSwitchClientTab = window.switchClientTab;
     window.switchClientTab = function(tabName) {
@@ -2330,6 +2430,93 @@
         }
     };
 </script>
+
+<!-- Reset Strategy Target to FLAT Modal -->
+<div id="st-reset-flat-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-cardbg border border-bordercolor w-full max-w-lg rounded-2xl p-6 shadow-2xl space-y-5">
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-3 text-amber-400">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center">
+                    <i data-lucide="rotate-ccw" class="w-5 h-5 text-amber-400"></i>
+                </div>
+                <div>
+                    <h3 class="font-bold text-base text-slate-100">Reset Strategy Target to FLAT</h3>
+                    <p class="text-xs text-slate-400 font-mono">Select square-off or virtual reset</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeResetFlatModal()" class="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg bg-slate-800 transition">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <!-- Strategy Details Card -->
+        <div class="bg-slate-900/90 border border-bordercolor/80 rounded-xl p-4 space-y-2.5 font-mono text-xs">
+            <div class="flex items-center justify-between">
+                <span class="text-slate-400">Strategy Symbol:</span>
+                <span id="reset-modal-strategy-name" class="font-bold text-slate-100 text-sm"></span>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-slate-400">Configuration:</span>
+                <span id="reset-modal-meta" class="text-slate-300"></span>
+            </div>
+            <div class="flex items-center justify-between border-t border-bordercolor/50 pt-2">
+                <span class="text-slate-400 font-semibold">Current Active Target:</span>
+                <div id="reset-modal-current-target" class="text-sm"></div>
+            </div>
+        </div>
+
+        <!-- 2 Distinct Action Cards -->
+        <div class="space-y-3">
+            <!-- Option 1: Live Broker Square-Off & Reset -->
+            <div class="bg-slate-900/60 border border-amber-500/30 rounded-xl p-4 hover:border-amber-500/60 transition space-y-2">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-1.5 text-amber-400 font-bold text-xs">
+                            <i data-lucide="shield-alert" class="w-4 h-4 text-amber-400"></i>
+                            <span>Option 1: Square Off &amp; Reset (Recommended)</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            Sends a live market exit order to the broker to close this strategy's open position, and resets the bot's target to <strong class="text-slate-200">0 FLAT</strong>.
+                        </p>
+                    </div>
+                </div>
+                <button type="button" id="reset-modal-broker-btn" onclick="executeResetFlat(true)"
+                    class="w-full mt-2 py-2.5 px-4 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-amber-600/20">
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                    <span>Square Off at Broker &amp; Reset to Flat</span>
+                </button>
+            </div>
+
+            <!-- Option 2: Virtual Only Reset (No Broker Order) -->
+            <div class="bg-slate-900/40 border border-bordercolor rounded-xl p-4 hover:border-slate-600 transition space-y-2">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-1.5 text-slate-300 font-bold text-xs">
+                            <i data-lucide="database" class="w-4 h-4 text-slate-400"></i>
+                            <span>Option 2: Force Virtual Flat (No Broker Order)</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 leading-relaxed">
+                            Resets the strategy's internal target counter to <strong class="text-slate-200">0 FLAT</strong> without sending any orders to the broker. Use if you already closed the position manually.
+                        </p>
+                    </div>
+                </div>
+                <button type="button" onclick="executeResetFlat(false)"
+                    class="w-full mt-2 py-2 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-bordercolor font-semibold text-xs rounded-xl transition flex items-center justify-center gap-2">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span>Force Virtual Flat (0 Orders)</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex justify-end pt-2 border-t border-bordercolor">
+            <button type="button" onclick="closeResetFlatModal()" class="px-4 py-2 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition">
+                Cancel
+            </button>
+        </div>
+    </div>
+</div>
 
 <!-- Force Evaluate Diagnostic Trace Modal -->
 <div id="st-evaluate-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
