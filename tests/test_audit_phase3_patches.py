@@ -650,25 +650,25 @@ def test_regression_task_a2_long_gap_weekend_boundary():
     """
     tf_seconds = 900 # 15m
 
-    # Friday 15:30 IST close
-    friday_bar = {"time": 1787600000, "open": 2400.0, "high": 2405.0, "low": 2398.0, "close": 2402.0}
+    # Friday 15:30 IST close (28-Aug-2026 15:30:00 IST)
+    friday_bar = {"time": 1787911200, "open": 2400.0, "high": 2405.0, "low": 2398.0, "close": 2402.0}
     
-    # Monday 09:00-09:15 bar (closing at 09:14:59, ts = 1787837699) in-progress at 09:01:00 (now_ts = 1787836860)
-    monday_forming_bar = {"time": 1787837699, "open": 2405.0, "high": 2410.0, "low": 2404.0, "close": 2408.0}
+    # Monday 09:00-09:15 bar (31-Aug-2026 09:14:59 IST, ts = 1788147899) in-progress at 09:01:00 (now_ts = 1788147060)
+    monday_forming_bar = {"time": 1788147899, "open": 2405.0, "high": 2410.0, "low": 2404.0, "close": 2408.0}
     
     # Calling the real production method directly at 09:01:00 (< 09:14:59 close)
     res_forming = SingleSuperTrendRunner.is_candle_closed(
         [friday_bar, monday_forming_bar],
         tf_seconds=tf_seconds,
-        now_ts=1787836860
+        now_ts=1788147060
     )
     assert res_forming is False, "Forming Monday bar at 09:01 must be evaluated as NOT closed (False)"
 
-    # Monday 09:00-09:15 bar officially closed evaluated at 09:15:01 (now_ts = 1787837701 >= 1787837699)
+    # Monday 09:00-09:15 bar officially closed evaluated at 09:15:01 (now_ts = 1788147901 >= 1788147899)
     res_closed = SingleSuperTrendRunner.is_candle_closed(
         [friday_bar, monday_forming_bar],
         tf_seconds=tf_seconds,
-        now_ts=1787837701
+        now_ts=1788147901
     )
     assert res_closed is True, "Confirmed Monday closed bar evaluated at 09:15:01 must be True"
 

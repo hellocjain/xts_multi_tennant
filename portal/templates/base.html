@@ -65,6 +65,10 @@
         ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #334155; }
         
+        /* Utility to hide scrollbar for clean horizontal swiping while preserving touch scroll */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
         .tab-btn.active {
             color: #10b981;
             border-bottom-color: #10b981;
@@ -75,18 +79,25 @@
 <body class="bg-obsidian text-slate-100 min-h-screen flex flex-col antialiased selection:bg-brand-500 selection:text-black">
 
     <!-- Top Navigation Bar -->
-    <nav class="bg-cardbg/90 backdrop-blur-md border-b border-bordercolor px-5 py-2.5 flex items-center justify-between sticky top-0 z-50">
-        <div class="flex items-center space-x-5">
+    <nav class="bg-cardbg/95 backdrop-blur-md border-b border-bordercolor px-3.5 sm:px-5 py-2.5 flex items-center justify-between sticky top-0 z-50">
+        <div class="flex items-center space-x-3 sm:space-x-5">
+            <!-- Mobile Hamburger Button -->
+            {% if current_user %}
+            <button type="button" onclick="toggleMobileDrawer()" class="md:hidden p-2 rounded-lg bg-slate-900 border border-bordercolor text-slate-300 hover:text-white hover:bg-slate-800 transition" aria-label="Open Navigation Menu">
+                <i data-lucide="menu" class="w-5 h-5"></i>
+            </button>
+            {% endif %}
+
             <a href="/admin/dashboard" class="flex items-center space-x-2.5 group">
                 <div class="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 group-hover:scale-105 transition shadow-sm shadow-brand-500/20">
                     <i data-lucide="zap" class="w-4 h-4 text-brand-400"></i>
                 </div>
                 <div class="flex flex-col">
-                    <span class="font-bold text-base tracking-tight text-slate-100 flex items-center gap-1.5">
+                    <span class="font-bold text-sm sm:text-base tracking-tight text-slate-100 flex items-center gap-1.5">
                         XTS Multi-Tenant
                         <span class="bg-brand-500/20 text-brand-400 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold border border-brand-500/30">PRO</span>
                     </span>
-                    <span class="text-[10px] text-slate-400 font-mono">Symphony Algo Gateway</span>
+                    <span class="text-[9px] sm:text-[10px] text-slate-400 font-mono hidden sm:inline">Symphony Algo Gateway</span>
                 </div>
             </a>
 
@@ -120,7 +131,7 @@
             {% endif %}
         </div>
 
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-2 sm:space-x-3">
             <!-- Server Telemetry Strip -->
             {% if server_info %}
             <div class="hidden lg:flex items-center space-x-2 text-[11px] bg-obsidian border border-bordercolor px-3 py-1 rounded-lg font-mono text-slate-300">
@@ -131,27 +142,120 @@
                 <span class="text-slate-700">|</span>
                 <span class="text-amber-400" id="live-ist-clock">--:--:-- IST</span>
             </div>
+            <!-- Mobile Compact Live Pill -->
+            <div class="flex lg:hidden items-center text-[10px] bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-md font-mono">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-1"></span>
+                <span>LIVE</span>
+            </div>
             {% endif %}
 
             {% if current_user %}
-            <div class="flex items-center space-x-2 bg-slate-900 border border-bordercolor pl-2.5 pr-1.5 py-1 rounded-lg">
-                <div class="flex items-center space-x-1.5 text-xs text-slate-300">
+            <div class="flex items-center space-x-1.5 sm:space-x-2 bg-slate-900 border border-bordercolor pl-2 sm:pl-2.5 pr-1.5 py-1 rounded-lg">
+                <div class="hidden sm:flex items-center space-x-1.5 text-xs text-slate-300">
                     <i data-lucide="user" class="w-3.5 h-3.5 text-brand-400"></i>
                     <span class="font-medium font-mono text-slate-200">{{ current_user.username }}</span>
                 </div>
                 <a href="/admin/logout" title="Sign out" class="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold px-2 py-0.5 rounded transition flex items-center space-x-1">
                     <i data-lucide="log-out" class="w-3 h-3"></i>
-                    <span>Exit</span>
+                    <span class="hidden sm:inline">Exit</span>
                 </a>
             </div>
             {% endif %}
         </div>
     </nav>
 
-    <!-- Main Content Area -->
-    <main class="flex-1 p-5 md:p-6 max-w-7xl mx-auto w-full">
+    <!-- Mobile Slide-Out Navigation Drawer -->
+    <div id="mobile-nav-backdrop" onclick="toggleMobileDrawer(false)" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden transition-opacity duration-300"></div>
+    <div id="mobile-nav-drawer" class="fixed top-0 left-0 bottom-0 w-72 bg-cardbg border-r border-bordercolor z-50 transform -translate-x-full transition-transform duration-300 ease-in-out flex flex-col justify-between p-5 shadow-2xl">
+        <div class="space-y-6">
+            <!-- Drawer Header -->
+            <div class="flex items-center justify-between border-b border-bordercolor pb-4">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                        <i data-lucide="zap" class="w-4 h-4 text-brand-400"></i>
+                    </div>
+                    <div>
+                        <span class="font-bold text-sm text-slate-100">XTS Navigation</span>
+                        <div class="text-[10px] text-slate-400 font-mono">Terminal Gateway</div>
+                    </div>
+                </div>
+                <button type="button" onclick="toggleMobileDrawer(false)" class="p-1.5 rounded-lg bg-slate-900 text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- Drawer Links -->
+            <nav class="flex flex-col space-y-1.5 text-sm font-medium">
+                <a href="/admin/dashboard" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-200 hover:bg-slate-800/80 hover:text-white transition">
+                    <i data-lucide="layout-dashboard" class="w-4 h-4 text-slate-400"></i>
+                    <span>Client Profiles</span>
+                </a>
+                <a href="/admin/orders" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-200 hover:bg-slate-800/80 hover:text-white transition">
+                    <i data-lucide="activity" class="w-4 h-4 text-slate-400"></i>
+                    <span>Orders &amp; Signals</span>
+                </a>
+                <a href="/admin/strategies" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-200 hover:bg-slate-800/80 hover:text-white transition">
+                    <i data-lucide="code-2" class="w-4 h-4 text-brand-400"></i>
+                    <span>Strategies</span>
+                </a>
+                <a href="/admin/clients/add" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-200 hover:bg-slate-800/80 hover:text-white transition">
+                    <i data-lucide="user-plus" class="w-4 h-4 text-slate-400"></i>
+                    <span>Add Client Tenant</span>
+                </a>
+                <a href="/admin/settings" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-200 hover:bg-slate-800/80 hover:text-white transition">
+                    <i data-lucide="sliders" class="w-4 h-4 text-slate-400"></i>
+                    <span>Platform Settings</span>
+                </a>
+                <a href="/admin/audit-logs" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-slate-200 hover:bg-slate-800/80 hover:text-white transition">
+                    <i data-lucide="shield-check" class="w-4 h-4 text-slate-400"></i>
+                    <span>Audit Trail</span>
+                </a>
+            </nav>
+        </div>
+
+        <!-- Drawer Footer -->
+        <div class="border-t border-bordercolor pt-4 space-y-3">
+            <div class="flex items-center justify-between text-xs text-slate-400 font-mono">
+                <span>User: <strong class="text-slate-200">{{ current_user.username if current_user else 'Guest' }}</strong></span>
+                <span class="text-emerald-400">● Online</span>
+            </div>
+            <a href="/admin/logout" class="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold py-2.5 rounded-xl transition flex items-center justify-center space-x-2">
+                <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                <span>Sign Out</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Main Content Area with bottom padding for mobile action bar -->
+    <main class="flex-1 p-3 sm:p-5 md:p-6 max-w-7xl mx-auto w-full pb-24 md:pb-6">
         {% block content %}{% endblock %}
     </main>
+
+    <!-- Fixed Mobile Bottom Thumb Action Bar -->
+    {% if current_user %}
+    <nav class="md:hidden fixed bottom-0 inset-x-0 bg-cardbg/95 backdrop-blur-lg border-t border-bordercolor z-40 px-2 py-1.5 flex items-center justify-around font-mono text-[10px]">
+        <a href="/admin/dashboard" class="flex flex-col items-center gap-1 py-1 px-2.5 rounded-lg text-slate-400 hover:text-brand-400 active:text-brand-400 transition">
+            <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+            <span>Dashboard</span>
+        </a>
+        <a href="/admin/strategies" class="flex flex-col items-center gap-1 py-1 px-2.5 rounded-lg text-slate-400 hover:text-brand-400 active:text-brand-400 transition">
+            <i data-lucide="trending-up" class="w-4 h-4"></i>
+            <span>Strategies</span>
+        </a>
+        <a href="/admin/orders" class="flex flex-col items-center gap-1 py-1 px-2.5 rounded-lg text-slate-400 hover:text-brand-400 active:text-brand-400 transition">
+            <i data-lucide="activity" class="w-4 h-4"></i>
+            <span>Orders</span>
+        </a>
+        <a href="/admin/clients/add" class="flex flex-col items-center gap-1 py-1 px-2.5 rounded-lg text-slate-400 hover:text-brand-400 active:text-brand-400 transition">
+            <i data-lucide="user-plus" class="w-4 h-4"></i>
+            <span>Add</span>
+        </a>
+        <a href="/admin/audit-logs" class="flex flex-col items-center gap-1 py-1 px-2.5 rounded-lg text-slate-400 hover:text-brand-400 active:text-brand-400 transition">
+            <i data-lucide="shield-check" class="w-4 h-4"></i>
+            <span>Logs</span>
+        </a>
+    </nav>
+    {% endif %}
 
     <!-- Modal Container for dynamic HTMX modals & popups -->
     <div id="modal-container"></div>
@@ -159,8 +263,8 @@
     <!-- Toast Notification Container -->
     <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
 
-    <!-- Footer -->
-    <footer class="border-t border-bordercolor/60 px-6 py-3.5 text-center text-xs text-slate-500 flex flex-col md:flex-row items-center justify-between gap-2 bg-obsidian">
+    <!-- Footer (Hidden on Mobile to Prevent Overlap with Bottom Navigation Bar) -->
+    <footer class="border-t border-bordercolor/60 px-6 py-3.5 text-center text-xs text-slate-500 hidden md:flex flex-col md:flex-row items-center justify-between gap-2 bg-obsidian">
         <div class="flex items-center space-x-2">
             <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
             <span>XTS Enterprise Multi-Tenant Engine &bull; Isolated Container Topology</span>
@@ -256,12 +360,28 @@
                 }, 2000);
             }
         }
-    </script>
 
-    <!-- Modal Container for dynamic HTMX modals -->
-    <div id="modal-container"></div>
+        // Mobile Drawer Controller
+        function toggleMobileDrawer(forceState) {
+            const drawer = document.getElementById('mobile-nav-drawer');
+            const backdrop = document.getElementById('mobile-nav-backdrop');
+            if (!drawer || !backdrop) return;
+            
+            const isOpen = !drawer.classList.contains('-translate-x-full');
+            const shouldOpen = forceState !== undefined ? forceState : !isOpen;
+            
+            if (shouldOpen) {
+                backdrop.classList.remove('hidden');
+                drawer.classList.remove('-translate-x-full');
+                document.body.style.overflow = 'hidden';
+                if (window.lucide) lucide.createIcons();
+            } else {
+                drawer.classList.add('-translate-x-full');
+                backdrop.classList.add('hidden');
+                document.body.style.overflow = '';
+            }
+        }
 
-    <script>
         // Universal Modal Dismissal Helper
         function closeModal() {
             const mc = document.getElementById('modal-container');
