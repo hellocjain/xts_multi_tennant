@@ -205,80 +205,91 @@ class SingleCustomStrategyRunner:
             self.code_content = str(cfg["code_content"]).strip()
             self._compile_strategy()
 
-    async def evaluate_cycle(self, xts_api_module, main_module):
-        """Executes one evaluation cycle on confirmed candle close."""
-        if not self.is_enabled:
-            self.status = "PAUSED"
+
+
+    @staticmethod
+    def is_candle_closed(candles: List[Dict[str, Any]], tf_seconds: int, now_ts: Optional[int] = None) -> bool:
+        """
+        Universal structural bar close determination:
+        1. In Symphony XTS, all completed/closed bars structurally end in second :59.
+        2. Universal Timeframe boundary alignment in Indian Standard Time (IST, UTC+5:30).
+        3. Guard against future timestamps and intra-bar partial ticks.
+        """
+        if not candles or tf_seconds <= 0:
+            return False
+        
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        last_ts = int(candles[-1].get("time") or candles[-1].get("timestamp", 0))
+
+        if last_ts % 60 != 59:
+            return False
+
+        if now < last_ts:
+            return False
+
+        if tf_seconds >= 60:
+            ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+            dt = datetime.datetime.fromtimestamp(last_ts, tz=ist_tz)
+
+            seconds_from_0900 = (dt.hour - 9) * 3600 + dt.minute * 60 + dt.second + 1
+            is_valid_ist_boundary = (seconds_from_0900 % tf_seconds == 0)
+
+            if len(candles) >= 2:
+                prev_ts = int(candles[-2].get("time") or candles[-2].get("timestamp", 0))
+                if prev_ts > 0:
+                    delta = last_ts - prev_ts
+                    if delta < 86400 and delta < (tf_seconds - 60):
+                        return False
+
+            if is_valid_ist_boundary:
+                return True
+
+            if len(candles) >= 2:
+                prev_ts = int(candles[-2].get("time") or candles[-2].get("timestamp", 0))
+                if abs((last_ts - prev_ts) - tf_seconds) <= 2:
+                    return True
+
+            return False
+
+        return True
+
+    async def evaluate_cycle(self, xts_api_module, main_module) -> None:
+        if not self.is_enabled or self.status in ("STOPPED", "ERROR"):
             return
 
-        if not self.strategy_instance:
-            if not self._compile_strategy():
-                self.last_error = self.compile_error or "Strategy code is not compiled."
-                return
-
-        # 1. Resolve Contract
-        try:
-            resolved = await asyncio.to_thread(xts_api_module.resolve_contract, self.symbol)
-            if not resolved or not resolved.get("inst_id"):
-                self.last_error = f"Contract {self.symbol} could not be resolved in broker master."
-                return
-            inst_id = resolved["inst_id"]
-            exch_seg = resolved.get("exch_seg", self.exchange_segment)
-            lot_size = resolved.get("lot_size", 1)
-            freeze_limit = resolved.get("freeze_qty", 10000)
-            is_derivative = (exch_seg in ("MCXFO", "NSEFO", "NSECD", "MCXFX"))
-        except Exception as e:
-            self.last_error = f"Contract resolution error: {e}"
+        # 1. Resolve Instrument
+        exch_seg = getattr(self, "exchange_segment", "MCXFO") or "MCXFO"
+        inst_info = xts_api_module.resolve_contract(self.symbol)
+        if not inst_info or not inst_info.get("inst_id"):
+            self.last_error = f"Contract resolution failed for {self.symbol}"
             return
 
-        # 2. Position Reconciliation
-        try:
-            pos_telemetry = await asyncio.to_thread(xts_api_module.get_positions_telemetry)
-            positions = pos_telemetry.get("positions", []) or pos_telemetry.get("all_positions", [])
-            target_pos = None
-            for p in positions:
-                p_sym = str(p.get("symbol", "")).upper()
-                p_id = p.get("instrument_id") or p.get("exchange_instrument_id")
-                if p_id == inst_id or self.symbol in p_sym:
-                    target_pos = p
-                    break
+        inst_id = inst_info["inst_id"]
+        freeze_limit = int(inst_info.get("freeze_qty") or 6000)
 
-            if target_pos:
-                side = target_pos.get("side", "").upper()
-                raw_qty = int(target_pos.get("quantity", 0))
-                reconciled_lots = (raw_qty // lot_size) if (is_derivative and lot_size > 1) else raw_qty
-                if side == "LONG" and reconciled_lots > 0:
-                    self.strategy_position = "LONG"
-                    self.current_broker_quantity = reconciled_lots
-                elif side == "SHORT" and reconciled_lots > 0:
-                    self.strategy_position = "SHORT"
-                    self.current_broker_quantity = reconciled_lots
-                else:
-                    self.current_broker_quantity = 0
-                    if self.strategy_position in ("INITIALIZING", "FLAT"):
-                        self.strategy_position = "FLAT"
-            else:
-                self.current_broker_quantity = 0
-                if self.strategy_position in ("INITIALIZING", "FLAT"):
-                    self.strategy_position = "FLAT"
-        except Exception as e:
-            logger.warning(f"Custom Strategy [{self.name}]: Position check warning: {e}")
+        # 2. Check Broker Positions
+        positions = xts_api_module.get_positions_telemetry()
+        broker_qty = 0
+        target_token = f"_{self.symbol}_"
+        for p in positions.get("positions", []):
+            p_sym = p.get("symbol", "")
+            if target_token in p_sym or p.get("instrument_id") == inst_id:
+                raw_q = int(p.get("quantity", 0))
+                broker_qty += -raw_q if str(p.get("side", "")).upper() == "SHORT" else raw_q
 
-        # 3. Pending Order Protection
+        self.current_broker_quantity = broker_qty
+
+        # 3. Check for In-Flight / Open Orders for this exact strategy token
         try:
-            broker_orders = await asyncio.to_thread(xts_api_module.get_broker_orders)
-            now_ts = time.time()
-            for o in broker_orders:
-                st = str(o.get("OrderStatus", "")).upper()
-                o_sym = str(o.get("TradingSymbol", "")).upper()
-                order_ref = str(o.get("OrderUniqueIdentifier") or o.get("orderUniqueIdentifier") or "")
-                app_id = str(o.get("AppOrderID") or o.get("appOrderID") or "")
-                is_our_order = order_ref.startswith("CS_REV_") and (self.symbol in order_ref or self.symbol in o_sym)
-                if is_our_order and st in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
-                    first_seen = self.pending_order_first_seen.setdefault(app_id, now_ts)
-                    if (now_ts - first_seen) <= 60.0:
-                        logger.warning(f"Custom Strategy [{self.name}]: In-flight order {app_id} active. Yielding cycle.")
-                        return
+            broker_orders = xts_api_module.get_broker_orders()
+            expected_ref_token = f"_{self.symbol}_{self.timeframe.upper()}_"
+            for order in broker_orders:
+                status = str(order.get("OrderStatus", "")).strip().upper()
+                order_ref = str(order.get("OrderUniqueIdentifier", "")).strip()
+                if status in ("OPEN", "PENDING", "NEW", "TRIGGER_PENDING") and expected_ref_token in order_ref:
+                    app_id = order.get("AppOrderID")
+                    logger.warning(f"Custom Strategy [{self.name}]: In-flight order {app_id} active. Yielding cycle.")
+                    return
         except Exception as e:
             logger.warning(f"Custom Strategy [{self.name}]: Order check warning: {e}")
 
@@ -295,8 +306,7 @@ class SingleCustomStrategyRunner:
 
         # 5. Evaluate Strictly on Confirmed Closed Bar
         now_ts = int(time.time())
-        last_candle_close_time = int(candles[-1].get("time") or candles[-1].get("timestamp", 0))
-        is_last_candle_closed = (now_ts >= last_candle_close_time)
+        is_last_candle_closed = self.is_candle_closed(candles, tf_seconds, now_ts)
 
         if is_last_candle_closed:
             eval_candle = candles[-1]
