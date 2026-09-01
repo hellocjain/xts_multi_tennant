@@ -120,7 +120,9 @@ COMMODITY_MULTIPLIERS = {
     "SILVERMIC": 1.0,
     "COPPER": 2500.0,
     "ZINC": 5000.0,
+    "ZINCMINI": 1000.0,
     "LEAD": 5000.0,
+    "LEADMINI": 1000.0,
     "ALUMINI": 1000.0,
     "ALUMINIUM": 5000.0,
     "COTTON": 25.0,
@@ -131,7 +133,7 @@ def get_contract_multiplier(symbol: str, exch_seg: str = "") -> float:
     if exch_seg and exch_seg not in ("MCXFO", "NCDEX"):
         return 1.0
     clean = resolve_symbol_smart(symbol)
-    # Match longest root first so variants (GOLDPETAL, GOLDM, CRUDEOILM, SILVERMIC) are not shadowed by base roots
+    # Match longest root first so variants (GOLDPETAL, GOLDM, CRUDEOILM, SILVERMIC, ZINCMINI, LEADMINI) are not shadowed by base roots
     for root in sorted(COMMODITY_MULTIPLIERS.keys(), key=len, reverse=True):
         if clean.startswith(root):
             return COMMODITY_MULTIPLIERS[root]
@@ -150,8 +152,6 @@ COMMON_ALIASES = {
     "SILVERMINI": "SILVERM",
     "SILVERMICRO": "SILVERMIC",
     "ALUMINIUMMINI": "ALUMINI",
-    "ZINCMINI": "ZINC",
-    "LEADMINI": "LEAD",
 }
 
 NO_EXPIRY = datetime.date.max
