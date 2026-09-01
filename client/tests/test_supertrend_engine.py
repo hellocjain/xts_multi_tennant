@@ -1269,15 +1269,17 @@ async def test_market_open_0900_lifecycle_and_multitimeframe_netting(monkeypatch
     monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
 
     # Step 1: Yesterday's closed candles (Bearish) ending at :59
-    base_ts = 1771799999 # 08:44:59 AM
+    ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    dt_open = datetime.datetime(2026, 8, 25, 9, 0, 0, tzinfo=ist_tz)
+    open_ts = int(dt_open.timestamp())
+
     yesterday_candles = [
-        {"time": base_ts + (i * 900), "open": 100 - i, "high": 101 - i, "low": 99 - i, "close": 100 - i, "volume": 100}
+        {"time": open_ts - (20 - i) * 900 - 1, "open": 100 - i, "high": 101 - i, "low": 99 - i, "close": 100 - i, "volume": 100}
         for i in range(20)
     ]
     runner_15m.virtual_position = -2 # holding SHORT from yesterday
 
     # At 09:05 AM: Unclosed 09:00-09:15 candle in progress (tick at 09:05:00)
-    open_ts = base_ts + (20 * 900) + 1 # 09:00:00 AM candle open
     unclosed_candles = yesterday_candles + [
         {"time": open_ts + 300, "open": 150, "high": 160, "low": 149, "close": 158, "volume": 500} # quote at 09:05:00
     ]

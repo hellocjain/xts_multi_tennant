@@ -6,13 +6,19 @@ import uuid
 import sys
 from pathlib import Path
 
+import importlib.util
+
 # Add project roots to path
 client_path = str(Path(__file__).parent.parent / "client")
 if client_path not in sys.path:
     sys.path.insert(0, client_path)
 
 import xts_api
-import main as client_main
+client_main_path = Path(__file__).parent.parent / "client" / "main.py"
+spec = importlib.util.spec_from_file_location("client_main_module", client_main_path)
+client_main = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(client_main)
+
 from supertrend_engine import SingleSuperTrendRunner, MultiSuperTrendEngine, calculate_supertrend, slice_quantity_for_freeze
 
 
