@@ -312,7 +312,7 @@ def test_caddy_sync_failure_propagation(monkeypatch):
     assert res is True
 
     # If write fails (e.g. permission error), returns False
-    monkeypatch.setattr(caddy_manager, "get_caddy_config_path", lambda: "/nonexistent_dir/caddy/Caddyfile")
+    monkeypatch.setattr(caddy_manager, "get_caddy_config_path", lambda: "/dev/null/caddy/Caddyfile")
     res_fail = caddy_manager.sync_caddy_config()
     assert res_fail is False
 
