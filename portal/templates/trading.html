@@ -12,6 +12,7 @@
             <div class="relative">
                 <select id="chart-symbol-select" onchange="switchTradingSymbol(this.value)" 
                         class="bg-slate-950 border border-brand-500/50 hover:border-brand-500 text-xs font-mono font-bold text-slate-100 rounded-xl px-3.5 py-2 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer shadow-inner">
+                    {% if strategies %}
                     <optgroup label="Active Strategies">
                         {% for strat in strategies %}
                         <option value="{{ strat.symbol }}" data-tf="{{ strat.timeframe }}" {% if strat.symbol == active_symbol %}selected{% endif %}>
@@ -19,18 +20,29 @@
                         </option>
                         {% endfor %}
                     </optgroup>
-                    <optgroup label="MCX Commodity Continues">
-                        <option value="SILVER1001!" {% if active_symbol == 'SILVER1001!' %}selected{% endif %}>SILVER1001! (1 kg Mini)</option>
-                        <option value="GOLDPETAL1!" {% if active_symbol == 'GOLDPETAL1!' %}selected{% endif %}>GOLDPETAL1! (1 g Petal)</option>
-                        <option value="ZINCMINI1!" {% if active_symbol == 'ZINCMINI1!' %}selected{% endif %}>ZINCMINI1! (1 MT Mini)</option>
-                        <option value="CRUDEOIL1!" {% if active_symbol == 'CRUDEOIL1!' %}selected{% endif %}>CRUDEOIL1! (100 BBL)</option>
-                        <option value="NATURALGAS1!" {% if active_symbol == 'NATURALGAS1!' %}selected{% endif %}>NATURALGAS1! (1250 mmBtu)</option>
-                        <option value="COPPER1!" {% if active_symbol == 'COPPER1!' %}selected{% endif %}>COPPER1! (2.5 MT)</option>
+                    {% endif %}
+                    <optgroup label="MCX Silver Contracts">
+                        <option value="SILVER1001!" {% if active_symbol == 'SILVER1001!' %}selected{% endif %}>SILVER1001! (Silver 100g Continuous)</option>
+                        <option value="SILVERM1!" {% if active_symbol == 'SILVERM1!' %}selected{% endif %}>SILVERM1! (Silver Mini 5kg Continuous)</option>
+                        <option value="SILVERMIC1!" {% if active_symbol == 'SILVERMIC1!' %}selected{% endif %}>SILVERMIC1! (Silver Micro 1kg Continuous)</option>
+                        <option value="SILVER1!" {% if active_symbol == 'SILVER1!' %}selected{% endif %}>SILVER1! (Silver 30kg Big Continuous)</option>
+                    </optgroup>
+                    <optgroup label="MCX Gold Contracts">
+                        <option value="GOLDPETAL1!" {% if active_symbol == 'GOLDPETAL1!' %}selected{% endif %}>GOLDPETAL1! (Gold Petal 1g Continuous)</option>
+                        <option value="GOLDM1!" {% if active_symbol == 'GOLDM1!' %}selected{% endif %}>GOLDM1! (Gold Mini 100g Continuous)</option>
+                        <option value="GOLD1!" {% if active_symbol == 'GOLD1!' %}selected{% endif %}>GOLD1! (Gold 1kg Big Continuous)</option>
+                    </optgroup>
+                    <optgroup label="MCX Base Metals & Energy">
+                        <option value="ZINCMINI1!" {% if active_symbol == 'ZINCMINI1!' %}selected{% endif %}>ZINCMINI1! (Zinc Mini 1MT Continuous)</option>
+                        <option value="CRUDEOIL1!" {% if active_symbol == 'CRUDEOIL1!' %}selected{% endif %}>CRUDEOIL1! (Crude Oil 100 BBL Continuous)</option>
+                        <option value="CRUDEOILM1!" {% if active_symbol == 'CRUDEOILM1!' %}selected{% endif %}>CRUDEOILM1! (Crude Oil Mini 10 BBL Continuous)</option>
+                        <option value="NATURALGAS1!" {% if active_symbol == 'NATURALGAS1!' %}selected{% endif %}>NATURALGAS1! (Natural Gas Continuous)</option>
+                        <option value="COPPER1!" {% if active_symbol == 'COPPER1!' %}selected{% endif %}>COPPER1! (Copper 2.5 MT Continuous)</option>
                     </optgroup>
                     <optgroup label="NSE Equity / Indices">
-                        <option value="NIFTY" {% if active_symbol == 'NIFTY' %}selected{% endif %}>NIFTY 50 Index</option>
-                        <option value="BANKNIFTY" {% if active_symbol == 'BANKNIFTY' %}selected{% endif %}>BANKNIFTY Index</option>
-                        <option value="RELIANCE" {% if active_symbol == 'RELIANCE' %}selected{% endif %}>RELIANCE EQ</option>
+                        <option value="NIFTY1!" {% if active_symbol == 'NIFTY1!' %}selected{% endif %}>NIFTY1! (Nifty 50 Futures Continuous)</option>
+                        <option value="BANKNIFTY1!" {% if active_symbol == 'BANKNIFTY1!' %}selected{% endif %}>BANKNIFTY1! (BankNifty Futures Continuous)</option>
+                        <option value="RELIANCE" {% if active_symbol == 'RELIANCE' %}selected{% endif %}>RELIANCE (NSE Equity Cash)</option>
                     </optgroup>
                 </select>
             </div>
@@ -57,7 +69,6 @@
                 {% endfor %}
             </div>
         </div>
-
 
         <!-- Right: In-Chart Order Execution Pill & Quick Tools -->
         <div class="flex flex-wrap items-center gap-3">
@@ -90,7 +101,7 @@
 
             <!-- Chart Options (Fit, Indicators, Fullscreen) -->
             <div class="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-bordercolor">
-                <button type="button" onclick="if(chartInstance) chartInstance.fitContent();" title="Fit Content (Double Click Chart)" 
+                <button type="button" onclick="if(chart) chart.timeScale().fitContent();" title="Fit Content (Reset Zoom)" 
                         class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
                     <i data-lucide="maximize-2" class="w-4 h-4"></i>
                 </button>
@@ -112,14 +123,14 @@
                 <button type="button" title="Horizontal Price Line" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><i data-lucide="minus" class="w-4 h-4"></i></button>
                 <button type="button" title="Fibonacci Retracement" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><i data-lucide="grid" class="w-4 h-4"></i></button>
                 <button type="button" title="Measure Distance" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><i data-lucide="ruler" class="w-4 h-4"></i></button>
-                <button type="button" title="Clear Primitives" onclick="if(chartInstance) chartInstance.setMarkers([]);" class="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                <button type="button" title="Reset Zoom" onclick="if(chart) chart.timeScale().fitContent();" class="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
             </div>
 
             <!-- Canvas Container -->
             <div id="trading-chart-canvas-container" class="w-full h-[520px] bg-slate-950 relative">
                 <div id="trading-chart-loading" class="absolute inset-0 flex items-center justify-center bg-slate-950/80 z-20 text-xs font-mono text-slate-400 gap-2">
                     <i data-lucide="loader-2" class="w-5 h-5 animate-spin text-brand-400"></i>
-                    <span>Loading High-Performance Dual-Canvas Feeds...</span>
+                    <span>Loading High-Performance Candlestick & SuperTrend Feeds...</span>
                 </div>
             </div>
 
@@ -168,41 +179,111 @@
     let activeSymbol = "{{ active_symbol }}";
     let activeTimeframe = "{{ active_timeframe }}";
     let activeTenantId = "{{ selected_client }}";
-    let chartInstance = null;
+    let chart = null;
+    let candleSeries = null;
+    let volumeSeries = null;
+    let supertrendSeries = null;
+    let upperBandSeries = null;
+    let lowerBandSeries = null;
     let chartAbortController = null;
+    let isInitialLoad = true;
     let refreshInterval = null;
 
     document.addEventListener('DOMContentLoaded', () => {
-        initChartEngine();
-        refreshInterval = setInterval(refreshChartData, 4000);
+        initLightweightChart();
+        refreshInterval = setInterval(refreshChartData, 3000);
     });
 
-    function initChartEngine() {
+    function initLightweightChart() {
         const container = document.getElementById('trading-chart-canvas-container');
-        if (!container) return;
+        if (!container || typeof LightweightCharts === 'undefined') return;
 
-        if (typeof DualCanvasChart !== 'undefined') {
-            chartInstance = DualCanvasChart.createChart ? DualCanvasChart.createChart(container, {
-                background: '#020617',
-                upColor: '#10b981',
-                downColor: '#f43f5e',
-                supertrendUpColor: '#10b981',
-                supertrendDownColor: '#f43f5e',
-                priceAxisWidth: 75
-            }) : new DualCanvasChart(container, {
-                background: '#020617',
-                upColor: '#10b981',
-                downColor: '#f43f5e',
-                supertrendUpColor: '#10b981',
-                supertrendDownColor: '#f43f5e',
-                priceAxisWidth: 75
-            });
-        }
+        // 1. Initialize TradingView Lightweight Charts v4
+        chart = LightweightCharts.createChart(container, {
+            width: container.clientWidth || 800,
+            height: container.clientHeight || 520,
+            layout: {
+                background: { type: 'solid', color: '#020617' },
+                textColor: '#94a3b8',
+                fontSize: 11,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+            },
+            grid: {
+                vertLines: { color: '#1e293b', style: 2 },
+                horzLines: { color: '#1e293b', style: 2 }
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal,
+                vertLine: { color: '#64748b', width: 1, style: 3 },
+                horzLine: { color: '#64748b', width: 1, style: 3 }
+            },
+            rightPriceScale: {
+                borderColor: '#1e293b',
+                scaleMargins: { top: 0.08, bottom: 0.18 }
+            },
+            timeScale: {
+                borderColor: '#1e293b',
+                timeVisible: true,
+                secondsVisible: false
+            }
+        });
+
+        // 2. Candlestick Series
+        candleSeries = chart.addCandlestickSeries({
+            upColor: '#10b981',
+            downColor: '#f43f5e',
+            borderUpColor: '#10b981',
+            borderDownColor: '#f43f5e',
+            wickUpColor: '#10b981',
+            wickDownColor: '#f43f5e'
+        });
+
+        // 3. Volume Sub-Histogram Series
+        volumeSeries = chart.addHistogramSeries({
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // Overlay on bottom
+            scaleMargins: { top: 0.82, bottom: 0 }
+        });
+
+        // 4. SuperTrend Ratchet Step Line
+        supertrendSeries = chart.addLineSeries({
+            color: '#10b981',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            priceLineVisible: true,
+            lastValueVisible: true
+        });
+
+        // 5. Upper Band (Sell Stop) & Lower Band (Buy Stop) Series
+        upperBandSeries = chart.addLineSeries({
+            color: 'rgba(244, 63, 94, 0.4)',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            priceLineVisible: false
+        });
+        lowerBandSeries = chart.addLineSeries({
+            color: 'rgba(16, 185, 129, 0.4)',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            priceLineVisible: false
+        });
+
+        // 6. Automatic ResizeObserver (Never Blank Canvas)
+        const resizeObserver = new ResizeObserver(entries => {
+            if (entries.length && entries[0].contentRect) {
+                const { width, height } = entries[0].contentRect;
+                if (width > 0 && height > 0) {
+                    chart.applyOptions({ width, height });
+                }
+            }
+        });
+        resizeObserver.observe(container);
+
         refreshChartData();
     }
 
     async function refreshChartData() {
-        if (!activeTenantId || !activeSymbol) return;
+        if (!activeTenantId || !activeSymbol || !chart) return;
 
         if (chartAbortController) {
             chartAbortController.abort();
@@ -218,43 +299,94 @@
             const loadingEl = document.getElementById('trading-chart-loading');
             if (loadingEl) loadingEl.remove();
 
-            if (chartInstance && data.candlestick && data.candlestick.length > 0) {
-                chartInstance.setData(data);
+            // 1. Candlestick & Volume Data
+            if (data.candlestick && data.candlestick.length > 0) {
+                candleSeries.setData(data.candlestick.map(c => ({
+                    time: Number(c.time),
+                    open: Number(c.open),
+                    high: Number(c.high),
+                    low: Number(c.low),
+                    close: Number(c.close)
+                })));
 
-                // Update HUD
-                const lastCandle = data.candlestick[data.candlestick.length - 1];
-                if (lastCandle) {
-                    const ltp = Number(lastCandle.close).toFixed(2);
-                    document.getElementById('hud-ltp').innerText = `₹${ltp}`;
-                    document.getElementById('chart-buy-price').innerText = `₹${ltp}`;
-                    document.getElementById('chart-sell-price').innerText = `₹${ltp}`;
-                }
-                if (data.lower_band) document.getElementById('hud-lower').innerText = `₹${Number(data.lower_band).toFixed(2)}`;
-                if (data.upper_band) document.getElementById('hud-upper').innerText = `₹${Number(data.upper_band).toFixed(2)}`;
-                if (data.atr) document.getElementById('hud-atr').innerText = `₹${Number(data.atr).toFixed(2)}`;
+                volumeSeries.setData(data.candlestick.map(c => ({
+                    time: Number(c.time),
+                    value: Number(c.volume || 0),
+                    color: Number(c.close) >= Number(c.open) ? 'rgba(16, 185, 129, 0.25)' : 'rgba(244, 63, 94, 0.25)'
+                })));
 
-                const badge = document.getElementById('hud-trend-badge');
-                if (badge && data.trend) {
-                    const isBull = data.trend === 1 || data.trend === 'BULLISH';
-                    badge.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold ${isBull ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'} flex items-center gap-1`;
-                    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${isBull ? 'bg-emerald-400' : 'bg-rose-400'} animate-pulse"></span><span>${isBull ? 'BULLISH' : 'BEARISH'}</span>`;
+                if (isInitialLoad) {
+                    chart.timeScale().fitContent();
+                    isInitialLoad = false;
                 }
             }
+
+            // 2. SuperTrend Step Line & Bands
+            if (data.supertrend_line && data.supertrend_line.length > 0) {
+                supertrendSeries.setData(data.supertrend_line.map(l => ({
+                    time: Number(l.time),
+                    value: Number(l.value),
+                    color: l.color || (data.trend === 1 ? '#10b981' : '#f43f5e')
+                })));
+            }
+            if (data.upper_band && Array.isArray(data.upper_band) && data.upper_band.length > 0) {
+                upperBandSeries.setData(data.upper_band.map(u => ({ time: Number(u.time), value: Number(u.value) })));
+            }
+            if (data.lower_band && Array.isArray(data.lower_band) && data.lower_band.length > 0) {
+                lowerBandSeries.setData(data.lower_band.map(l => ({ time: Number(l.time), value: Number(l.value) })));
+            }
+            if (data.markers && Array.isArray(data.markers)) {
+                candleSeries.setMarkers(data.markers);
+            }
+
+            // 3. Update Real-Time HUD Elements
+            const lastCandle = data.candlestick && data.candlestick.length > 0 ? data.candlestick[data.candlestick.length - 1] : null;
+            if (lastCandle) {
+                const ltp = Number(lastCandle.close).toFixed(2);
+                document.getElementById('hud-ltp').innerText = `₹${ltp}`;
+                document.getElementById('chart-buy-price').innerText = `₹${ltp}`;
+                document.getElementById('chart-sell-price').innerText = `₹${ltp}`;
+            }
+            if (data.supertrend_line && data.supertrend_line.length > 0) {
+                document.getElementById('hud-st').innerText = `₹${Number(data.supertrend_line[data.supertrend_line.length - 1].value).toFixed(2)}`;
+            }
+            if (data.lower_band) {
+                const lbVal = Array.isArray(data.lower_band) && data.lower_band.length > 0 ? data.lower_band[data.lower_band.length - 1].value : data.lower_band;
+                if (lbVal) document.getElementById('hud-lower').innerText = `₹${Number(lbVal).toFixed(2)}`;
+            }
+            if (data.upper_band) {
+                const ubVal = Array.isArray(data.upper_band) && data.upper_band.length > 0 ? data.upper_band[data.upper_band.length - 1].value : data.upper_band;
+                if (ubVal) document.getElementById('hud-upper').innerText = `₹${Number(ubVal).toFixed(2)}`;
+            }
+            if (data.atr) {
+                document.getElementById('hud-atr').innerText = `₹${Number(data.atr).toFixed(2)}`;
+            }
+
+            const badge = document.getElementById('hud-trend-badge');
+            if (badge && (data.current_trend || data.trend !== undefined)) {
+                const isBull = data.current_trend === 'BULLISH' || data.trend === 1 || data.trend === 'BULLISH';
+                badge.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold ${isBull ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'} flex items-center gap-1`;
+                badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${isBull ? 'bg-emerald-400' : 'bg-rose-400'} animate-pulse"></span><span>${isBull ? 'BULLISH' : 'BEARISH'}</span>`;
+            }
         } catch (e) {
-            if (e.name !== 'AbortError') console.error('Failed to load trading chart:', e);
+            if (e.name !== 'AbortError') console.error('Chart fetch error:', e);
         }
     }
 
     function switchTradingSymbol(sym) {
         if (!sym) return;
         activeSymbol = sym;
+        isInitialLoad = true;
         document.getElementById('hud-symbol').innerText = sym;
+        const select = document.getElementById('chart-symbol-select');
+        if (select) select.value = sym;
         refreshChartData();
     }
 
     function setTradingTimeframe(tf) {
         if (!tf) return;
         activeTimeframe = tf;
+        isInitialLoad = true;
         document.querySelectorAll('[id^="tf-btn-"]').forEach(btn => {
             btn.className = "px-2.5 py-1 rounded-lg transition text-slate-400 hover:text-white hover:bg-slate-800 font-mono font-semibold";
         });
@@ -353,4 +485,3 @@
     });
 </script>
 {% endblock %}
-
