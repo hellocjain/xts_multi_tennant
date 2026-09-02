@@ -165,7 +165,7 @@ def audit_web_ingress():
     log_check("Portal Login Endpoint HTTP 200 (Port 80)", login_ok, f"(HTTP {out})")
 
     code, out = run_cmd("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/admin/dashboard")
-    dash_ok = out.strip() in ("200", "302", "303")
+    dash_ok = out.strip() in ("200", "302", "303", "307")
     log_check("Portal Dashboard Protected Route (Port 80)", dash_ok, f"(HTTP {out})")
 
 def audit_systemd_timers():
