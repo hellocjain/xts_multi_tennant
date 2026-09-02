@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -2298,6 +2298,72 @@ async def get_system_health_api(user: dict = Depends(require_auth)):
         health_data["status"] = "DEGRADED"
 
     return health_data
+
+
+@app.get("/admin/api/symbols/search")
+async def api_search_symbols(
+    request: Request,
+    q: str = Query("", description="Search term or symbol prefix"),
+    segment: Optional[str] = Query(None, description="Filter by exchange segment"),
+    limit: int = Query(25, ge=1, le=100),
+    user: dict = Depends(require_auth)
+):
+    """Sub-millisecond symbol search with FTS5 index and continuous aliases."""
+    import portal.master_contracts as master_contracts
+    import re
+    from client.symbol_resolver import COMMON_ALIASES, COMMODITY_MULTIPLIERS
+
+    results = master_contracts.search_master_contracts(q, limit=limit, segment=segment)
+    
+    # If FTS returns empty or for top continuous contracts, add smart continuous suggestions
+    if not results and q:
+        q_upper = q.strip().upper()
+        clean_q = re.sub(r'[^A-Z0-9]', '', q_upper)
+        matching_roots = [k for k in COMMON_ALIASES if clean_q in k]
+        for root in matching_roots[:limit]:
+            canonical = COMMON_ALIASES[root]
+            seg = "MCXFO" if any(c in canonical for c in ("SILVER", "GOLD", "CRUDE", "NAT", "ZINC", "LEAD", "ALUM", "COPPER")) else "NSEFO"
+            mult = COMMODITY_MULTIPLIERS.get(canonical, 1.0)
+            results.append({
+                "exchange_segment": seg,
+                "instrument_id": 99999,
+                "name": f"{canonical}1!",
+                "description": f"{canonical} Continuous Contract",
+                "series": "FUT",
+                "lot_size": 1,
+                "tick_size": 0.05,
+                "freeze_qty": 100000,
+                "multiplier": mult,
+                "expiry_date": "Continuous"
+            })
+
+    return {"status": "success", "count": len(results), "results": results}
+
+
+@app.get("/admin/api/symbols/expiry-status")
+async def api_symbol_expiry_status(
+    request: Request,
+    expiry: str = Query(..., description="Expiry date string YYYY-MM-DD"),
+    segment: str = Query("MCXFO", description="Exchange segment"),
+    user: dict = Depends(require_auth)
+):
+    """Calculates tender-period auto-rollover and safety status for an instrument."""
+    from client.symbol_resolver import calculate_tender_period_cutoff
+    import datetime
+    try:
+        exp_date = datetime.date.fromisoformat(expiry.strip())
+        requires_rollover, days_left, badge = calculate_tender_period_cutoff(exp_date, segment)
+        return {
+            "status": "success",
+            "expiry_date": str(exp_date),
+            "exchange_segment": segment,
+            "days_left": days_left,
+            "requires_rollover": requires_rollover,
+            "status_badge": badge
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Invalid date format: {e}"}
+
 
 
 

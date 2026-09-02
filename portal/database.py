@@ -65,6 +65,7 @@ def init_portal_db():
                     cancel_lingering_partial_fills INTEGER DEFAULT 1,
                     partial_fill_timeout_seconds REAL DEFAULT 2.0,
                     paper_trade_mode INTEGER DEFAULT 0,
+                    client_multiplier REAL DEFAULT 1.0,
                     updated_at REAL NOT NULL
                 )
             """)
@@ -79,6 +80,9 @@ def init_portal_db():
                 conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN telegram_chat_id TEXT DEFAULT ''")
             if "discord_webhook_url" not in existing_cols:
                 conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN discord_webhook_url TEXT DEFAULT ''")
+            if "client_multiplier" not in existing_cols:
+                conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN client_multiplier REAL DEFAULT 1.0")
+
 
             # 4. Tenant SuperTrend Auto-Trading Strategy Configurations
             conn.execute("""

@@ -691,6 +691,24 @@ def _lookup_exact_or_normalized(name, cache, norm_map):
             return matched
     return None
 
+def resilient_get_request(url: str, headers: dict, params: dict = None, timeout: float = 10.0, max_retries: int = 3):
+    """Executes resilient HTTP GET request with exponential backoff for transient glitches."""
+    delay = 0.2
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = api_session.get(url, headers=headers, params=params, timeout=timeout)
+            if resp.status_code < 500:
+                return resp
+            last_err = f"HTTP {resp.status_code}: {resp.text}"
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_err = str(e)
+        if attempt < max_retries:
+            time.sleep(delay)
+            delay *= 2
+    logger.warning(f"Resilient GET failed after {max_retries} attempts: {url} - {last_err}")
+    return None
+
 def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
     search_queues = [(FUT_MASTER, FUT_NORM_MAP), (CASH_MASTER, CASH_NORM_MAP)] if is_future_intent \
         else [(CASH_MASTER, CASH_NORM_MAP), (FUT_MASTER, FUT_NORM_MAP)]
@@ -703,23 +721,31 @@ def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
             if matched:
                 available_contracts = cache[matched]
                 
-                valid_contracts = []
-                for c in available_contracts:
-                    exp_date = c[0]
-                    exch_seg = c[2]
-                    if exp_date == NO_EXPIRY:
-                        valid_contracts.append(c)
-                        continue
-                    days_left = (exp_date - today).days
-                    min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 7) if exch_seg in ("MCXFO", "NCDEX") \
-                        else getattr(config, "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES", 0)
-                    
-                    if days_left > min_days:
-                        valid_contracts.append(c)
+                try:
+                    from symbol_resolver import select_active_contract_with_rollover
+                    front = select_active_contract_with_rollover(available_contracts, depth=depth)
+                except Exception:
+                    front = None
+                
+                if not front:
+                    valid_contracts = []
+                    for c in available_contracts:
+                        exp_date = c[0]
+                        exch_seg = c[2]
+                        if exp_date == NO_EXPIRY:
+                            valid_contracts.append(c)
+                            continue
+                        days_left = (exp_date - today).days
+                        min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 7) if exch_seg in ("MCXFO", "NCDEX") \
+                            else getattr(config, "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES", 0)
+                        
+                        if days_left > min_days:
+                            valid_contracts.append(c)
 
-                candidates = valid_contracts if valid_contracts else available_contracts
-                idx = min(max(0, depth - 1), len(candidates) - 1)
-                front = candidates[idx]
+                    candidates = valid_contracts if valid_contracts else available_contracts
+                    idx = min(max(0, depth - 1), len(candidates) - 1)
+                    front = candidates[idx]
+
                 exp_date, exch_id, exch_seg, desc, tick_size, lot_size, freeze_qty = front
                 prod_type = "MIS" if exch_seg in ["NSECM", "BSECM"] else "NRML"
                 logger.info(f"FRONT-MONTH MATCH -> {symbol} => {matched} [{desc}] : ID {exch_id} | Seg {exch_seg} | Expiry {exp_date}")
@@ -727,6 +753,7 @@ def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
 
     logger.error(f"Cannot resolve active contract for '{symbol}'. Trade aborted.")
     return None, None, None, None, None, None, None
+
 
 def get_dynamic_contract_info(symbol):
     refresh_master_cache()
@@ -1292,8 +1319,10 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
     execution_price = apply_tick_size(raw_limit_price, tick_size, action)
 
     contract_mult = get_contract_multiplier(symbol, exch_seg)
-    order_val = base_price * execution_qty * contract_mult
+    order_mult = contract_mult if lot_size == 1 else 1.0
+    order_val = base_price * execution_qty * order_mult
     max_val = getattr(config, "MAX_ORDER_VALUE_INR", 5000000.0)
+
     if order_val > max_val:
         logger.error(f"POSITION VALUE SHIELD: Order value Rs {order_val:,.2f} exceeds cap Rs {max_val:,.2f}.")
         return {"status": "error", "message": "Order value exceeds max safety threshold"}

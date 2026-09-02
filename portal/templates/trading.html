@@ -35,6 +35,18 @@
                 </select>
             </div>
 
+            <!-- Live Symbol Search Autocomplete Input (FTS5) -->
+            <div class="relative">
+                <div class="flex items-center bg-slate-950 border border-bordercolor rounded-xl px-2.5 py-1 focus-within:border-brand-500 transition shadow-inner">
+                    <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 mr-1.5"></i>
+                    <input type="text" id="symbol-search-input" placeholder="Search 198k+..." autocomplete="off"
+                           oninput="onSymbolSearchInput(this.value)" onfocus="if(this.value) onSymbolSearchInput(this.value)"
+                           class="bg-transparent text-slate-100 placeholder-slate-500 text-xs font-mono focus:outline-none w-32 md:w-44">
+                </div>
+                <div id="symbol-search-dropdown" class="absolute top-full left-0 mt-1.5 w-72 bg-slate-950/95 border border-bordercolor rounded-xl shadow-2xl z-50 max-h-64 overflow-y-auto hidden backdrop-blur-md text-xs font-mono p-1">
+                </div>
+            </div>
+
             <!-- Timeframe Selector Pills -->
             <div class="flex items-center bg-slate-950 border border-bordercolor p-1 rounded-xl gap-0.5 text-xs font-mono font-semibold text-slate-300">
                 {% for tf in ['1m', '3m', '5m', '15m', '20m', '30m', '1h', '1D'] %}
@@ -45,6 +57,7 @@
                 {% endfor %}
             </div>
         </div>
+
 
         <!-- Right: In-Chart Order Execution Pill & Quick Tools -->
         <div class="flex flex-wrap items-center gap-3">
@@ -286,5 +299,58 @@
             showToast(`Execution failed: ${e.message}`, 'error');
         }
     }
+
+    let searchDebounceTimer = null;
+    function onSymbolSearchInput(val) {
+        clearTimeout(searchDebounceTimer);
+        const dropdown = document.getElementById('symbol-search-dropdown');
+        if (!val || val.trim().length === 0) {
+            dropdown.classList.add('hidden');
+            dropdown.innerHTML = '';
+            return;
+        }
+
+        searchDebounceTimer = setTimeout(async () => {
+            try {
+                const resp = await fetch(`/admin/api/symbols/search?q=${encodeURIComponent(val.trim())}&limit=15`);
+                const data = await resp.json();
+                if (data.results && data.results.length > 0) {
+                    dropdown.innerHTML = data.results.map(r => `
+                        <div onclick="selectSearchedSymbol('${r.name}')" 
+                             class="p-2 hover:bg-slate-800 rounded-lg cursor-pointer flex items-center justify-between transition group">
+                            <div>
+                                <span class="font-bold text-slate-100 group-hover:text-brand-400">${r.name}</span>
+                                <span class="text-[10px] text-slate-500 block truncate max-w-[180px]">${r.description}</span>
+                            </div>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">${r.exchange_segment}</span>
+                        </div>
+                    `).join('');
+                    dropdown.classList.remove('hidden');
+                } else {
+                    dropdown.innerHTML = '<div class="p-3 text-slate-500 text-center">No matching instruments found</div>';
+                    dropdown.classList.remove('hidden');
+                }
+            } catch (e) {
+                console.error("Symbol search failed:", e);
+            }
+        }, 200);
+    }
+
+    function selectSearchedSymbol(sym) {
+        const dropdown = document.getElementById('symbol-search-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+        const input = document.getElementById('symbol-search-input');
+        if (input) input.value = sym;
+        switchTradingSymbol(sym);
+    }
+
+    document.addEventListener('click', (e) => {
+        const dropdown = document.getElementById('symbol-search-dropdown');
+        const input = document.getElementById('symbol-search-input');
+        if (dropdown && input && !dropdown.contains(e.target) && !input.contains(e.target)) {
+            dropdown.classList.add('hidden');
+        }
+    });
 </script>
 {% endblock %}
+
