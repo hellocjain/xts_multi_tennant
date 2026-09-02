@@ -175,7 +175,12 @@ try:
 except Exception as e:
     print(f'❌ Failed: {e}')
 "
+# 13. xts-verify
+sudo tee /usr/local/bin/xts-verify > /dev/null << 'EOF'
+#!/bin/bash
+python3 /opt/xts_multi/scripts/verify_new_server.py "$@"
 EOF
 
 sudo chmod +x /usr/local/bin/xts-*
 echo "✅ Multi-Tenant CLI Suite installed in /usr/local/bin/xts-*"
+

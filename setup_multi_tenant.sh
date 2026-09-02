@@ -86,6 +86,7 @@ sudo mkdir -p "$PROJECT_DIR/backup"
 sudo mkdir -p "$PROJECT_DIR/backups"
 sudo mkdir -p "$PROJECT_DIR/client"
 sudo mkdir -p "$PROJECT_DIR/cli"
+sudo mkdir -p "$PROJECT_DIR/scripts"
 sudo mkdir -p /var/run/caddy
 sudo chmod 777 /var/run/caddy
 
@@ -184,6 +185,7 @@ sudo cp -r client/* "$PROJECT_DIR/client/" 2>/dev/null || true
 sudo cp -r portal/* "$PROJECT_DIR/portal/" 2>/dev/null || true
 sudo cp -r backup/* "$PROJECT_DIR/backup/" 2>/dev/null || true
 sudo cp -r cli/* "$PROJECT_DIR/cli/" 2>/dev/null || true
+sudo cp -r scripts/* "$PROJECT_DIR/scripts/" 2>/dev/null || true
 sudo cp docker-compose.yml "$PROJECT_DIR/" 2>/dev/null || true
 
 # Build Client base image with dual tags
@@ -296,6 +298,7 @@ echo " ⚠️ IMPORTANT: SAVE YOUR MASTER KEY & BACKUP KEY NOW!       "
 echo " Store them in your primary password manager (1Password).  "
 echo "                                                           "
 echo " 🛠️ Global Command Suite Active:                            "
+echo "   • xts-verify       : Run complete automated system audit "
 echo "   • xts-clients      : View all active client containers   "
 echo "   • xts-status       : Check token & cache health          "
 echo "   • xts-positions    : View client open positions          "
