@@ -175,8 +175,6 @@ try:
 except Exception as e:
     print(f'❌ Failed: {e}')
 "
-EOF
-
 # 13. xts-verify
 sudo tee /usr/local/bin/xts-verify > /dev/null << 'EOF'
 #!/bin/bash
@@ -185,5 +183,4 @@ EOF
 
 sudo chmod +x /usr/local/bin/xts-*
 echo "✅ Multi-Tenant CLI Suite installed in /usr/local/bin/xts-*"
-
 
