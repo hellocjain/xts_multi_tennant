@@ -676,3 +676,214 @@ def generate_trade_book_csv(trades: list, tenant_id: str = "") -> str:
         ])
 
     return output.getvalue()
+
+
+async def aggregate_all_orders_data(client_filter: str = "", search: str = "", status_filter: str = "") -> dict:
+    """Aggregates all broker orders and webhook signal orders across tenants."""
+    tel = await aggregate_all_telemetry()
+    all_orders = []
+    
+    for client in tel.get("clients", []):
+        c_id = client.get("id", "")
+        c_name = client.get("name", c_id)
+        if client_filter and client_filter != c_id:
+            continue
+            
+        b_orders = client.get("broker_orders") or []
+        for o in b_orders:
+            app_id = str(o.get("AppOrderID") or o.get("appOrderID") or o.get("OrderID") or "")
+            sym = str(o.get("TradingSymbol") or o.get("tradingSymbol") or o.get("symbol") or "").upper()
+            side = str(o.get("OrderSide") or o.get("orderSide") or o.get("action") or o.get("side") or "").upper()
+            status_val = str(o.get("OrderStatus") or o.get("orderStatus") or o.get("status") or "PLACED").upper()
+            qty = int(o.get("OrderQuantity") or o.get("orderQuantity") or o.get("quantity") or 0)
+            price = float(o.get("OrderPrice") or o.get("orderPrice") or o.get("price") or 0.0)
+            avg_price = float(o.get("OrderAverageTradedPrice") or o.get("orderAverageTradedPrice") or o.get("average_price") or price)
+            ts = o.get("OrderGeneratedDateTime") or o.get("orderGeneratedDateTime") or o.get("timestamp") or o.get("time") or ""
+            ref = str(o.get("OrderUniqueIdentifier") or o.get("orderUniqueIdentifier") or "")
+
+            if search and search.upper() not in sym and search.upper() not in app_id and search.upper() not in c_name.upper():
+                continue
+            if status_filter and status_filter.upper() not in status_val:
+                continue
+
+            all_orders.append({
+                "tenant_id": c_id,
+                "tenant_name": c_name,
+                "app_order_id": app_id,
+                "symbol": sym,
+                "side": side,
+                "status": status_val,
+                "quantity": qty,
+                "price": price,
+                "average_price": avg_price,
+                "order_time": ts,
+                "order_ref": ref,
+                "source": "BROKER"
+            })
+
+    # Summary metrics
+    buy_count = sum(1 for o in all_orders if o["side"] in ("BUY", "B"))
+    sell_count = sum(1 for o in all_orders if o["side"] in ("SELL", "S"))
+    filled_count = sum(1 for o in all_orders if o["status"] in ("FILLED", "COMPLETE", "TRADED", "DONE"))
+    open_count = sum(1 for o in all_orders if o["status"] in ("OPEN", "NEW", "PENDING", "PENDINGNEW", "TRIGGER PENDING"))
+    rejected_count = sum(1 for o in all_orders if o["status"] in ("REJECTED", "CANCELLED", "CANCELED", "FAILED"))
+
+    return {
+        "summary": {
+            "total_orders": len(all_orders),
+            "buy_orders": buy_count,
+            "sell_orders": sell_count,
+            "filled_orders": filled_count,
+            "open_orders": open_count,
+            "rejected_orders": rejected_count
+        },
+        "orders": all_orders
+    }
+
+
+async def aggregate_all_trades_data(client_filter: str = "", search: str = "") -> dict:
+    """Aggregates all executed broker trades across tenants."""
+    tel = await aggregate_all_telemetry()
+    all_trades = []
+    total_traded_value = 0.0
+
+    for client in tel.get("clients", []):
+        c_id = client.get("id", "")
+        c_name = client.get("name", c_id)
+        if client_filter and client_filter != c_id:
+            continue
+
+        b_trades = client.get("broker_trades") or []
+        for t in b_trades:
+            trade_id = str(t.get("TradeID") or t.get("tradeId") or t.get("ExecutionID") or "")
+            app_id = str(t.get("AppOrderID") or t.get("appOrderID") or "")
+            sym = str(t.get("TradingSymbol") or t.get("tradingSymbol") or t.get("symbol") or "").upper()
+            side = str(t.get("OrderSide") or t.get("orderSide") or t.get("side") or "").upper()
+            qty = int(t.get("TradedQuantity") or t.get("tradedQuantity") or t.get("quantity") or 0)
+            price = float(t.get("TradedPrice") or t.get("tradedPrice") or t.get("price") or 0.0)
+            seg = str(t.get("ExchangeSegment") or t.get("exchangeSegment") or "")
+            ts = t.get("TradeGeneratedDateTime") or t.get("tradeGeneratedDateTime") or t.get("timestamp") or ""
+
+            if search and search.upper() not in sym and search.upper() not in trade_id and search.upper() not in c_name.upper():
+                continue
+
+            trade_val = round(price * qty, 2)
+            total_traded_value += trade_val
+
+            all_trades.append({
+                "tenant_id": c_id,
+                "tenant_name": c_name,
+                "trade_id": trade_id,
+                "app_order_id": app_id,
+                "symbol": sym,
+                "side": side,
+                "quantity": qty,
+                "price": price,
+                "trade_value": trade_val,
+                "exchange_segment": seg,
+                "trade_time": ts
+            })
+
+    buy_trades = sum(1 for t in all_trades if t["side"] in ("BUY", "B"))
+    sell_trades = sum(1 for t in all_trades if t["side"] in ("SELL", "S"))
+
+    return {
+        "summary": {
+            "total_trades": len(all_trades),
+            "buy_trades": buy_trades,
+            "sell_trades": sell_trades,
+            "total_traded_value": round(total_traded_value, 2)
+        },
+        "trades": all_trades
+    }
+
+
+async def aggregate_all_positions_data(client_filter: str = "", search: str = "") -> dict:
+    """Aggregates all open and closed positions across tenants."""
+    tel = await aggregate_all_telemetry()
+    open_positions = []
+    closed_positions = []
+    total_unrealized = 0.0
+    total_realized = 0.0
+
+    for client in tel.get("clients", []):
+        c_id = client.get("id", "")
+        c_name = client.get("name", c_id)
+        if client_filter and client_filter != c_id:
+            continue
+
+        pos_list = client.get("positions") or []
+        for p in pos_list:
+            sym = str(p.get("symbol") or p.get("TradingSymbol") or "").upper()
+            if search and search.upper() not in sym and search.upper() not in c_name.upper():
+                continue
+            
+            qty = int(p.get("quantity") or p.get("Quantity") or 0)
+            side = str(p.get("side") or ("LONG" if qty > 0 else ("SHORT" if qty < 0 else "FLAT"))).upper()
+            unrealized = float(p.get("unrealized_mtm") or p.get("mtm") or p.get("pnl") or 0.0)
+            realized = float(p.get("realized_pnl") or p.get("realized") or 0.0)
+            buy_avg = float(p.get("buy_price") or p.get("buy_avg") or p.get("BuyAveragePrice") or 0.0)
+            sell_avg = float(p.get("sell_price") or p.get("sell_avg") or p.get("SellAveragePrice") or 0.0)
+            ltp = float(p.get("ltp") or p.get("LTP") or p.get("last_price") or 0.0)
+            product = str(p.get("product_type") or p.get("ProductType") or "NRML")
+            seg = str(p.get("exchange_segment") or p.get("ExchangeSegment") or "MCXFO")
+
+            pos_item = {
+                "tenant_id": c_id,
+                "tenant_name": c_name,
+                "symbol": sym,
+                "exchange_segment": seg,
+                "product_type": product,
+                "side": side,
+                "quantity": abs(qty),
+                "signed_quantity": qty,
+                "buy_avg": buy_avg,
+                "sell_avg": sell_avg,
+                "ltp": ltp,
+                "unrealized_mtm": round(unrealized, 2),
+                "realized_pnl": round(realized, 2),
+                "net_pnl": round(unrealized + realized, 2)
+            }
+
+            if qty != 0:
+                open_positions.append(pos_item)
+                total_unrealized += unrealized
+            else:
+                closed_positions.append(pos_item)
+            total_realized += realized
+
+        for p in (client.get("closed_positions") or []):
+            sym = str(p.get("symbol") or p.get("TradingSymbol") or "").upper()
+            if search and search.upper() not in sym and search.upper() not in c_name.upper():
+                continue
+            if any(cp["symbol"] == sym and cp["tenant_id"] == c_id for cp in closed_positions):
+                continue
+            closed_positions.append({
+                "tenant_id": c_id,
+                "tenant_name": c_name,
+                "symbol": sym,
+                "exchange_segment": str(p.get("exchange_segment") or "MCXFO"),
+                "product_type": str(p.get("product_type") or "NRML"),
+                "side": "FLAT",
+                "quantity": 0,
+                "signed_quantity": 0,
+                "buy_avg": float(p.get("buy_price") or 0.0),
+                "sell_avg": float(p.get("sell_price") or 0.0),
+                "ltp": float(p.get("ltp") or 0.0),
+                "unrealized_mtm": 0.0,
+                "realized_pnl": round(float(p.get("realized_pnl") or p.get("pnl") or 0.0), 2),
+                "net_pnl": round(float(p.get("realized_pnl") or p.get("pnl") or 0.0), 2)
+            })
+
+    return {
+        "summary": {
+            "open_positions_count": len(open_positions),
+            "closed_positions_count": len(closed_positions),
+            "total_unrealized_mtm": round(total_unrealized, 2),
+            "total_realized_pnl": round(total_realized, 2),
+            "total_net_mtm": round(total_unrealized + total_realized, 2)
+        },
+        "open_positions": open_positions,
+        "closed_positions": closed_positions
+    }
+

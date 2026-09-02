@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager, closing
 from typing import Optional, List, Dict, Any
@@ -28,7 +29,20 @@ logger = logging.getLogger(__name__)
 
 PORTAL_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(PORTAL_DIR, "templates")
+STATIC_DIR = os.path.join(PORTAL_DIR, "static")
+os.makedirs(STATIC_DIR, exist_ok=True)
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+def get_all_tenants_list() -> list:
+    """Returns a list of all active tenant dictionaries for global tenant selectors."""
+    try:
+        with closing(database.get_db_connection()) as conn:
+            return [dict(t) for t in conn.execute("SELECT id, name, status FROM tenants ORDER BY name ASC").fetchall()]
+    except Exception:
+        return []
+
+templates.env.globals["get_tenants"] = get_all_tenants_list
+
 
 def format_inr(val, decimals=2):
     try:
@@ -54,6 +68,7 @@ templates.env.filters["inr"] = format_inr
 templates.env.filters["num"] = lambda v: format_inr(v, decimals=0)
 templates.env.filters["abs"] = lambda v: abs(float(v)) if v is not None else 0.0
 templates.env.filters["epoch_to_ist"] = format_epoch_to_ist
+
 
 DOMAIN_NAME = os.environ.get("DOMAIN_NAME", "trading.yourdomain.com")
 
@@ -108,9 +123,11 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="XTS Multi-Tenant Admin Portal", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # =====================================================================
 # AUTHENTICATION ROUTES
+
 # =====================================================================
 
 @app.get("/admin/login", response_class=HTMLResponse)
@@ -1495,6 +1512,247 @@ async def orders_partial(
         "signals": signals
     })
 
+# =====================================================================
+# OPENALGO 5-PAGE SUITE (ORDERBOOK, TRADEBOOK, POSITIONS, TRADING)
+# =====================================================================
+
+@app.get("/admin/trading", response_class=HTMLResponse)
+async def trading_chart_page(
+    request: Request,
+    tenant_id: str = "",
+    symbol: str = "SILVER1001!",
+    timeframe: str = "5m",
+    user: dict = Depends(require_auth)
+):
+    tenants = get_all_tenants_list()
+    active_tenant_id = tenant_id or (tenants[0]["id"] if tenants else "")
+    client_detail = None
+    strategies = []
+    supertrend_info = {}
+
+    if active_tenant_id:
+        tel = await telemetry_service.get_single_client_telemetry(active_tenant_id)
+        client_detail = tel.get("client") or {}
+        supertrend_info = tel.get("supertrend") or {}
+        strategies = (tel.get("supertrend") or {}).get("strategies", [])
+        if not symbol and strategies:
+            symbol = strategies[0].get("symbol", "SILVER1001!")
+            timeframe = strategies[0].get("timeframe", "5m")
+
+    return templates.TemplateResponse(request=request, name="trading.html", context={
+        "tenants": tenants,
+        "selected_client": active_tenant_id,
+        "client": client_detail,
+        "active_symbol": symbol or "SILVER1001!",
+        "active_timeframe": timeframe or "5m",
+        "supertrend": supertrend_info,
+        "strategies": strategies,
+        "current_user": user
+    })
+
+@app.get("/admin/orderbook", response_class=HTMLResponse)
+async def orderbook_page(
+    request: Request,
+    search: str = "",
+    client_id: str = "",
+    status: str = "",
+    user: dict = Depends(require_auth)
+):
+    tenants = get_all_tenants_list()
+    data = await telemetry_service.aggregate_all_orders_data(client_filter=client_id, search=search, status_filter=status)
+    return templates.TemplateResponse(request=request, name="orderbook.html", context={
+        "tenants": tenants,
+        "selected_client": client_id,
+        "search": search,
+        "selected_status": status,
+        "summary": data["summary"],
+        "orders": data["orders"],
+        "current_user": user
+    })
+
+@app.get("/admin/orderbook-partial", response_class=HTMLResponse)
+async def orderbook_partial(
+    request: Request,
+    search: str = "",
+    client_id: str = "",
+    status: str = "",
+    user: dict = Depends(require_auth)
+):
+    data = await telemetry_service.aggregate_all_orders_data(client_filter=client_id, search=search, status_filter=status)
+    return templates.TemplateResponse(request=request, name="orderbook_partial.html", context={
+        "summary": data["summary"],
+        "orders": data["orders"],
+        "selected_client": client_id,
+        "search": search,
+        "selected_status": status
+    })
+
+@app.get("/admin/tradebook", response_class=HTMLResponse)
+async def tradebook_page(
+    request: Request,
+    search: str = "",
+    client_id: str = "",
+    user: dict = Depends(require_auth)
+):
+    tenants = get_all_tenants_list()
+    data = await telemetry_service.aggregate_all_trades_data(client_filter=client_id, search=search)
+    return templates.TemplateResponse(request=request, name="tradebook.html", context={
+        "tenants": tenants,
+        "selected_client": client_id,
+        "search": search,
+        "summary": data["summary"],
+        "trades": data["trades"],
+        "current_user": user
+    })
+
+@app.get("/admin/tradebook-partial", response_class=HTMLResponse)
+async def tradebook_partial(
+    request: Request,
+    search: str = "",
+    client_id: str = "",
+    user: dict = Depends(require_auth)
+):
+    data = await telemetry_service.aggregate_all_trades_data(client_filter=client_id, search=search)
+    return templates.TemplateResponse(request=request, name="tradebook_partial.html", context={
+        "summary": data["summary"],
+        "trades": data["trades"],
+        "selected_client": client_id,
+        "search": search
+    })
+
+@app.get("/admin/positions", response_class=HTMLResponse)
+async def positions_page(
+    request: Request,
+    search: str = "",
+    client_id: str = "",
+    user: dict = Depends(require_auth)
+):
+    tenants = get_all_tenants_list()
+    data = await telemetry_service.aggregate_all_positions_data(client_filter=client_id, search=search)
+    return templates.TemplateResponse(request=request, name="positions.html", context={
+        "tenants": tenants,
+        "selected_client": client_id,
+        "search": search,
+        "summary": data["summary"],
+        "open_positions": data["open_positions"],
+        "closed_positions": data["closed_positions"],
+        "current_user": user
+    })
+
+@app.get("/admin/positions-partial", response_class=HTMLResponse)
+async def positions_partial(
+    request: Request,
+    search: str = "",
+    client_id: str = "",
+    user: dict = Depends(require_auth)
+):
+    data = await telemetry_service.aggregate_all_positions_data(client_filter=client_id, search=search)
+    return templates.TemplateResponse(request=request, name="positions_partial.html", context={
+        "summary": data["summary"],
+        "open_positions": data["open_positions"],
+        "closed_positions": data["closed_positions"],
+        "selected_client": client_id,
+        "search": search
+    })
+
+@app.post("/admin/positions/square-off")
+async def square_off_position(
+    tenant_id: str = Form(...),
+    symbol: str = Form(...),
+    quantity: int = Form(...),
+    side: str = Form(...),
+    user: dict = Depends(require_auth)
+):
+    action = "SELL" if side.upper() in ("BUY", "LONG") else "BUY"
+    with closing(database.get_db_connection()) as conn:
+        tenant = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+    
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+        
+    secret = security.decrypt_credential(tenant["webhook_secret_enc"])
+    payload = {
+        "secret": secret,
+        "action": action,
+        "symbol": symbol,
+        "quantity": quantity,
+        "order_type": "MARKET",
+        "product_type": "NRML",
+        "reason": "ADMIN_SQUARE_OFF"
+    }
+
+    port = tenant["port"]
+    url = f"http://127.0.0.1:{port}/webhook/{tenant_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            database.record_audit(user["username"], "SQUARE_OFF_POSITION", {"tenant_id": tenant_id, "symbol": symbol, "qty": quantity, "side": side, "status": resp.status_code})
+            return JSONResponse({"status": "SUCCESS", "detail": f"Square off signal sent for {symbol}", "code": resp.status_code})
+    except Exception as e:
+        logger.error(f"Failed to square off position {symbol} for {tenant_id}: {e}")
+        return JSONResponse({"status": "ERROR", "detail": str(e)}, status_code=500)
+
+@app.post("/admin/orders/cancel-all")
+async def cancel_all_orders_route(
+    tenant_id: str = Form(""),
+    user: dict = Depends(require_auth)
+):
+    if tenant_id:
+        with closing(database.get_db_connection()) as conn:
+            tenant = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if tenant:
+            port = tenant["port"]
+            secret = security.decrypt_credential(tenant["webhook_secret_enc"])
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    await client.post(f"http://127.0.0.1:{port}/internal/cancel-all", json={"secret": secret})
+            except Exception as e:
+                logger.error(f"Cancel all error on {tenant_id}: {e}")
+    else:
+        await telemetry_service.panic_all_active_clients()
+
+    database.record_audit(user["username"], "CANCEL_ALL_ORDERS", {"tenant_id": tenant_id or "ALL"})
+    return JSONResponse({"status": "SUCCESS", "message": f"Cancelled open orders for {'tenant ' + tenant_id if tenant_id else 'all tenants'}"})
+
+@app.post("/admin/trading/place-order")
+async def trading_place_order(
+    tenant_id: str = Form(...),
+    symbol: str = Form(...),
+    action: str = Form(...),
+    quantity: int = Form(...),
+    order_type: str = Form("MARKET"),
+    product_type: str = Form("NRML"),
+    price: float = Form(0.0),
+    user: dict = Depends(require_auth)
+):
+    with closing(database.get_db_connection()) as conn:
+        tenant = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    secret = security.decrypt_credential(tenant["webhook_secret_enc"])
+    payload = {
+        "secret": secret,
+        "action": action.upper(),
+        "symbol": symbol.upper(),
+        "quantity": quantity,
+        "order_type": order_type.upper(),
+        "product_type": product_type.upper(),
+        "price": price,
+        "reason": "CHART_TRADING_CLICK"
+    }
+
+    port = tenant["port"]
+    url = f"http://127.0.0.1:{port}/webhook/{tenant_id}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            database.record_audit(user["username"], "CHART_PLACE_ORDER", {"tenant_id": tenant_id, "symbol": symbol, "action": action, "qty": quantity})
+            return JSONResponse({"status": "SUCCESS", "detail": f"{action} {quantity} {symbol} placed", "code": resp.status_code})
+    except Exception as e:
+        logger.error(f"Failed to place chart order: {e}")
+        return JSONResponse({"status": "ERROR", "detail": str(e)}, status_code=500)
+
 @app.get("/admin/reports/trades/export")
 async def export_trades_csv(tenant_id: str = "", user: dict = Depends(require_auth)):
     """Exports tenant or global broker executed trade book as standard Contract Note CSV."""
@@ -1529,6 +1787,7 @@ async def export_trades_csv(tenant_id: str = "", user: dict = Depends(require_au
             "Content-Disposition": f"attachment; filename={file_name}"
         }
     )
+
 
 # =====================================================================
 # 100% FRONTEND OPERATIONS & CLUSTER SETTINGS

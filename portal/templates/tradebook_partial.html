@@ -1,0 +1,74 @@
+<!-- Top Summary Metrics Grid -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Trades</span>
+        <span class="text-xl font-bold font-mono text-slate-100">{{ summary.total_trades }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">Buy Trades</span>
+        <span class="text-xl font-bold font-mono text-emerald-400">{{ summary.buy_trades }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-rose-400 font-bold uppercase tracking-wider block">Sell Trades</span>
+        <span class="text-xl font-bold font-mono text-rose-400">{{ summary.sell_trades }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider block">Total Traded Value</span>
+        <span class="text-xl font-bold font-mono text-cyan-400">₹{{ summary.total_traded_value|inr }}</span>
+    </div>
+</div>
+
+<!-- Executed Trades Table -->
+<div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
+    <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+            <thead class="bg-slate-950/80 border-b border-bordercolor text-[11px] font-mono text-slate-400 uppercase tracking-wider">
+                <tr>
+                    <th class="py-3.5 px-4 font-semibold">Exec Time (IST)</th>
+                    <th class="py-3.5 px-4 font-semibold">Client / Tenant</th>
+                    <th class="py-3.5 px-4 font-semibold">Trade ID</th>
+                    <th class="py-3.5 px-4 font-semibold">App Order ID</th>
+                    <th class="py-3.5 px-4 font-semibold">Symbol</th>
+                    <th class="py-3.5 px-4 font-semibold">Side</th>
+                    <th class="py-3.5 px-4 font-semibold text-right">Traded Qty</th>
+                    <th class="py-3.5 px-4 font-semibold text-right">Traded Price</th>
+                    <th class="py-3.5 px-4 font-semibold text-right">Gross Value</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-bordercolor/60 font-mono">
+                {% if trades and trades|length > 0 %}
+                    {% for t in trades %}
+                    <tr class="hover:bg-slate-900/60 transition">
+                        <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ t.trade_time }}</td>
+                        <td class="py-3 px-4 text-slate-300 font-sans font-medium whitespace-nowrap">
+                            <span class="font-mono text-brand-400">[{{ t.tenant_id }}]</span> {{ t.tenant_name }}
+                        </td>
+                        <td class="py-3 px-4 text-slate-300 select-all font-mono whitespace-nowrap">{{ t.trade_id }}</td>
+                        <td class="py-3 px-4 text-slate-400 select-all font-mono whitespace-nowrap">{{ t.app_order_id }}</td>
+                        <td class="py-3 px-4 font-bold text-slate-100 whitespace-nowrap">{{ t.symbol }}</td>
+                        <td class="py-3 px-4 whitespace-nowrap">
+                            {% if t.side in ['BUY', 'B'] %}
+                            <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold">BUY</span>
+                            {% else %}
+                            <span class="bg-rose-500/10 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded text-[10px] font-bold">SELL</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-3 px-4 text-right font-bold text-slate-200 whitespace-nowrap">{{ t.quantity }}</td>
+                        <td class="py-3 px-4 text-right font-bold text-slate-200 whitespace-nowrap">₹{{ t.price|inr }}</td>
+                        <td class="py-3 px-4 text-right font-bold text-cyan-400 whitespace-nowrap">₹{{ t.trade_value|inr }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center py-12 text-slate-500 font-sans text-xs">
+                            <div class="flex flex-col items-center justify-center space-y-2">
+                                <i data-lucide="receipt" class="w-8 h-8 text-slate-600"></i>
+                                <span>No executed trades recorded in current session.</span>
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>

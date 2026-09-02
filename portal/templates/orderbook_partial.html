@@ -1,0 +1,90 @@
+<!-- Top Summary Metrics Grid -->
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Orders</span>
+        <span class="text-xl font-bold font-mono text-slate-100">{{ summary.total_orders }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">Buy Orders</span>
+        <span class="text-xl font-bold font-mono text-emerald-400">{{ summary.buy_orders }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-rose-400 font-bold uppercase tracking-wider block">Sell Orders</span>
+        <span class="text-xl font-bold font-mono text-rose-400">{{ summary.sell_orders }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-emerald-300 font-bold uppercase tracking-wider block">Completed</span>
+        <span class="text-xl font-bold font-mono text-emerald-300">{{ summary.filled_orders }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider block">Open / Pending</span>
+        <span class="text-xl font-bold font-mono text-cyan-400">{{ summary.open_orders }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-rose-400 font-bold uppercase tracking-wider block">Rejected</span>
+        <span class="text-xl font-bold font-mono text-rose-400">{{ summary.rejected_orders }}</span>
+    </div>
+</div>
+
+<!-- Orders Table -->
+<div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
+    <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+            <thead class="bg-slate-950/80 border-b border-bordercolor text-[11px] font-mono text-slate-400 uppercase tracking-wider">
+                <tr>
+                    <th class="py-3.5 px-4 font-semibold">Time (IST)</th>
+                    <th class="py-3.5 px-4 font-semibold">Client / Tenant</th>
+                    <th class="py-3.5 px-4 font-semibold">App Order ID</th>
+                    <th class="py-3.5 px-4 font-semibold">Symbol</th>
+                    <th class="py-3.5 px-4 font-semibold">Side</th>
+                    <th class="py-3.5 px-4 font-semibold text-right">Qty</th>
+                    <th class="py-3.5 px-4 font-semibold text-right">Avg Price</th>
+                    <th class="py-3.5 px-4 font-semibold text-center">Status</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-bordercolor/60 font-mono">
+                {% if orders and orders|length > 0 %}
+                    {% for o in orders %}
+                    <tr class="hover:bg-slate-900/60 transition">
+                        <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ o.order_time }}</td>
+                        <td class="py-3 px-4 text-slate-300 font-sans font-medium whitespace-nowrap">
+                            <span class="font-mono text-brand-400">[{{ o.tenant_id }}]</span> {{ o.tenant_name }}
+                        </td>
+                        <td class="py-3 px-4 text-slate-300 select-all font-mono whitespace-nowrap">{{ o.app_order_id or '--' }}</td>
+                        <td class="py-3 px-4 font-bold text-slate-100 whitespace-nowrap">{{ o.symbol }}</td>
+                        <td class="py-3 px-4 whitespace-nowrap">
+                            {% if o.side in ['BUY', 'B'] %}
+                            <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold">BUY</span>
+                            {% else %}
+                            <span class="bg-rose-500/10 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded text-[10px] font-bold">SELL</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-3 px-4 text-right font-bold text-slate-200 whitespace-nowrap">{{ o.quantity }}</td>
+                        <td class="py-3 px-4 text-right font-bold text-slate-200 whitespace-nowrap">₹{{ o.average_price|inr }}</td>
+                        <td class="py-3 px-4 text-center whitespace-nowrap">
+                            {% if o.status in ['FILLED', 'COMPLETE', 'TRADED', 'DONE'] %}
+                            <span class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full text-[10px] font-bold">FILLED</span>
+                            {% elif o.status in ['OPEN', 'NEW', 'PENDING', 'TRIGGER PENDING'] %}
+                            <span class="bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2.5 py-0.5 rounded-full text-[10px] font-bold animate-pulse">OPEN</span>
+                            {% elif o.status in ['REJECTED', 'CANCELLED', 'CANCELED', 'FAILED'] %}
+                            <span class="bg-rose-500/20 text-rose-300 border border-rose-500/40 px-2.5 py-0.5 rounded-full text-[10px] font-bold">REJECTED</span>
+                            {% else %}
+                            <span class="bg-slate-800 text-slate-300 border border-slate-700 px-2.5 py-0.5 rounded-full text-[10px] font-bold">{{ o.status }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-12 text-slate-500 font-sans text-xs">
+                            <div class="flex flex-col items-center justify-center space-y-2">
+                                <i data-lucide="inbox" class="w-8 h-8 text-slate-600"></i>
+                                <span>No broker orders recorded in current session.</span>
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>

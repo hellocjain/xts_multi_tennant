@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Trade Book - AC Agarwal XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+    <!-- Top Header & Actions Bar -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="receipt" class="w-5 h-5 text-brand-400"></i>
+                <span>Broker Trade Book</span>
+            </h1>
+            <p class="text-xs text-slate-400">Audited executions, fill prices, and contract notes from Symphony XTS exchange gateways.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Search Box -->
+            <div class="relative">
+                <input type="text" id="tradeSearch" oninput="triggerTradeSearch()" placeholder="Search Symbol, Trade ID..." value="{{ search }}"
+                       class="bg-cardbg border border-bordercolor rounded-xl pl-8 pr-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500 w-48 font-mono">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5"></i>
+            </div>
+
+            <!-- Export CSV Button -->
+            <a href="/admin/reports/trades/export{% if selected_client %}?tenant_id={{ selected_client }}{% endif %}" 
+               class="bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-brand-600/20">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <span>Export Contract Notes CSV</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Hidden state input for HTMX auto-refresh -->
+    <input type="hidden" id="tradeClientId" value="{{ selected_client }}">
+
+    <!-- Real-Time Stream Target -->
+    <div id="tradebookStreamContainer"
+         hx-get="/admin/tradebook-partial"
+         hx-trigger="every 3s"
+         hx-include="#tradeSearch, #tradeClientId"
+         hx-swap="innerHTML">
+        {% include "tradebook_partial.html" %}
+    </div>
+</div>
+
+<script>
+    let tradeSearchTimeout = null;
+    function triggerTradeSearch() {
+        clearTimeout(tradeSearchTimeout);
+        tradeSearchTimeout = setTimeout(() => {
+            const query = document.getElementById('tradeSearch').value;
+            const clientId = document.getElementById('tradeClientId').value;
+            const url = `/admin/tradebook-partial?search=${encodeURIComponent(query)}&client_id=${encodeURIComponent(clientId)}`;
+            htmx.ajax('GET', url, { target: '#tradebookStreamContainer', swap: 'innerHTML' });
+        }, 200);
+    }
+</script>
+{% endblock %}

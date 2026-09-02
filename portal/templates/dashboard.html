@@ -28,8 +28,81 @@
         </div>
     </div>
 
+    <!-- Quick Access Navigation Grid & Master Status Strip -->
+    <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 bg-slate-950/80 border border-bordercolor px-4 py-2.5 rounded-xl text-xs font-mono">
+        <div class="flex items-center space-x-2 text-slate-300">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="font-bold text-slate-100">Master Contracts:</span>
+            <span class="text-emerald-400">Ready — Symphony XTS MCX &amp; NSE Masters Cached</span>
+        </div>
+        <div class="flex items-center space-x-3 text-[11px] text-slate-400">
+            <span>Isolation: <strong class="text-cyan-400">Docker Container-per-Client</strong></span>
+            <span class="text-slate-700">|</span>
+            <span>Tick Grid: <strong class="text-amber-400">:59 Structural Rule</strong></span>
+        </div>
+    </div>
+
+    <!-- Quick Access Hub Grid -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <a href="/admin/trading" class="bg-cardbg border border-bordercolor hover:border-cyan-500/50 p-3.5 rounded-xl flex items-center space-x-3 transition group shadow">
+            <div class="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition">
+                <i data-lucide="candlestick-chart" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <span class="text-xs font-bold text-slate-100 block">Trading</span>
+                <span class="text-[10px] text-slate-400">Dual-Canvas Chart</span>
+            </div>
+        </a>
+        <a href="/admin/orderbook" class="bg-cardbg border border-bordercolor hover:border-brand-500/50 p-3.5 rounded-xl flex items-center space-x-3 transition group shadow">
+            <div class="w-8 h-8 rounded-lg bg-brand-500/10 flex items-center justify-center text-brand-400 group-hover:scale-110 transition">
+                <i data-lucide="book-open" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <span class="text-xs font-bold text-slate-100 block">Order Book</span>
+                <span class="text-[10px] text-slate-400">Broker Execution</span>
+            </div>
+        </a>
+        <a href="/admin/tradebook" class="bg-cardbg border border-bordercolor hover:border-purple-500/50 p-3.5 rounded-xl flex items-center space-x-3 transition group shadow">
+            <div class="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-400 group-hover:scale-110 transition">
+                <i data-lucide="receipt" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <span class="text-xs font-bold text-slate-100 block">Trade Book</span>
+                <span class="text-[10px] text-slate-400">Contract Notes</span>
+            </div>
+        </a>
+        <a href="/admin/positions" class="bg-cardbg border border-bordercolor hover:border-amber-500/50 p-3.5 rounded-xl flex items-center space-x-3 transition group shadow">
+            <div class="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400 group-hover:scale-110 transition">
+                <i data-lucide="layers" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <span class="text-xs font-bold text-slate-100 block">Positions</span>
+                <span class="text-[10px] text-slate-400">Live MTM</span>
+            </div>
+        </a>
+        <a href="/admin/strategies" class="bg-cardbg border border-bordercolor hover:border-pink-500/50 p-3.5 rounded-xl flex items-center space-x-3 transition group shadow">
+            <div class="w-8 h-8 rounded-lg bg-pink-500/10 flex items-center justify-center text-pink-400 group-hover:scale-110 transition">
+                <i data-lucide="code-2" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <span class="text-xs font-bold text-slate-100 block">Strategies</span>
+                <span class="text-[10px] text-slate-400">6 Multi-Runners</span>
+            </div>
+        </a>
+        <a href="/admin/audit-logs" class="bg-cardbg border border-bordercolor hover:border-emerald-500/50 p-3.5 rounded-xl flex items-center space-x-3 transition group shadow">
+            <div class="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition">
+                <i data-lucide="shield-check" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <span class="text-xs font-bold text-slate-100 block">Audit Trail</span>
+                <span class="text-[10px] text-slate-400">Compliance Log</span>
+            </div>
+        </a>
+    </div>
+
     <!-- Persistent Search, Quick Filter Tabs, and View Switcher -->
     <div class="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+
         <!-- Left: Search Box -->
         <div class="relative flex-1 max-w-md">
             <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500 pointer-events-none">

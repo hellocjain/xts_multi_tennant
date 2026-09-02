@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Order Book - AC Agarwal XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+    <!-- Top Header & Actions Bar -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="book-open" class="w-5 h-5 text-brand-400"></i>
+                <span>Broker Order Book</span>
+            </h1>
+            <p class="text-xs text-slate-400">Live order audit trail across Symphony XTS client execution engines.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Filter by Status -->
+            <select id="statusFilter" onchange="triggerOrderSearch()" 
+                    class="bg-cardbg border border-bordercolor text-xs font-mono text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-brand-500">
+                <option value="" {% if not selected_status %}selected{% endif %}>All Statuses</option>
+                <option value="FILLED" {% if selected_status == 'FILLED' %}selected{% endif %}>Filled / Traded</option>
+                <option value="OPEN" {% if selected_status == 'OPEN' %}selected{% endif %}>Open / Pending</option>
+                <option value="REJECTED" {% if selected_status == 'REJECTED' %}selected{% endif %}>Rejected / Cancelled</option>
+            </select>
+
+            <!-- Search Box -->
+            <div class="relative">
+                <input type="text" id="orderSearch" oninput="triggerOrderSearch()" placeholder="Search Symbol, Order ID..." value="{{ search }}"
+                       class="bg-cardbg border border-bordercolor rounded-xl pl-8 pr-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500 w-48 font-mono">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5"></i>
+            </div>
+
+            <!-- Export CSV -->
+            <a href="/admin/reports/trades/export{% if selected_client %}?tenant_id={{ selected_client }}{% endif %}" 
+               class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-xl border border-bordercolor transition flex items-center gap-1.5 shadow">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <span>CSV</span>
+            </a>
+
+            <!-- Cancel All Button -->
+            <button type="button" onclick="cancelAllOrdersModal()" 
+                    class="bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-rose-600/20">
+                <i data-lucide="x-circle" class="w-3.5 h-3.5"></i>
+                <span>Cancel All Open</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Hidden state inputs for HTMX auto-refresh -->
+    <input type="hidden" id="orderClientId" value="{{ selected_client }}">
+
+    <!-- Real-Time Stream Target -->
+    <div id="orderbookStreamContainer"
+         hx-get="/admin/orderbook-partial"
+         hx-trigger="every 3s"
+         hx-include="#orderSearch, #statusFilter, #orderClientId"
+         hx-swap="innerHTML">
+        {% include "orderbook_partial.html" %}
+    </div>
+</div>
+
+<script>
+    let searchTimeout = null;
+    function triggerOrderSearch() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            const query = document.getElementById('orderSearch').value;
+            const status = document.getElementById('statusFilter').value;
+            const clientId = document.getElementById('orderClientId').value;
+            const url = `/admin/orderbook-partial?search=${encodeURIComponent(query)}&status=${encodeURIComponent(status)}&client_id=${encodeURIComponent(clientId)}`;
+            htmx.ajax('GET', url, { target: '#orderbookStreamContainer', swap: 'innerHTML' });
+        }, 200);
+    }
+
+    async function cancelAllOrdersModal() {
+        const clientId = document.getElementById('orderClientId').value;
+        const msg = clientId ? `Are you sure you want to cancel all open orders for client ${clientId}?` : `Are you sure you want to CANCEL ALL OPEN ORDERS across ALL ACTIVE CLIENTS?`;
+        if (!confirm(msg)) return;
+
+        const formData = new FormData();
+        formData.append('tenant_id', clientId);
+
+        try {
+            const resp = await fetch('/admin/orders/cancel-all', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                showToast(data.message || 'Cancelled open orders', 'success');
+                triggerOrderSearch();
+            } else {
+                showToast('Failed to cancel orders', 'error');
+            }
+        } catch (e) {
+            showToast(`Error: ${e.message}`, 'error');
+        }
+    }
+</script>
+{% endblock %}

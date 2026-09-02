@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Net Positions - AC Agarwal XTS Multi-Tenant{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+    <!-- Top Header & Actions Bar -->
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="layers" class="w-5 h-5 text-brand-400"></i>
+                <span>Client Net Positions</span>
+            </h1>
+            <p class="text-xs text-slate-400">Real-time mark-to-market valuations and net exposure across all client accounts.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Search Box -->
+            <div class="relative">
+                <input type="text" id="positionSearch" oninput="triggerPositionSearch()" placeholder="Search Symbol, Client..." value="{{ search }}"
+                       class="bg-cardbg border border-bordercolor rounded-xl pl-8 pr-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-brand-500 w-48 font-mono">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5"></i>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden state input for HTMX auto-refresh -->
+    <input type="hidden" id="positionClientId" value="{{ selected_client }}">
+
+    <!-- Real-Time Stream Target -->
+    <div id="positionsStreamContainer"
+         hx-get="/admin/positions-partial"
+         hx-trigger="every 3s"
+         hx-include="#positionSearch, #positionClientId"
+         hx-swap="innerHTML">
+        {% include "positions_partial.html" %}
+    </div>
+</div>
+
+<script>
+    let posSearchTimeout = null;
+    function triggerPositionSearch() {
+        clearTimeout(posSearchTimeout);
+        posSearchTimeout = setTimeout(() => {
+            const query = document.getElementById('positionSearch').value;
+            const clientId = document.getElementById('positionClientId').value;
+            const url = `/admin/positions-partial?search=${encodeURIComponent(query)}&client_id=${encodeURIComponent(clientId)}`;
+            htmx.ajax('GET', url, { target: '#positionsStreamContainer', swap: 'innerHTML' });
+        }, 200);
+    }
+
+    async function squareOffModal(tenantId, symbol, qty, side) {
+        if (!confirm(`Are you sure you want to SQUARE OFF ${side} position of ${qty} ${symbol} for client ${tenantId}?`)) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('tenant_id', tenantId);
+        formData.append('symbol', symbol);
+        formData.append('quantity', qty);
+        formData.append('side', side);
+
+        try {
+            const resp = await fetch('/admin/positions/square-off', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+            if (resp.ok && data.status === 'SUCCESS') {
+                showToast(`Square off order placed for ${symbol}`, 'success');
+                triggerPositionSearch();
+            } else {
+                showToast(`Square off error: ${data.detail || 'Failed to square off'}`, 'error');
+            }
+        } catch (e) {
+            showToast(`Error: ${e.message}`, 'error');
+        }
+    }
+</script>
+{% endblock %}

@@ -859,5 +859,130 @@ def test_database_schema_auto_migration_multi_timeframe():
         assert len(rows) == 2
 
 
+def test_openalgo_static_assets_serving():
+    """Verify local zero-CDN static asset delivery for CSS and chart engine."""
+    with TestClient(app) as client:
+        res_js = client.get("/static/js/chart_engine.js")
+        assert res_js.status_code == 200
+        assert "DualCanvasChart" in res_js.text
+
+        res_css = client.get("/static/css/openalgo.css")
+        assert res_css.status_code == 200
+
+def test_openalgo_5_page_suite_views(monkeypatch):
+    """Verify all 5 OpenAlgo views and partials render correctly with metrics."""
+    with database.get_db_connection() as conn:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('suite_admin', 'suite_admin', 'hash', 1, 1000)")
+            conn.execute("""
+                INSERT OR REPLACE INTO tenants (
+                    id, name, status, created_at, updated_at
+                ) VALUES (
+                    'suite_tenant', 'Suite Client', 'ACTIVE', 100, 100
+                )
+            """)
+
+    token = security.create_session("suite_admin", "testclient", "testclient")
+    with TestClient(app, cookies={"admin_session": token}) as client:
+        # Mock telemetry data
+        async def mock_tel():
+            return {
+                "summary": {
+                    "total_clients": 1,
+                    "active_clients": 1,
+                    "healthy_clients": 1,
+                    "total_unrealized_mtm": 2500.0,
+                    "total_realized_pnl": 1200.0,
+                    "total_net_mtm": 3700.0
+                },
+                "clients": [{
+                    "id": "suite_tenant",
+                    "name": "Suite Client",
+                    "status": "HEALTHY",
+                    "healthy": True,
+                    "positions": [{
+                        "symbol": "SILVER1001!",
+                        "quantity": 1,
+                        "side": "LONG",
+                        "buy_price": 75000.0,
+                        "ltp": 77500.0,
+                        "unrealized_mtm": 2500.0,
+                        "realized_pnl": 0.0,
+                        "product_type": "NRML",
+                        "exchange_segment": "MCXFO"
+                    }],
+                    "broker_orders": [{
+                        "AppOrderID": "10001",
+                        "TradingSymbol": "SILVER1001!",
+                        "OrderSide": "BUY",
+                        "OrderStatus": "FILLED",
+                        "OrderQuantity": 1,
+                        "OrderPrice": 75000.0,
+                        "OrderAverageTradedPrice": 75000.0,
+                        "OrderGeneratedDateTime": "09:15:00"
+                    }],
+                    "broker_trades": [{
+                        "TradeID": "T9901",
+                        "AppOrderID": "10001",
+                        "TradingSymbol": "SILVER1001!",
+                        "OrderSide": "BUY",
+                        "TradedQuantity": 1,
+                        "TradedPrice": 75000.0,
+                        "ExchangeSegment": "MCXFO",
+                        "TradeGeneratedDateTime": "09:15:00"
+                    }],
+                    "supertrend": {
+                        "status": "RUNNING",
+                        "current_trend": "BULLISH",
+                        "atr": 450.0,
+                        "symbol": "SILVER1001!",
+                        "timeframe": "5m",
+                        "strategies": [{"id": "st_01", "symbol": "SILVER1001!", "timeframe": "5m"}]
+                    }
+                }]
+            }
+
+        monkeypatch.setattr(telemetry_service, "aggregate_all_telemetry", mock_tel)
+
+        # 1. Trading Chart View
+        res_trading = client.get("/admin/trading?tenant_id=suite_tenant")
+        assert res_trading.status_code == 200
+        assert "Interactive Trading Terminal" in res_trading.text
+        assert "trading-chart-canvas-container" in res_trading.text
+
+        # 2. Order Book View & Partial
+        res_ob = client.get("/admin/orderbook")
+        assert res_ob.status_code == 200
+        assert "Broker Order Book" in res_ob.text
+        assert "orderbookStreamContainer" in res_ob.text
+
+        res_ob_p = client.get("/admin/orderbook-partial")
+        assert res_ob_p.status_code == 200
+        assert "Total Orders" in res_ob_p.text
+        assert "SILVER1001!" in res_ob_p.text
+
+        # 3. Trade Book View & Partial
+        res_tb = client.get("/admin/tradebook")
+        assert res_tb.status_code == 200
+        assert "Broker Trade Book" in res_tb.text
+
+        res_tb_p = client.get("/admin/tradebook-partial")
+        assert res_tb_p.status_code == 200
+        assert "Total Trades" in res_tb_p.text
+        assert "T9901" in res_tb_p.text
+
+        # 4. Positions View & Partial
+        res_pos = client.get("/admin/positions")
+        assert res_pos.status_code == 200
+        assert "Client Net Positions" in res_pos.text
+
+        res_pos_p = client.get("/admin/positions-partial")
+        assert res_pos_p.status_code == 200
+        assert "Open Net Positions" in res_pos_p.text
+        assert "Square Off" in res_pos_p.text
+
+
+
+
 
 

@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}Interactive Trading Terminal - {{ active_symbol }} - AC Agarwal XTS{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- Top Terminal Control Bar -->
+    <div class="bg-cardbg border border-bordercolor p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xl">
+        <!-- Left: Symbol Selector & Timeframe Switcher -->
+        <div class="flex flex-wrap items-center gap-2.5">
+            <!-- Symbol Dropdown / Search -->
+            <div class="relative">
+                <select id="chart-symbol-select" onchange="switchTradingSymbol(this.value)" 
+                        class="bg-slate-950 border border-brand-500/50 hover:border-brand-500 text-xs font-mono font-bold text-slate-100 rounded-xl px-3.5 py-2 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer shadow-inner">
+                    <optgroup label="Active Strategies">
+                        {% for strat in strategies %}
+                        <option value="{{ strat.symbol }}" data-tf="{{ strat.timeframe }}" {% if strat.symbol == active_symbol %}selected{% endif %}>
+                            ⭐ {{ strat.symbol }} ({{ strat.timeframe }})
+                        </option>
+                        {% endfor %}
+                    </optgroup>
+                    <optgroup label="MCX Commodity Continues">
+                        <option value="SILVER1001!" {% if active_symbol == 'SILVER1001!' %}selected{% endif %}>SILVER1001! (1 kg Mini)</option>
+                        <option value="GOLDPETAL1!" {% if active_symbol == 'GOLDPETAL1!' %}selected{% endif %}>GOLDPETAL1! (1 g Petal)</option>
+                        <option value="ZINCMINI1!" {% if active_symbol == 'ZINCMINI1!' %}selected{% endif %}>ZINCMINI1! (1 MT Mini)</option>
+                        <option value="CRUDEOIL1!" {% if active_symbol == 'CRUDEOIL1!' %}selected{% endif %}>CRUDEOIL1! (100 BBL)</option>
+                        <option value="NATURALGAS1!" {% if active_symbol == 'NATURALGAS1!' %}selected{% endif %}>NATURALGAS1! (1250 mmBtu)</option>
+                        <option value="COPPER1!" {% if active_symbol == 'COPPER1!' %}selected{% endif %}>COPPER1! (2.5 MT)</option>
+                    </optgroup>
+                    <optgroup label="NSE Equity / Indices">
+                        <option value="NIFTY" {% if active_symbol == 'NIFTY' %}selected{% endif %}>NIFTY 50 Index</option>
+                        <option value="BANKNIFTY" {% if active_symbol == 'BANKNIFTY' %}selected{% endif %}>BANKNIFTY Index</option>
+                        <option value="RELIANCE" {% if active_symbol == 'RELIANCE' %}selected{% endif %}>RELIANCE EQ</option>
+                    </optgroup>
+                </select>
+            </div>
+
+            <!-- Timeframe Selector Pills -->
+            <div class="flex items-center bg-slate-950 border border-bordercolor p-1 rounded-xl gap-0.5 text-xs font-mono font-semibold text-slate-300">
+                {% for tf in ['1m', '3m', '5m', '15m', '20m', '30m', '1h', '1D'] %}
+                <button type="button" onclick="setTradingTimeframe('{{ tf }}')" id="tf-btn-{{ tf }}"
+                        class="px-2.5 py-1 rounded-lg transition {% if tf == active_timeframe %}bg-brand-600 text-white shadow{% else %}text-slate-400 hover:text-white hover:bg-slate-800{% endif %}">
+                    {{ tf }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Right: In-Chart Order Execution Pill & Quick Tools -->
+        <div class="flex flex-wrap items-center gap-3">
+            <!-- Product Switcher & Qty -->
+            <div class="flex items-center bg-slate-950 border border-bordercolor px-2.5 py-1 rounded-xl gap-2 text-xs font-mono">
+                <span class="text-slate-400 text-[10px] uppercase font-bold">Product</span>
+                <select id="order-product-type" class="bg-slate-900 text-slate-200 rounded px-1.5 py-0.5 focus:outline-none border border-slate-800">
+                    <option value="NRML">NRML</option>
+                    <option value="MIS">MIS (Intraday)</option>
+                </select>
+                <span class="text-slate-600">|</span>
+                <span class="text-slate-400 text-[10px] uppercase font-bold">Qty</span>
+                <input type="number" id="order-quantity" value="1" min="1" step="1" 
+                       class="w-14 bg-slate-900 text-center font-bold text-slate-100 rounded px-1 py-0.5 border border-slate-800 focus:outline-none focus:border-brand-500">
+            </div>
+
+            <!-- Direct Chart Order Buttons -->
+            <div class="flex items-center space-x-1.5 bg-slate-950 p-1 rounded-xl border border-bordercolor shadow-inner">
+                <button type="button" onclick="executeChartOrder('BUY')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-mono font-bold text-xs px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow-md shadow-emerald-600/30">
+                    <i data-lucide="arrow-up" class="w-3.5 h-3.5"></i>
+                    <span>BUY</span>
+                    <span id="chart-buy-price" class="text-[10px] opacity-90">LTP</span>
+                </button>
+                <button type="button" onclick="executeChartOrder('SELL')" class="bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold text-xs px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow-md shadow-rose-600/30">
+                    <i data-lucide="arrow-down" class="w-3.5 h-3.5"></i>
+                    <span>SELL</span>
+                    <span id="chart-sell-price" class="text-[10px] opacity-90">LTP</span>
+                </button>
+            </div>
+
+            <!-- Chart Options (Fit, Indicators, Fullscreen) -->
+            <div class="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-bordercolor">
+                <button type="button" onclick="if(chartInstance) chartInstance.fitContent();" title="Fit Content (Double Click Chart)" 
+                        class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
+                    <i data-lucide="maximize-2" class="w-4 h-4"></i>
+                </button>
+                <button type="button" onclick="refreshChartData()" title="Reload OHLC & Ratchet Bands" 
+                        class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chart Workstation Grid -->
+    <div class="grid grid-cols-1 gap-4">
+        <div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-2xl relative flex flex-col">
+            <!-- Left Drawing Tools Toolbar Overlay -->
+            <div class="absolute top-14 left-3 z-10 flex flex-col bg-slate-950/90 border border-bordercolor rounded-xl p-1 space-y-1 shadow-xl backdrop-blur-md">
+                <button type="button" title="Cursor Crosshair" class="p-1.5 text-brand-400 bg-slate-900 rounded-lg"><i data-lucide="crosshair" class="w-4 h-4"></i></button>
+                <button type="button" title="Trend Line" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><i data-lucide="trending-up" class="w-4 h-4"></i></button>
+                <button type="button" title="Horizontal Price Line" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><i data-lucide="minus" class="w-4 h-4"></i></button>
+                <button type="button" title="Fibonacci Retracement" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><i data-lucide="grid" class="w-4 h-4"></i></button>
+                <button type="button" title="Measure Distance" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"><i data-lucide="ruler" class="w-4 h-4"></i></button>
+                <button type="button" title="Clear Primitives" onclick="if(chartInstance) chartInstance.setMarkers([]);" class="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+            </div>
+
+            <!-- Canvas Container -->
+            <div id="trading-chart-canvas-container" class="w-full h-[520px] bg-slate-950 relative">
+                <div id="trading-chart-loading" class="absolute inset-0 flex items-center justify-center bg-slate-950/80 z-20 text-xs font-mono text-slate-400 gap-2">
+                    <i data-lucide="loader-2" class="w-5 h-5 animate-spin text-brand-400"></i>
+                    <span>Loading High-Performance Dual-Canvas Feeds...</span>
+                </div>
+            </div>
+
+            <!-- Live Indicators & Strategy Telemetry HUD Bar -->
+            <div class="bg-slate-950 border-t border-bordercolor px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                <div class="flex items-center space-x-4">
+                    <span class="flex items-center gap-1.5">
+                        <span class="text-slate-400">SYMBOL:</span>
+                        <strong id="hud-symbol" class="text-slate-100">{{ active_symbol }}</strong>
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="text-slate-400">LTP:</span>
+                        <strong id="hud-ltp" class="text-emerald-400">₹--.--</strong>
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="text-slate-400">SUPERTREND:</span>
+                        <strong id="hud-st" class="text-emerald-400">₹--.--</strong>
+                    </span>
+                    <span class="hidden sm:flex items-center gap-1.5">
+                        <span class="text-slate-400">UPPER (SELL STOP):</span>
+                        <strong id="hud-upper" class="text-rose-400">₹--.--</strong>
+                    </span>
+                    <span class="hidden sm:flex items-center gap-1.5">
+                        <span class="text-slate-400">LOWER (BUY STOP):</span>
+                        <strong id="hud-lower" class="text-emerald-400">₹--.--</strong>
+                    </span>
+                    <span class="hidden md:flex items-center gap-1.5">
+                        <span class="text-slate-400">ATR:</span>
+                        <strong id="hud-atr" class="text-amber-400">₹--.--</strong>
+                    </span>
+                </div>
+
+                <div class="flex items-center space-x-3">
+                    <span id="hud-trend-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>BULLISH</span>
+                    </span>
+                    <span class="text-slate-500 text-[10px] hidden lg:inline">:59 Structural Rule Aligned</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let activeSymbol = "{{ active_symbol }}";
+    let activeTimeframe = "{{ active_timeframe }}";
+    let activeTenantId = "{{ selected_client }}";
+    let chartInstance = null;
+    let chartAbortController = null;
+    let refreshInterval = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initChartEngine();
+        refreshInterval = setInterval(refreshChartData, 4000);
+    });
+
+    function initChartEngine() {
+        const container = document.getElementById('trading-chart-canvas-container');
+        if (!container) return;
+
+        if (typeof DualCanvasChart !== 'undefined') {
+            chartInstance = DualCanvasChart.createChart ? DualCanvasChart.createChart(container, {
+                background: '#020617',
+                upColor: '#10b981',
+                downColor: '#f43f5e',
+                supertrendUpColor: '#10b981',
+                supertrendDownColor: '#f43f5e',
+                priceAxisWidth: 75
+            }) : new DualCanvasChart(container, {
+                background: '#020617',
+                upColor: '#10b981',
+                downColor: '#f43f5e',
+                supertrendUpColor: '#10b981',
+                supertrendDownColor: '#f43f5e',
+                priceAxisWidth: 75
+            });
+        }
+        refreshChartData();
+    }
+
+    async function refreshChartData() {
+        if (!activeTenantId || !activeSymbol) return;
+
+        if (chartAbortController) {
+            chartAbortController.abort();
+        }
+        chartAbortController = new AbortController();
+
+        try {
+            const url = `/admin/clients/${encodeURIComponent(activeTenantId)}/supertrend/chart-data?symbol=${encodeURIComponent(activeSymbol)}&timeframe=${encodeURIComponent(activeTimeframe)}`;
+            const resp = await fetch(url, { signal: chartAbortController.signal });
+            if (!resp.ok) return;
+            const data = await resp.json();
+
+            const loadingEl = document.getElementById('trading-chart-loading');
+            if (loadingEl) loadingEl.remove();
+
+            if (chartInstance && data.candlestick && data.candlestick.length > 0) {
+                chartInstance.setData(data);
+
+                // Update HUD
+                const lastCandle = data.candlestick[data.candlestick.length - 1];
+                if (lastCandle) {
+                    const ltp = Number(lastCandle.close).toFixed(2);
+                    document.getElementById('hud-ltp').innerText = `₹${ltp}`;
+                    document.getElementById('chart-buy-price').innerText = `₹${ltp}`;
+                    document.getElementById('chart-sell-price').innerText = `₹${ltp}`;
+                }
+                if (data.lower_band) document.getElementById('hud-lower').innerText = `₹${Number(data.lower_band).toFixed(2)}`;
+                if (data.upper_band) document.getElementById('hud-upper').innerText = `₹${Number(data.upper_band).toFixed(2)}`;
+                if (data.atr) document.getElementById('hud-atr').innerText = `₹${Number(data.atr).toFixed(2)}`;
+
+                const badge = document.getElementById('hud-trend-badge');
+                if (badge && data.trend) {
+                    const isBull = data.trend === 1 || data.trend === 'BULLISH';
+                    badge.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold ${isBull ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'} flex items-center gap-1`;
+                    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${isBull ? 'bg-emerald-400' : 'bg-rose-400'} animate-pulse"></span><span>${isBull ? 'BULLISH' : 'BEARISH'}</span>`;
+                }
+            }
+        } catch (e) {
+            if (e.name !== 'AbortError') console.error('Failed to load trading chart:', e);
+        }
+    }
+
+    function switchTradingSymbol(sym) {
+        if (!sym) return;
+        activeSymbol = sym;
+        document.getElementById('hud-symbol').innerText = sym;
+        refreshChartData();
+    }
+
+    function setTradingTimeframe(tf) {
+        if (!tf) return;
+        activeTimeframe = tf;
+        document.querySelectorAll('[id^="tf-btn-"]').forEach(btn => {
+            btn.className = "px-2.5 py-1 rounded-lg transition text-slate-400 hover:text-white hover:bg-slate-800 font-mono font-semibold";
+        });
+        const activeBtn = document.getElementById(`tf-btn-${tf}`);
+        if (activeBtn) activeBtn.className = "px-2.5 py-1 rounded-lg transition bg-brand-600 text-white shadow font-mono font-semibold";
+        refreshChartData();
+    }
+
+    async function executeChartOrder(action) {
+        if (!activeTenantId) {
+            showToast("Please select a client account first", "error");
+            return;
+        }
+        const qty = parseInt(document.getElementById('order-quantity').value) || 1;
+        const product = document.getElementById('order-product-type').value || 'NRML';
+
+        if (!confirm(`Are you sure you want to execute ${action} ${qty} ${activeSymbol} (${product}) on client ${activeTenantId}?`)) {
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('tenant_id', activeTenantId);
+        formData.append('symbol', activeSymbol);
+        formData.append('action', action);
+        formData.append('quantity', qty);
+        formData.append('product_type', product);
+        formData.append('order_type', 'MARKET');
+
+        try {
+            const resp = await fetch('/admin/trading/place-order', {
+                method: 'POST',
+                body: formData
+            });
+            const res = await resp.json();
+            if (resp.ok && res.status === 'SUCCESS') {
+                showToast(`Order Placed: ${action} ${qty} ${activeSymbol}`, 'success');
+                refreshChartData();
+            } else {
+                showToast(`Order Error: ${res.detail || 'Failed to place order'}`, 'error');
+            }
+        } catch (e) {
+            showToast(`Execution failed: ${e.message}`, 'error');
+        }
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,139 @@
+<!-- Top Summary Metrics Grid -->
+<div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Open Positions</span>
+        <span class="text-xl font-bold font-mono text-slate-100">{{ summary.open_positions_count }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Closed Positions</span>
+        <span class="text-xl font-bold font-mono text-slate-400">{{ summary.closed_positions_count }}</span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Unrealized MTM</span>
+        <span class="text-xl font-bold font-mono {% if summary.total_unrealized_mtm > 0 %}text-emerald-400 animate-profit-pulse{% elif summary.total_unrealized_mtm < 0 %}text-rose-400 animate-loss-pulse{% else %}text-slate-400{% endif %}">
+            ₹{{ summary.total_unrealized_mtm|inr }}
+        </span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow">
+        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Realized P&L</span>
+        <span class="text-xl font-bold font-mono {% if summary.total_realized_pnl >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+            ₹{{ summary.total_realized_pnl|inr }}
+        </span>
+    </div>
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-xl space-y-1 shadow col-span-2 sm:col-span-1">
+        <span class="text-[10px] text-cyan-400 font-bold uppercase tracking-wider block">Total Net P&L</span>
+        <span class="text-xl font-bold font-mono {% if summary.total_net_mtm > 0 %}text-emerald-400{% elif summary.total_net_mtm < 0 %}text-rose-400{% else %}text-slate-300{% endif %}">
+            ₹{{ summary.total_net_mtm|inr }}
+        </span>
+    </div>
+</div>
+
+<!-- Open Active Positions Table -->
+<div class="space-y-2">
+    <div class="flex items-center justify-between">
+        <h2 class="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Open Net Positions ({{ open_positions|length }})</span>
+        </h2>
+    </div>
+
+    <div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+                <thead class="bg-slate-950/80 border-b border-bordercolor text-[11px] font-mono text-slate-400 uppercase tracking-wider">
+                    <tr>
+                        <th class="py-3.5 px-4 font-semibold">Client</th>
+                        <th class="py-3.5 px-4 font-semibold">Symbol</th>
+                        <th class="py-3.5 px-4 font-semibold">Product</th>
+                        <th class="py-3.5 px-4 font-semibold">Side</th>
+                        <th class="py-3.5 px-4 font-semibold text-right">Net Qty</th>
+                        <th class="py-3.5 px-4 font-semibold text-right">Buy Avg</th>
+                        <th class="py-3.5 px-4 font-semibold text-right">Sell Avg</th>
+                        <th class="py-3.5 px-4 font-semibold text-right">LTP</th>
+                        <th class="py-3.5 px-4 font-semibold text-right">Unrealized MTM</th>
+                        <th class="py-3.5 px-4 font-semibold text-center">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor/60 font-mono">
+                    {% if open_positions and open_positions|length > 0 %}
+                        {% for p in open_positions %}
+                        <tr class="hover:bg-slate-900/60 transition">
+                            <td class="py-3 px-4 text-slate-300 font-sans font-medium whitespace-nowrap">
+                                <span class="font-mono text-brand-400">[{{ p.tenant_id }}]</span> {{ p.tenant_name }}
+                            </td>
+                            <td class="py-3 px-4 font-bold text-slate-100 whitespace-nowrap">{{ p.symbol }}</td>
+                            <td class="py-3 px-4 text-slate-400 whitespace-nowrap">{{ p.product_type }}</td>
+                            <td class="py-3 px-4 whitespace-nowrap">
+                                {% if p.side == 'LONG' %}
+                                <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[10px] font-bold">LONG</span>
+                                {% else %}
+                                <span class="bg-rose-500/10 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded text-[10px] font-bold">SHORT</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-3 px-4 text-right font-bold text-slate-100 whitespace-nowrap">{{ p.signed_quantity }}</td>
+                            <td class="py-3 px-4 text-right font-bold text-slate-300 whitespace-nowrap">₹{{ p.buy_avg|inr }}</td>
+                            <td class="py-3 px-4 text-right font-bold text-slate-300 whitespace-nowrap">₹{{ p.sell_avg|inr }}</td>
+                            <td class="py-3 px-4 text-right font-bold text-cyan-300 whitespace-nowrap">₹{{ p.ltp|inr }}</td>
+                            <td class="py-3 px-4 text-right font-bold {% if p.unrealized_mtm > 0 %}text-emerald-400{% elif p.unrealized_mtm < 0 %}text-rose-400{% else %}text-slate-300{% endif %} whitespace-nowrap">
+                                ₹{{ p.unrealized_mtm|inr }}
+                            </td>
+                            <td class="py-3 px-4 text-center whitespace-nowrap">
+                                <button type="button" onclick="squareOffModal('{{ p.tenant_id }}', '{{ p.symbol }}', {{ p.quantity }}, '{{ p.side }}')" 
+                                        class="bg-rose-600/20 hover:bg-rose-600 hover:text-white text-rose-400 border border-rose-500/30 px-2.5 py-1 rounded-lg text-[10px] font-bold transition">
+                                    Square Off
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="10" class="text-center py-10 text-slate-500 font-sans text-xs">
+                                <div class="flex flex-col items-center justify-center space-y-1.5">
+                                    <i data-lucide="check-circle-2" class="w-7 h-7 text-slate-600"></i>
+                                    <span>All client accounts are currently flat. No open positions.</span>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Closed Day Positions Table -->
+{% if closed_positions and closed_positions|length > 0 %}
+<div class="space-y-2 pt-2">
+    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Closed Positions Today ({{ closed_positions|length }})</h2>
+    <div class="bg-cardbg/80 border border-bordercolor rounded-2xl overflow-hidden shadow">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+                <thead class="bg-slate-950/60 border-b border-bordercolor text-[11px] font-mono text-slate-400 uppercase tracking-wider">
+                    <tr>
+                        <th class="py-3 px-4">Client</th>
+                        <th class="py-3 px-4">Symbol</th>
+                        <th class="py-3 px-4">Segment</th>
+                        <th class="py-3 px-4">Product</th>
+                        <th class="py-3 px-4 text-right">Net Qty</th>
+                        <th class="py-3 px-4 text-right">Realized P&L</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor/40 font-mono text-slate-400">
+                    {% for p in closed_positions %}
+                    <tr class="hover:bg-slate-900/40 transition">
+                        <td class="py-2.5 px-4 font-sans"><span class="font-mono text-slate-400">[{{ p.tenant_id }}]</span> {{ p.tenant_name }}</td>
+                        <td class="py-2.5 px-4 font-bold text-slate-300">{{ p.symbol }}</td>
+                        <td class="py-2.5 px-4 text-[10px]">{{ p.exchange_segment }}</td>
+                        <td class="py-2.5 px-4 text-[10px]">{{ p.product_type }}</td>
+                        <td class="py-2.5 px-4 text-right">0</td>
+                        <td class="py-2.5 px-4 text-right font-bold {% if p.realized_pnl >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                            ₹{{ p.realized_pnl|inr }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
