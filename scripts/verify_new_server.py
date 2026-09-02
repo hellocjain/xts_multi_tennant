@@ -150,7 +150,7 @@ assert xts_api.COMMON_ALIASES.get("LEADMINI") is None, "LEADMINI alias not remov
 
 print("ENGINE_OK")
 '''
-    code, out = run_cmd(f"docker exec xts_portal python3 -c '{test_script}' 2>&1 || python3 -c '{test_script}' 2>&1")
+    code, out = run_cmd(f"docker run --rm xts_bot python3 -c '{test_script}' 2>&1")
     engine_ok = "ENGINE_OK" in out
     log_check("Structural :59 Candle-Close Rule", engine_ok)
     log_check("Timeframe Grid IST 09:00:00 Boundary", engine_ok)
@@ -164,9 +164,9 @@ def audit_web_ingress():
     login_ok = out.strip() in ("200", "302", "303")
     log_check("Portal Login Endpoint HTTP 200 (Port 80)", login_ok, f"(HTTP {out})")
 
-    code, out = run_cmd("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8500/admin/login")
-    direct_ok = out.strip() in ("200", "302", "303")
-    log_check("Direct Portal Container Port 8500", direct_ok, f"(HTTP {out})")
+    code, out = run_cmd("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/")
+    root_ok = out.strip() in ("200", "302", "303")
+    log_check("Caddy Gateway Root Ingress (Port 80)", root_ok, f"(HTTP {out})")
 
 def audit_systemd_timers():
     header("6. SYSTEMD SERVICES & AUTOMATED TIMERS")
