@@ -116,8 +116,8 @@ fi
 MASTER_KEY=$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
 BACKUP_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
 
-# Write Portal Environment
-sudo tee "$PROJECT_DIR/portal/.env" > /dev/null << EOF
+# Write Portal Environment (both root and portal dir to ensure 100% sync)
+sudo tee "$PROJECT_DIR/.env" > /dev/null << EOF
 PORTAL_MASTER_KEY=$MASTER_KEY
 PORTAL_ADMIN_USER=$ADMIN_USER
 PORTAL_ADMIN_PASSWORD=$ADMIN_PASS
@@ -130,7 +130,8 @@ CADDY_CONFIG_PATH=/opt/xts_multi/caddy/Caddyfile
 CADDY_ADMIN_SOCKET=/var/run/caddy/admin.sock
 INGRESS_NETWORK=xts_ingress_net
 EOF
-sudo chmod 400 "$PROJECT_DIR/portal/.env"
+sudo cp "$PROJECT_DIR/.env" "$PROJECT_DIR/portal/.env"
+sudo chmod 400 "$PROJECT_DIR/.env" "$PROJECT_DIR/portal/.env"
 
 # Write Backup Passphrase
 sudo tee "$PROJECT_DIR/backup/.backup_env" > /dev/null << EOF
@@ -185,9 +186,9 @@ sudo cp -r backup/* "$PROJECT_DIR/backup/" 2>/dev/null || true
 sudo cp -r cli/* "$PROJECT_DIR/cli/" 2>/dev/null || true
 sudo cp docker-compose.yml "$PROJECT_DIR/" 2>/dev/null || true
 
-# Build Client base image
+# Build Client base image with dual tags
 cd "$PROJECT_DIR/client"
-sudo docker build -t xts_bot:latest .
+sudo docker build -t xts_bot:latest -t xts_client:latest .
 
 # Build Portal image
 cd "$PROJECT_DIR/portal"
