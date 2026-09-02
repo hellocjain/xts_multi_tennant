@@ -57,9 +57,14 @@
     <!-- HTMX for reactive real-time telemetry updates -->
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     
-    <!-- OpenAlgo Dual-Canvas High Performance Chart Engine (<50KB, Zero CDN) -->
-    <script src="/static/js/chart_engine.js"></script>
-    <script src="/static/vendor/lightweight-charts.js"></script>
+    <!-- OpenAlgo High Performance Chart Engines & LightweightCharts v4 (Standalone Bundle + Fallback) -->
+    <script src="/static/vendor/lightweight-charts.standalone.production.js?v=4.2.1-prod"></script>
+    <script>
+        if (typeof LightweightCharts === 'undefined') {
+            document.write('<script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"><\/script>');
+        }
+    </script>
+    <script src="/static/js/chart_engine.js?v=2.1"></script>
     
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }

@@ -105,12 +105,14 @@ def test_webhook_endpoints():
         assert res.status_code == 401
 
         # 3. Valid webhook
+        uid = int(time.time() * 1000)
         good_payload = {
             "secret": "TestSecret123",
             "action": "BUY",
             "symbol": "MCX:CRUDEOIL1!",
             "quantity": 1,
-            "price": 6500.0
+            "price": 6500.0,
+            "order_id": f"TV_ORDER_{uid}"
         }
         res = client.post("/webhook", json=good_payload)
         assert res.status_code == 200
@@ -122,6 +124,7 @@ def test_webhook_endpoints():
         res_dup = client.post("/webhook", json=good_payload)
         assert res_dup.status_code == 200
         assert res_dup.json()["status"] == "warning"
+
 
         # 5. Invalid action
         invalid_action_payload = {

@@ -188,6 +188,7 @@
     let chartAbortController = null;
     let isInitialLoad = true;
     let refreshInterval = null;
+    let initAttempts = 0;
 
     document.addEventListener('DOMContentLoaded', () => {
         initLightweightChart();
@@ -196,93 +197,122 @@
 
     function initLightweightChart() {
         const container = document.getElementById('trading-chart-canvas-container');
-        if (!container || typeof LightweightCharts === 'undefined') return;
+        if (!container) return;
 
-        // 1. Initialize TradingView Lightweight Charts v4
-        chart = LightweightCharts.createChart(container, {
-            width: container.clientWidth || 800,
-            height: container.clientHeight || 520,
-            layout: {
-                background: { type: 'solid', color: '#020617' },
-                textColor: '#94a3b8',
-                fontSize: 11,
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
-            },
-            grid: {
-                vertLines: { color: '#1e293b', style: 2 },
-                horzLines: { color: '#1e293b', style: 2 }
-            },
-            crosshair: {
-                mode: LightweightCharts.CrosshairMode.Normal,
-                vertLine: { color: '#64748b', width: 1, style: 3 },
-                horzLine: { color: '#64748b', width: 1, style: 3 }
-            },
-            rightPriceScale: {
-                borderColor: '#1e293b',
-                scaleMargins: { top: 0.08, bottom: 0.18 }
-            },
-            timeScale: {
-                borderColor: '#1e293b',
-                timeVisible: true,
-                secondsVisible: false
+        if (typeof LightweightCharts === 'undefined') {
+            if (initAttempts < 30) {
+                initAttempts++;
+                setTimeout(initLightweightChart, 150);
+            } else {
+                console.error("LightweightCharts library failed to load");
+                const loadingEl = document.getElementById('trading-chart-loading');
+                if (loadingEl) loadingEl.innerHTML = '<span class="text-rose-400 font-mono">Error: LightweightCharts library could not be loaded</span>';
             }
-        });
+            return;
+        }
 
-        // 2. Candlestick Series
-        candleSeries = chart.addCandlestickSeries({
-            upColor: '#10b981',
-            downColor: '#f43f5e',
-            borderUpColor: '#10b981',
-            borderDownColor: '#f43f5e',
-            wickUpColor: '#10b981',
-            wickDownColor: '#f43f5e'
-        });
+        if (chart) {
+            try { chart.remove(); } catch(e) {}
+            chart = null;
+        }
 
-        // 3. Volume Sub-Histogram Series
-        volumeSeries = chart.addHistogramSeries({
-            priceFormat: { type: 'volume' },
-            priceScaleId: '', // Overlay on bottom
-            scaleMargins: { top: 0.82, bottom: 0 }
-        });
-
-        // 4. SuperTrend Ratchet Step Line
-        supertrendSeries = chart.addLineSeries({
-            color: '#10b981',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Solid,
-            priceLineVisible: true,
-            lastValueVisible: true
-        });
-
-        // 5. Upper Band (Sell Stop) & Lower Band (Buy Stop) Series
-        upperBandSeries = chart.addLineSeries({
-            color: 'rgba(244, 63, 94, 0.4)',
-            lineWidth: 1,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            priceLineVisible: false
-        });
-        lowerBandSeries = chart.addLineSeries({
-            color: 'rgba(16, 185, 129, 0.4)',
-            lineWidth: 1,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            priceLineVisible: false
-        });
-
-        // 6. Automatic ResizeObserver (Never Blank Canvas)
-        const resizeObserver = new ResizeObserver(entries => {
-            if (entries.length && entries[0].contentRect) {
-                const { width, height } = entries[0].contentRect;
-                if (width > 0 && height > 0) {
-                    chart.applyOptions({ width, height });
+        try {
+            // 1. Initialize TradingView Lightweight Charts v4
+            chart = LightweightCharts.createChart(container, {
+                width: container.clientWidth || 800,
+                height: container.clientHeight || 520,
+                layout: {
+                    background: { type: 'solid', color: '#020617' },
+                    textColor: '#94a3b8',
+                    fontSize: 11,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+                },
+                grid: {
+                    vertLines: { color: '#1e293b', style: 2 },
+                    horzLines: { color: '#1e293b', style: 2 }
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                    vertLine: { color: '#64748b', width: 1, style: 3 },
+                    horzLine: { color: '#64748b', width: 1, style: 3 }
+                },
+                rightPriceScale: {
+                    borderColor: '#1e293b',
+                    scaleMargins: { top: 0.08, bottom: 0.18 }
+                },
+                timeScale: {
+                    borderColor: '#1e293b',
+                    timeVisible: true,
+                    secondsVisible: false
                 }
-            }
-        });
-        resizeObserver.observe(container);
+            });
 
-        refreshChartData();
+            // 2. Candlestick Series
+            candleSeries = chart.addCandlestickSeries({
+                upColor: '#10b981',
+                downColor: '#f43f5e',
+                borderUpColor: '#10b981',
+                borderDownColor: '#f43f5e',
+                wickUpColor: '#10b981',
+                wickDownColor: '#f43f5e'
+            });
+
+            // 3. Volume Sub-Histogram Series
+            volumeSeries = chart.addHistogramSeries({
+                priceFormat: { type: 'volume' },
+                priceScaleId: '', // Overlay on bottom
+                scaleMargins: { top: 0.82, bottom: 0 }
+            });
+
+            // 4. SuperTrend Ratchet Step Line
+            supertrendSeries = chart.addLineSeries({
+                color: '#10b981',
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                priceLineVisible: true,
+                lastValueVisible: true
+            });
+
+            // 5. Upper Band (Sell Stop) & Lower Band (Buy Stop) Series
+            upperBandSeries = chart.addLineSeries({
+                color: 'rgba(244, 63, 94, 0.4)',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                priceLineVisible: false
+            });
+            lowerBandSeries = chart.addLineSeries({
+                color: 'rgba(16, 185, 129, 0.4)',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                priceLineVisible: false
+            });
+
+            // 6. Automatic ResizeObserver (Never Blank Canvas)
+            const resizeObserver = new ResizeObserver(entries => {
+                if (entries.length && entries[0].contentRect) {
+                    const { width, height } = entries[0].contentRect;
+                    if (width > 0 && height > 0 && chart) {
+                        chart.applyOptions({ width, height });
+                    }
+                }
+            });
+            resizeObserver.observe(container);
+
+            refreshChartData();
+        } catch (err) {
+            console.error("Error creating LightweightChart:", err);
+            const loadingEl = document.getElementById('trading-chart-loading');
+            if (loadingEl) loadingEl.innerHTML = `<span class="text-rose-400 font-mono">Chart Error: ${err.message}</span>`;
+        }
     }
 
     async function refreshChartData() {
+        if (!activeTenantId) {
+            const tenantSelect = document.getElementById('global-tenant-switcher');
+            if (tenantSelect && tenantSelect.value) {
+                activeTenantId = tenantSelect.value;
+            }
+        }
         if (!activeTenantId || !activeSymbol || !chart) return;
 
         if (chartAbortController) {
@@ -293,47 +323,99 @@
         try {
             const url = `/admin/clients/${encodeURIComponent(activeTenantId)}/supertrend/chart-data?symbol=${encodeURIComponent(activeSymbol)}&timeframe=${encodeURIComponent(activeTimeframe)}`;
             const resp = await fetch(url, { signal: chartAbortController.signal });
-            if (!resp.ok) return;
+            if (!resp.ok) {
+                console.warn(`Chart data fetch returned HTTP ${resp.status}`);
+                return;
+            }
             const data = await resp.json();
 
             const loadingEl = document.getElementById('trading-chart-loading');
-            if (loadingEl) loadingEl.remove();
 
             // 1. Candlestick & Volume Data
             if (data.candlestick && data.candlestick.length > 0) {
-                candleSeries.setData(data.candlestick.map(c => ({
-                    time: Number(c.time),
-                    open: Number(c.open),
-                    high: Number(c.high),
-                    low: Number(c.low),
-                    close: Number(c.close)
-                })));
+                if (loadingEl) loadingEl.style.display = 'none';
 
-                volumeSeries.setData(data.candlestick.map(c => ({
-                    time: Number(c.time),
-                    value: Number(c.volume || 0),
-                    color: Number(c.close) >= Number(c.open) ? 'rgba(16, 185, 129, 0.25)' : 'rgba(244, 63, 94, 0.25)'
+                // Ensure strictly sorted and deduplicated timestamps
+                const sortedCandles = [];
+                const seenTimes = new Set();
+                for (const c of data.candlestick) {
+                    const t = Number(c.time);
+                    if (!seenTimes.has(t)) {
+                        seenTimes.add(t);
+                        sortedCandles.push({
+                            time: t,
+                            open: Number(c.open),
+                            high: Number(c.high),
+                            low: Number(c.low),
+                            close: Number(c.close),
+                            volume: Number(c.volume || 0)
+                        });
+                    }
+                }
+                sortedCandles.sort((a, b) => a.time - b.time);
+
+                candleSeries.setData(sortedCandles);
+
+                volumeSeries.setData(sortedCandles.map(c => ({
+                    time: c.time,
+                    value: c.volume,
+                    color: c.close >= c.open ? 'rgba(16, 185, 129, 0.25)' : 'rgba(244, 63, 94, 0.25)'
                 })));
 
                 if (isInitialLoad) {
                     chart.timeScale().fitContent();
                     isInitialLoad = false;
                 }
+            } else {
+                if (loadingEl) {
+                    loadingEl.style.display = 'flex';
+                    loadingEl.innerHTML = `<span class="text-amber-400 font-mono">Awaiting live market data feeds for ${activeSymbol}...</span>`;
+                }
             }
 
             // 2. SuperTrend Step Line & Bands
-            if (data.supertrend_line && data.supertrend_line.length > 0) {
-                supertrendSeries.setData(data.supertrend_line.map(l => ({
-                    time: Number(l.time),
-                    value: Number(l.value),
-                    color: l.color || (data.trend === 1 ? '#10b981' : '#f43f5e')
-                })));
+            if (data.supertrend_line && Array.isArray(data.supertrend_line) && data.supertrend_line.length > 0) {
+                const sortedSt = [];
+                const seenStTimes = new Set();
+                for (const l of data.supertrend_line) {
+                    const t = Number(l.time);
+                    if (!seenStTimes.has(t)) {
+                        seenStTimes.add(t);
+                        sortedSt.push({
+                            time: t,
+                            value: Number(l.value),
+                            color: l.color || (data.current_trend === 'BULLISH' ? '#10b981' : '#f43f5e')
+                        });
+                    }
+                }
+                sortedSt.sort((a, b) => a.time - b.time);
+                supertrendSeries.setData(sortedSt);
             }
             if (data.upper_band && Array.isArray(data.upper_band) && data.upper_band.length > 0) {
-                upperBandSeries.setData(data.upper_band.map(u => ({ time: Number(u.time), value: Number(u.value) })));
+                const sortedUb = [];
+                const seenUbTimes = new Set();
+                for (const u of data.upper_band) {
+                    const t = Number(u.time);
+                    if (!seenUbTimes.has(t)) {
+                        seenUbTimes.add(t);
+                        sortedUb.push({ time: t, value: Number(u.value) });
+                    }
+                }
+                sortedUb.sort((a, b) => a.time - b.time);
+                upperBandSeries.setData(sortedUb);
             }
             if (data.lower_band && Array.isArray(data.lower_band) && data.lower_band.length > 0) {
-                lowerBandSeries.setData(data.lower_band.map(l => ({ time: Number(l.time), value: Number(l.value) })));
+                const sortedLb = [];
+                const seenLbTimes = new Set();
+                for (const l of data.lower_band) {
+                    const t = Number(l.time);
+                    if (!seenLbTimes.has(t)) {
+                        seenLbTimes.add(t);
+                        sortedLb.push({ time: t, value: Number(l.value) });
+                    }
+                }
+                sortedLb.sort((a, b) => a.time - b.time);
+                lowerBandSeries.setData(sortedLb);
             }
             if (data.markers && Array.isArray(data.markers)) {
                 candleSeries.setMarkers(data.markers);
@@ -380,6 +462,12 @@
         document.getElementById('hud-symbol').innerText = sym;
         const select = document.getElementById('chart-symbol-select');
         if (select) select.value = sym;
+        const loadingEl = document.getElementById('trading-chart-loading');
+        if (loadingEl) {
+            loadingEl.style.display = 'flex';
+            loadingEl.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin text-brand-400"></i><span>Loading Candlestick Feeds...</span>';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
         refreshChartData();
     }
 
@@ -392,6 +480,12 @@
         });
         const activeBtn = document.getElementById(`tf-btn-${tf}`);
         if (activeBtn) activeBtn.className = "px-2.5 py-1 rounded-lg transition bg-brand-600 text-white shadow font-mono font-semibold";
+        const loadingEl = document.getElementById('trading-chart-loading');
+        if (loadingEl) {
+            loadingEl.style.display = 'flex';
+            loadingEl.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin text-brand-400"></i><span>Loading Candlestick Feeds...</span>';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
         refreshChartData();
     }
 
