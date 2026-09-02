@@ -127,19 +127,24 @@ def search_master_contracts(query: str, limit: int = 25, segment: Optional[str] 
 
     fts_query = f'"{clean_q}"* OR {clean_q}*'
 
+    seg_pattern = None
+    if segment and segment.upper() != "ALL":
+        seg_clean = segment.strip().upper()
+        seg_pattern = f"{seg_clean}%"
+
     with closing(get_master_db_connection()) as conn:
         try:
             # First try FTS5 query
-            if segment:
+            if seg_pattern:
                 rows = conn.execute("""
                     SELECT exchange_segment, instrument_id, name, description, series,
                            lot_size, tick_size, freeze_qty, multiplier, expiry_date,
                            rank
                     FROM instruments_fts
-                    WHERE instruments_fts MATCH ? AND exchange_segment = ?
+                    WHERE instruments_fts MATCH ? AND exchange_segment LIKE ?
                     ORDER BY rank
                     LIMIT ?
-                """, (fts_query, segment.upper(), limit)).fetchall()
+                """, (fts_query, seg_pattern, limit)).fetchall()
             else:
                 rows = conn.execute("""
                     SELECT exchange_segment, instrument_id, name, description, series,
@@ -158,15 +163,15 @@ def search_master_contracts(query: str, limit: int = 25, segment: Optional[str] 
 
         # Fallback to standard LIKE index query
         pattern = f"{clean_q}%"
-        if segment:
+        if seg_pattern:
             rows = conn.execute("""
                 SELECT exchange_segment, instrument_id, name, description, series,
                        lot_size, tick_size, freeze_qty, multiplier, expiry_date
                 FROM instruments
-                WHERE (name LIKE ? OR description LIKE ?) AND exchange_segment = ?
+                WHERE (name LIKE ? OR description LIKE ?) AND exchange_segment LIKE ?
                 ORDER BY name ASC
                 LIMIT ?
-            """, (pattern, pattern, segment.upper(), limit)).fetchall()
+            """, (pattern, pattern, seg_pattern, limit)).fetchall()
         else:
             rows = conn.execute("""
                 SELECT exchange_segment, instrument_id, name, description, series,
@@ -178,3 +183,4 @@ def search_master_contracts(query: str, limit: int = 25, segment: Optional[str] 
             """, (pattern, pattern, limit)).fetchall()
 
         return [dict(r) for r in rows]
+

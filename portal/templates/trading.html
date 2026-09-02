@@ -6,12 +6,20 @@
 <div class="space-y-4">
     <!-- Top Terminal Control Bar -->
     <div class="bg-cardbg border border-bordercolor p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xl">
-        <!-- Left: Symbol Selector & Timeframe Switcher -->
+        <!-- Left: Symbol Selector, Search Trigger & Timeframe Switcher -->
         <div class="flex flex-wrap items-center gap-2.5">
-            <!-- Symbol Dropdown / Search -->
+            <!-- Centered Symbol Search Modal Trigger Button -->
+            <button type="button" id="symbol-search-trigger" onclick="openSymbolSearchModal()" 
+                    class="bg-slate-950 border border-brand-500/50 hover:border-brand-500 text-xs font-mono font-bold text-slate-100 rounded-xl px-3.5 py-2 flex items-center gap-2 transition shadow-inner group cursor-pointer">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-brand-400 group-hover:scale-110 transition"></i>
+                <span id="current-symbol-display" class="font-bold text-slate-100">{{ active_symbol }}</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400 font-normal">Search (Ctrl+K)</span>
+            </button>
+
+            <!-- Quick Preset Dropdown for Fast Access -->
             <div class="relative">
                 <select id="chart-symbol-select" onchange="switchTradingSymbol(this.value)" 
-                        class="bg-slate-950 border border-brand-500/50 hover:border-brand-500 text-xs font-mono font-bold text-slate-100 rounded-xl px-3.5 py-2 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer shadow-inner">
+                        class="bg-slate-950 border border-bordercolor hover:border-slate-700 text-xs font-mono text-slate-300 rounded-xl px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer shadow-inner">
                     {% if strategies %}
                     <optgroup label="Active Strategies">
                         {% for strat in strategies %}
@@ -47,18 +55,6 @@
                 </select>
             </div>
 
-            <!-- Live Symbol Search Autocomplete Input (FTS5) -->
-            <div class="relative">
-                <div class="flex items-center bg-slate-950 border border-bordercolor rounded-xl px-2.5 py-1 focus-within:border-brand-500 transition shadow-inner">
-                    <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 mr-1.5"></i>
-                    <input type="text" id="symbol-search-input" placeholder="Search 198k+..." autocomplete="off"
-                           oninput="onSymbolSearchInput(this.value)" onfocus="if(this.value) onSymbolSearchInput(this.value)"
-                           class="bg-transparent text-slate-100 placeholder-slate-500 text-xs font-mono focus:outline-none w-32 md:w-44">
-                </div>
-                <div id="symbol-search-dropdown" class="absolute top-full left-0 mt-1.5 w-72 bg-slate-950/95 border border-bordercolor rounded-xl shadow-2xl z-50 max-h-64 overflow-y-auto hidden backdrop-blur-md text-xs font-mono p-1">
-                </div>
-            </div>
-
             <!-- Timeframe Selector Pills -->
             <div class="flex items-center bg-slate-950 border border-bordercolor p-1 rounded-xl gap-0.5 text-xs font-mono font-semibold text-slate-300">
                 {% for tf in ['1m', '3m', '5m', '15m', '20m', '30m', '1h', '1D'] %}
@@ -68,6 +64,14 @@
                 </button>
                 {% endfor %}
             </div>
+
+            <!-- Indicators Manager Button -->
+            <button type="button" id="btn-indicators-modal" onclick="openIndicatorsModal()" 
+                    class="bg-slate-950 border border-bordercolor hover:border-cyan-500/80 text-xs font-mono font-semibold text-slate-200 rounded-xl px-3 py-2 flex items-center gap-1.5 transition shadow-inner group">
+                <i data-lucide="trending-up" class="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition"></i>
+                <span>Indicators</span>
+                <span id="active-indicators-count" class="hidden text-[10px] bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 rounded-full px-1.5 font-bold">0</span>
+            </button>
         </div>
 
         <!-- Right: In-Chart Order Execution Pill & Quick Tools -->
@@ -99,7 +103,7 @@
                 </button>
             </div>
 
-            <!-- Chart Options (Fit, Indicators, Fullscreen) -->
+            <!-- Chart Options (Fit, Reload) -->
             <div class="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-bordercolor">
                 <button type="button" onclick="if(chart) chart.timeScale().fitContent();" title="Fit Content (Reset Zoom)" 
                         class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
@@ -126,11 +130,15 @@
                 <button type="button" title="Reset Zoom" onclick="if(chart) chart.timeScale().fitContent();" class="p-1.5 text-rose-400 hover:text-rose-300 rounded-lg hover:bg-slate-800"><i data-lucide="rotate-ccw" class="w-4 h-4"></i></button>
             </div>
 
+            <!-- Top-Left Active Indicators Tags Bar Overlay -->
+            <div id="chart-active-indicators-tags" class="absolute top-3 left-14 z-10 flex flex-wrap items-center gap-1.5 text-[11px] font-mono pointer-events-auto">
+            </div>
+
             <!-- Canvas Container -->
             <div id="trading-chart-canvas-container" class="w-full h-[520px] bg-slate-950 relative">
                 <div id="trading-chart-loading" class="absolute inset-0 flex items-center justify-center bg-slate-950/80 z-20 text-xs font-mono text-slate-400 gap-2">
                     <i data-lucide="loader-2" class="w-5 h-5 animate-spin text-brand-400"></i>
-                    <span>Loading High-Performance Candlestick & SuperTrend Feeds...</span>
+                    <span>Loading Candlestick & Market Data Feeds...</span>
                 </div>
             </div>
 
@@ -145,32 +153,176 @@
                         <span class="text-slate-400">LTP:</span>
                         <strong id="hud-ltp" class="text-emerald-400">₹--.--</strong>
                     </span>
-                    <span class="flex items-center gap-1.5">
+                    <span id="hud-st-container" class="hidden items-center gap-1.5">
                         <span class="text-slate-400">SUPERTREND:</span>
                         <strong id="hud-st" class="text-emerald-400">₹--.--</strong>
                     </span>
-                    <span class="hidden sm:flex items-center gap-1.5">
-                        <span class="text-slate-400">UPPER (SELL STOP):</span>
+                    <span id="hud-upper-container" class="hidden items-center gap-1.5">
+                        <span class="text-slate-400">UPPER (STOP):</span>
                         <strong id="hud-upper" class="text-rose-400">₹--.--</strong>
                     </span>
-                    <span class="hidden sm:flex items-center gap-1.5">
-                        <span class="text-slate-400">LOWER (BUY STOP):</span>
+                    <span id="hud-lower-container" class="hidden items-center gap-1.5">
+                        <span class="text-slate-400">LOWER (STOP):</span>
                         <strong id="hud-lower" class="text-emerald-400">₹--.--</strong>
                     </span>
-                    <span class="hidden md:flex items-center gap-1.5">
+                    <span id="hud-atr-container" class="hidden items-center gap-1.5">
                         <span class="text-slate-400">ATR:</span>
                         <strong id="hud-atr" class="text-amber-400">₹--.--</strong>
                     </span>
                 </div>
 
                 <div class="flex items-center space-x-3">
-                    <span id="hud-trend-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                        <span>BULLISH</span>
+                    <span id="hud-trend-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                        <span>CANDLES</span>
                     </span>
-                    <span class="text-slate-500 text-[10px] hidden lg:inline">:59 Structural Rule Aligned</span>
+                    <span class="text-slate-500 text-[10px] hidden lg:inline">Clean Market Feeds</span>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================================================= -->
+<!-- 🔍 1. OPANALGO CENTERED SYMBOL SEARCH MODAL                                -->
+<!-- ========================================================================= -->
+<div id="symbol-search-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
+    <div class="w-full max-w-2xl bg-slate-950 border border-bordercolor rounded-2xl shadow-2xl p-5 flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150">
+        <!-- Modal Header -->
+        <div class="flex items-center justify-between pb-3 border-b border-bordercolor">
+            <div class="flex items-center gap-2">
+                <div class="w-7 h-7 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                    <i data-lucide="search" class="w-4 h-4"></i>
+                </div>
+                <h3 class="text-sm font-bold text-slate-100 font-mono">Master Contract Search</h3>
+                <span class="text-[10px] text-slate-500 font-mono">198k+ Instruments (FTS5)</span>
+            </div>
+            <button type="button" onclick="closeSymbolSearchModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <!-- Search Input Bar & Segment Tabs -->
+        <div class="py-3 space-y-2.5">
+            <div class="relative flex items-center bg-slate-900 border border-slate-800 focus-within:border-brand-500 rounded-xl px-3 py-2 transition shadow-inner">
+                <i data-lucide="search" class="w-4 h-4 text-slate-400 mr-2"></i>
+                <input type="text" id="modal-symbol-search-input" placeholder="Type symbol name (e.g. SILVER, CRUDEOIL, NIFTY, RELIANCE)..." autocomplete="off"
+                       oninput="onModalSymbolSearch(this.value)" onkeydown="handleModalSearchKeydown(event)"
+                       class="bg-transparent text-slate-100 placeholder-slate-500 text-xs font-mono focus:outline-none w-full">
+                <button type="button" onclick="clearModalSearch()" class="text-slate-500 hover:text-slate-300 text-xs font-mono px-1">✕</button>
+            </div>
+
+            <!-- Segment Tabs -->
+            <div class="flex items-center gap-1.5 text-xs font-mono">
+                <span class="text-slate-500 text-[11px] mr-1">Segment:</span>
+                {% for seg in ['ALL', 'MCX', 'NSE', 'NCDEX'] %}
+                <button type="button" onclick="setModalSearchSegment('{{ seg }}')" id="seg-btn-{{ seg }}"
+                        class="px-2.5 py-0.5 rounded-lg border transition {% if seg == 'ALL' %}bg-brand-600/20 border-brand-500 text-brand-400 font-bold{% else %}bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800{% endif %}">
+                    {{ seg }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Results List -->
+        <div id="modal-symbol-results" class="flex-1 overflow-y-auto space-y-1 pr-1 max-h-96 min-h-64 font-mono text-xs">
+            <div class="p-8 text-center text-slate-500">
+                <i data-lucide="search" class="w-8 h-8 mx-auto mb-2 text-slate-600 opacity-50"></i>
+                <p>Type to search across MCX, NSEFO, NSECM, and NCDEX contracts...</p>
+                <p class="text-[11px] text-slate-600 mt-1">Use <kbd class="px-1.5 py-0.5 bg-slate-900 border border-slate-800 rounded">↑</kbd> <kbd class="px-1.5 py-0.5 bg-slate-900 border border-slate-800 rounded">↓</kbd> to navigate and <kbd class="px-1.5 py-0.5 bg-slate-900 border border-slate-800 rounded">Enter</kbd> to select</p>
+            </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="pt-3 border-t border-bordercolor flex items-center justify-between text-[11px] font-mono text-slate-500">
+            <span>Press <kbd class="px-1.5 py-0.5 bg-slate-900 border border-slate-800 rounded text-slate-400">Esc</kbd> to close</span>
+            <span id="modal-search-count">0 matches</span>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================================================= -->
+<!-- 📈 2. TOGGLEABLE INDICATORS MANAGER MODAL                                 -->
+<!-- ========================================================================= -->
+<div id="indicators-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
+    <div class="w-full max-w-lg bg-slate-950 border border-bordercolor rounded-2xl shadow-2xl p-5 flex flex-col animate-in fade-in zoom-in-95 duration-150 font-mono">
+        <!-- Header -->
+        <div class="flex items-center justify-between pb-3 border-b border-bordercolor">
+            <div class="flex items-center gap-2">
+                <div class="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                    <i data-lucide="trending-up" class="w-4 h-4"></i>
+                </div>
+                <h3 class="text-sm font-bold text-slate-100">Technical Indicators Manager</h3>
+            </div>
+            <button type="button" onclick="closeIndicatorsModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <!-- Indicator List / Checkboxes -->
+        <div class="py-4 space-y-3.5 max-h-96 overflow-y-auto pr-1 text-xs">
+            <!-- 1. SuperTrend -->
+            <div class="p-3 bg-slate-900/80 border border-slate-800 rounded-xl space-y-2">
+                <div class="flex items-center justify-between">
+                    <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-100">
+                        <input type="checkbox" id="ind-supertrend" class="rounded bg-slate-950 border-slate-700 text-brand-500 focus:ring-0">
+                        <span>SuperTrend (Ratchet Step & Bands)</span>
+                    </label>
+                    <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">Trend Bands</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 pt-1 text-[11px] text-slate-400">
+                    <div>
+                        <label>ATR Period:</label>
+                        <input type="number" id="ind-st-period" value="10" min="1" max="100" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-200 mt-0.5">
+                    </div>
+                    <div>
+                        <label>Multiplier:</label>
+                        <input type="number" id="ind-st-mult" value="3.0" step="0.1" min="0.5" max="10" class="w-full bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-200 mt-0.5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Exponential Moving Averages (EMA 9 & 21) -->
+            <div class="p-3 bg-slate-900/80 border border-slate-800 rounded-xl space-y-2">
+                <span class="font-bold text-slate-100 block">Moving Averages (EMA Ribbon)</span>
+                <div class="grid grid-cols-2 gap-3 pt-1">
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-200">
+                        <input type="checkbox" id="ind-ema9" class="rounded bg-slate-950 border-slate-700 text-cyan-500 focus:ring-0">
+                        <span class="flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+                            <span>EMA 9 (Fast)</span>
+                        </span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-200">
+                        <input type="checkbox" id="ind-ema21" class="rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-0">
+                        <span class="flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                            <span>EMA 21 (Slow)</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- 3. Bollinger Bands -->
+            <div class="p-3 bg-slate-900/80 border border-slate-800 rounded-xl space-y-2">
+                <div class="flex items-center justify-between">
+                    <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-100">
+                        <input type="checkbox" id="ind-bollinger" class="rounded bg-slate-950 border-slate-700 text-purple-500 focus:ring-0">
+                        <span>Bollinger Bands (20, 2)</span>
+                    </label>
+                    <span class="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/30 text-purple-400">Volatility</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="pt-3 border-t border-bordercolor flex items-center justify-between">
+            <button type="button" onclick="resetIndicatorsDefault()" class="text-xs text-slate-400 hover:text-rose-400 transition">
+                Reset to Clean Candles
+            </button>
+            <button type="button" onclick="applyIndicatorSettings()" class="bg-brand-600 hover:bg-brand-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow-lg shadow-brand-600/30">
+                Apply Indicators
+            </button>
         </div>
     </div>
 </div>
@@ -185,14 +337,36 @@
     let supertrendSeries = null;
     let upperBandSeries = null;
     let lowerBandSeries = null;
+    let ema9Series = null;
+    let ema21Series = null;
+    let bbUpperSeries = null;
+    let bbLowerSeries = null;
+    let bbMiddleSeries = null;
+
     let chartAbortController = null;
     let isInitialLoad = true;
     let refreshInterval = null;
     let initAttempts = 0;
 
+    // Active Indicators Configuration State (Default CLEAN CANDLESTICKS)
+    const activeIndicators = {
+        supertrend: false,
+        supertrend_period: 10,
+        supertrend_multiplier: 3.0,
+        ema9: false,
+        ema21: false,
+        bollinger: false
+    };
+
+    let currentSearchSegment = 'ALL';
+    let modalResultsData = [];
+    let modalSelectedIndex = -1;
+    let modalSearchDebounce = null;
+
     document.addEventListener('DOMContentLoaded', () => {
         initLightweightChart();
         refreshInterval = setInterval(refreshChartData, 3000);
+        updateIndicatorTagsHUD();
     });
 
     function initLightweightChart() {
@@ -247,7 +421,7 @@
                 }
             });
 
-            // 2. Candlestick Series
+            // 2. Candlestick Series (Default Clean Base)
             candleSeries = chart.addCandlestickSeries({
                 upColor: '#10b981',
                 downColor: '#f43f5e',
@@ -260,34 +434,71 @@
             // 3. Volume Sub-Histogram Series
             volumeSeries = chart.addHistogramSeries({
                 priceFormat: { type: 'volume' },
-                priceScaleId: '', // Overlay on bottom
+                priceScaleId: '',
                 scaleMargins: { top: 0.82, bottom: 0 }
             });
 
-            // 4. SuperTrend Ratchet Step Line
+            // 4. Indicator Series (Toggleable)
             supertrendSeries = chart.addLineSeries({
                 color: '#10b981',
                 lineWidth: 2,
                 lineStyle: LightweightCharts.LineStyle.Solid,
-                priceLineVisible: true,
-                lastValueVisible: true
+                priceLineVisible: false,
+                lastValueVisible: false
             });
-
-            // 5. Upper Band (Sell Stop) & Lower Band (Buy Stop) Series
             upperBandSeries = chart.addLineSeries({
                 color: 'rgba(244, 63, 94, 0.4)',
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
-                priceLineVisible: false
+                priceLineVisible: false,
+                lastValueVisible: false
             });
             lowerBandSeries = chart.addLineSeries({
                 color: 'rgba(16, 185, 129, 0.4)',
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
-                priceLineVisible: false
+                priceLineVisible: false,
+                lastValueVisible: false
             });
 
-            // 6. Automatic ResizeObserver (Never Blank Canvas)
+            ema9Series = chart.addLineSeries({
+                color: '#06b6d4',
+                lineWidth: 1.5,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                priceLineVisible: false,
+                lastValueVisible: false
+            });
+            ema21Series = chart.addLineSeries({
+                color: '#eab308',
+                lineWidth: 1.5,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                priceLineVisible: false,
+                lastValueVisible: false
+            });
+
+            bbUpperSeries = chart.addLineSeries({
+                color: 'rgba(168, 85, 247, 0.4)',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                priceLineVisible: false,
+                lastValueVisible: false
+            });
+            bbLowerSeries = chart.addLineSeries({
+                color: 'rgba(168, 85, 247, 0.4)',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                priceLineVisible: false,
+                lastValueVisible: false
+            });
+            bbMiddleSeries = chart.addLineSeries({
+                color: 'rgba(168, 85, 247, 0.7)',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                priceLineVisible: false,
+                lastValueVisible: false
+            });
+
+            // 5. Automatic ResizeObserver (Never Blank Canvas)
             const resizeObserver = new ResizeObserver(entries => {
                 if (entries.length && entries[0].contentRect) {
                     const { width, height } = entries[0].contentRect;
@@ -304,6 +515,38 @@
             const loadingEl = document.getElementById('trading-chart-loading');
             if (loadingEl) loadingEl.innerHTML = `<span class="text-rose-400 font-mono">Chart Error: ${err.message}</span>`;
         }
+    }
+
+    // Mathematical Helpers for Client-Side Indicators
+    function calculateEMA(candles, period) {
+        if (!candles || candles.length < period) return [];
+        const k = 2 / (period + 1);
+        let ema = 0;
+        for (let i = 0; i < period; i++) ema += candles[i].close;
+        ema /= period;
+
+        const res = [{ time: candles[period - 1].time, value: ema }];
+        for (let i = period; i < candles.length; i++) {
+            ema = candles[i].close * k + ema * (1 - k);
+            res.push({ time: candles[i].time, value: ema });
+        }
+        return res;
+    }
+
+    function calculateBollingerBands(candles, period = 20, mult = 2) {
+        if (!candles || candles.length < period) return { upper: [], middle: [], lower: [] };
+        const upper = [], middle = [], lower = [];
+        for (let i = period - 1; i < candles.length; i++) {
+            const slice = candles.slice(i - period + 1, i + 1);
+            const sma = slice.reduce((sum, c) => sum + c.close, 0) / period;
+            const variance = slice.reduce((sum, c) => sum + Math.pow(c.close - sma, 2), 0) / period;
+            const stdDev = Math.sqrt(variance);
+            const t = candles[i].time;
+            middle.push({ time: t, value: sma });
+            upper.push({ time: t, value: sma + (stdDev * mult) });
+            lower.push({ time: t, value: sma - (stdDev * mult) });
+        }
+        return { upper, middle, lower };
     }
 
     async function refreshChartData() {
@@ -335,7 +578,6 @@
             if (data.candlestick && data.candlestick.length > 0) {
                 if (loadingEl) loadingEl.style.display = 'none';
 
-                // Ensure strictly sorted and deduplicated timestamps
                 const sortedCandles = [];
                 const seenTimes = new Set();
                 for (const c of data.candlestick) {
@@ -355,12 +597,89 @@
                 sortedCandles.sort((a, b) => a.time - b.time);
 
                 candleSeries.setData(sortedCandles);
-
                 volumeSeries.setData(sortedCandles.map(c => ({
                     time: c.time,
                     value: c.volume,
                     color: c.close >= c.open ? 'rgba(16, 185, 129, 0.25)' : 'rgba(244, 63, 94, 0.25)'
                 })));
+
+                // 2. Render Active Toggleable Indicators
+                // A. SuperTrend
+                if (activeIndicators.supertrend && data.supertrend_line && data.supertrend_line.length > 0) {
+                    const sortedSt = [];
+                    const seenSt = new Set();
+                    for (const l of data.supertrend_line) {
+                        const t = Number(l.time);
+                        if (!seenSt.has(t)) {
+                            seenSt.add(t);
+                            sortedSt.push({
+                                time: t,
+                                value: Number(l.value),
+                                color: l.color || (data.current_trend === 'BULLISH' ? '#10b981' : '#f43f5e')
+                            });
+                        }
+                    }
+                    sortedSt.sort((a, b) => a.time - b.time);
+                    supertrendSeries.setData(sortedSt);
+
+                    if (data.upper_band && Array.isArray(data.upper_band)) {
+                        upperBandSeries.setData(data.upper_band.map(u => ({ time: Number(u.time), value: Number(u.value) })));
+                    }
+                    if (data.lower_band && Array.isArray(data.lower_band)) {
+                        lowerBandSeries.setData(data.lower_band.map(l => ({ time: Number(l.time), value: Number(l.value) })));
+                    }
+
+                    document.getElementById('hud-st-container').classList.remove('hidden');
+                    document.getElementById('hud-st-container').classList.add('flex');
+                    document.getElementById('hud-upper-container').classList.remove('hidden');
+                    document.getElementById('hud-upper-container').classList.add('flex');
+                    document.getElementById('hud-lower-container').classList.remove('hidden');
+                    document.getElementById('hud-lower-container').classList.add('flex');
+                    document.getElementById('hud-atr-container').classList.remove('hidden');
+                    document.getElementById('hud-atr-container').classList.add('flex');
+                } else {
+                    supertrendSeries.setData([]);
+                    upperBandSeries.setData([]);
+                    lowerBandSeries.setData([]);
+                    document.getElementById('hud-st-container').classList.add('hidden');
+                    document.getElementById('hud-st-container').classList.remove('flex');
+                    document.getElementById('hud-upper-container').classList.add('hidden');
+                    document.getElementById('hud-upper-container').classList.remove('flex');
+                    document.getElementById('hud-lower-container').classList.add('hidden');
+                    document.getElementById('hud-lower-container').classList.remove('flex');
+                    document.getElementById('hud-atr-container').classList.add('hidden');
+                    document.getElementById('hud-atr-container').classList.remove('flex');
+                }
+
+                // B. EMA 9 & EMA 21
+                if (activeIndicators.ema9) {
+                    const ema9Data = calculateEMA(sortedCandles, 9);
+                    ema9Series.setData(ema9Data);
+                } else {
+                    ema9Series.setData([]);
+                }
+                if (activeIndicators.ema21) {
+                    const ema21Data = calculateEMA(sortedCandles, 21);
+                    ema21Series.setData(ema21Data);
+                } else {
+                    ema21Series.setData([]);
+                }
+
+                // C. Bollinger Bands
+                if (activeIndicators.bollinger) {
+                    const bb = calculateBollingerBands(sortedCandles, 20, 2);
+                    bbUpperSeries.setData(bb.upper);
+                    bbMiddleSeries.setData(bb.middle);
+                    bbLowerSeries.setData(bb.lower);
+                } else {
+                    bbUpperSeries.setData([]);
+                    bbMiddleSeries.setData([]);
+                    bbLowerSeries.setData([]);
+                }
+
+                if (data.markers && Array.isArray(data.markers)) {
+                    candleSeries.setMarkers(data.markers);
+                }
 
                 if (isInitialLoad) {
                     chart.timeScale().fitContent();
@@ -371,54 +690,6 @@
                     loadingEl.style.display = 'flex';
                     loadingEl.innerHTML = `<span class="text-amber-400 font-mono">Awaiting live market data feeds for ${activeSymbol}...</span>`;
                 }
-            }
-
-            // 2. SuperTrend Step Line & Bands
-            if (data.supertrend_line && Array.isArray(data.supertrend_line) && data.supertrend_line.length > 0) {
-                const sortedSt = [];
-                const seenStTimes = new Set();
-                for (const l of data.supertrend_line) {
-                    const t = Number(l.time);
-                    if (!seenStTimes.has(t)) {
-                        seenStTimes.add(t);
-                        sortedSt.push({
-                            time: t,
-                            value: Number(l.value),
-                            color: l.color || (data.current_trend === 'BULLISH' ? '#10b981' : '#f43f5e')
-                        });
-                    }
-                }
-                sortedSt.sort((a, b) => a.time - b.time);
-                supertrendSeries.setData(sortedSt);
-            }
-            if (data.upper_band && Array.isArray(data.upper_band) && data.upper_band.length > 0) {
-                const sortedUb = [];
-                const seenUbTimes = new Set();
-                for (const u of data.upper_band) {
-                    const t = Number(u.time);
-                    if (!seenUbTimes.has(t)) {
-                        seenUbTimes.add(t);
-                        sortedUb.push({ time: t, value: Number(u.value) });
-                    }
-                }
-                sortedUb.sort((a, b) => a.time - b.time);
-                upperBandSeries.setData(sortedUb);
-            }
-            if (data.lower_band && Array.isArray(data.lower_band) && data.lower_band.length > 0) {
-                const sortedLb = [];
-                const seenLbTimes = new Set();
-                for (const l of data.lower_band) {
-                    const t = Number(l.time);
-                    if (!seenLbTimes.has(t)) {
-                        seenLbTimes.add(t);
-                        sortedLb.push({ time: t, value: Number(l.value) });
-                    }
-                }
-                sortedLb.sort((a, b) => a.time - b.time);
-                lowerBandSeries.setData(sortedLb);
-            }
-            if (data.markers && Array.isArray(data.markers)) {
-                candleSeries.setMarkers(data.markers);
             }
 
             // 3. Update Real-Time HUD Elements
@@ -445,10 +716,15 @@
             }
 
             const badge = document.getElementById('hud-trend-badge');
-            if (badge && (data.current_trend || data.trend !== undefined)) {
-                const isBull = data.current_trend === 'BULLISH' || data.trend === 1 || data.trend === 'BULLISH';
-                badge.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold ${isBull ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'} flex items-center gap-1`;
-                badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${isBull ? 'bg-emerald-400' : 'bg-rose-400'} animate-pulse"></span><span>${isBull ? 'BULLISH' : 'BEARISH'}</span>`;
+            if (badge) {
+                if (activeIndicators.supertrend && (data.current_trend || data.trend !== undefined)) {
+                    const isBull = data.current_trend === 'BULLISH' || data.trend === 1 || data.trend === 'BULLISH';
+                    badge.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold ${isBull ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'} flex items-center gap-1`;
+                    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${isBull ? 'bg-emerald-400' : 'bg-rose-400'} animate-pulse"></span><span>${isBull ? 'BULLISH' : 'BEARISH'}</span>`;
+                } else {
+                    badge.className = `px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 border border-slate-700 text-slate-300 flex items-center gap-1`;
+                    badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span><span>CANDLES</span>`;
+                }
             }
         } catch (e) {
             if (e.name !== 'AbortError') console.error('Chart fetch error:', e);
@@ -460,6 +736,7 @@
         activeSymbol = sym;
         isInitialLoad = true;
         document.getElementById('hud-symbol').innerText = sym;
+        document.getElementById('current-symbol-display').innerText = sym;
         const select = document.getElementById('chart-symbol-select');
         if (select) select.value = sym;
         const loadingEl = document.getElementById('trading-chart-loading');
@@ -526,56 +803,276 @@
         }
     }
 
-    let searchDebounceTimer = null;
-    function onSymbolSearchInput(val) {
-        clearTimeout(searchDebounceTimer);
-        const dropdown = document.getElementById('symbol-search-dropdown');
-        if (!val || val.trim().length === 0) {
-            dropdown.classList.add('hidden');
-            dropdown.innerHTML = '';
+    // =========================================================================
+    // 🔍 SYMBOL SEARCH MODAL CONTROLLER
+    // =========================================================================
+    function openSymbolSearchModal() {
+        const modal = document.getElementById('symbol-search-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            const input = document.getElementById('modal-symbol-search-input');
+            if (input) {
+                input.value = '';
+                input.focus();
+                onModalSymbolSearch('');
+            }
+        }
+    }
+
+    function closeSymbolSearchModal() {
+        const modal = document.getElementById('symbol-search-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    function clearModalSearch() {
+        const input = document.getElementById('modal-symbol-search-input');
+        if (input) {
+            input.value = '';
+            input.focus();
+            onModalSymbolSearch('');
+        }
+    }
+
+    function setModalSearchSegment(seg) {
+        currentSearchSegment = seg;
+        document.querySelectorAll('[id^="seg-btn-"]').forEach(btn => {
+            btn.className = "px-2.5 py-0.5 rounded-lg border transition bg-slate-900 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800";
+        });
+        const activeBtn = document.getElementById(`seg-btn-${seg}`);
+        if (activeBtn) {
+            activeBtn.className = "px-2.5 py-0.5 rounded-lg border transition bg-brand-600/20 border-brand-500 text-brand-400 font-bold";
+        }
+        const input = document.getElementById('modal-symbol-search-input');
+        onModalSymbolSearch(input ? input.value : '');
+    }
+
+    function onModalSymbolSearch(query) {
+        clearTimeout(modalSearchDebounce);
+        modalSearchDebounce = setTimeout(async () => {
+            const resultsContainer = document.getElementById('modal-symbol-results');
+            const countEl = document.getElementById('modal-search-count');
+            const q = (query || '').trim();
+
+            if (!q) {
+                // Default Suggestions
+                resultsContainer.innerHTML = `
+                    <div class="p-4 text-center text-slate-500">
+                        <p class="text-xs text-slate-400 mb-2 font-bold">Popular Continuous Futures Contracts:</p>
+                        <div class="flex flex-wrap justify-center gap-1.5 max-w-md mx-auto">
+                            ${['SILVER1001!', 'GOLDPETAL1!', 'ZINCMINI1!', 'CRUDEOIL1!', 'NATURALGAS1!', 'NIFTY1!', 'BANKNIFTY1!', 'RELIANCE'].map(s => `
+                                <button type="button" onclick="selectModalSymbol('${s}')" class="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-brand-500 text-slate-200 text-xs transition">
+                                    ${s}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+                if (countEl) countEl.innerText = '0 matches';
+                modalResultsData = [];
+                modalSelectedIndex = -1;
+                return;
+            }
+
+            try {
+                const resp = await fetch(`/admin/api/symbols/search?q=${encodeURIComponent(q)}&segment=${encodeURIComponent(currentSearchSegment)}&limit=30`);
+                const data = await resp.json();
+                modalResultsData = data.results || [];
+                modalSelectedIndex = -1;
+
+                if (modalResultsData.length > 0) {
+                    if (countEl) countEl.innerText = `${modalResultsData.length} matches`;
+                    resultsContainer.innerHTML = modalResultsData.map((r, idx) => `
+                        <div id="modal-item-${idx}" onclick="selectModalSymbol('${r.name}')"
+                             class="p-2.5 hover:bg-slate-900 rounded-xl cursor-pointer flex items-center justify-between transition border border-transparent hover:border-slate-800 group">
+                            <div class="space-y-0.5">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-bold text-slate-100 group-hover:text-brand-400">${r.name}</span>
+                                    <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 text-slate-400">${r.series || 'FUT'}</span>
+                                    ${r.expiry_date ? `<span class="text-[10px] text-amber-400/90 font-mono">Exp: ${r.expiry_date}</span>` : ''}
+                                </div>
+                                <span class="text-[11px] text-slate-400 block truncate max-w-md">${r.description}</span>
+                            </div>
+                            <div class="text-right space-y-0.5">
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded ${r.exchange_segment.includes('MCX') ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400' : 'bg-blue-500/10 border border-blue-500/30 text-blue-400'}">${r.exchange_segment}</span>
+                                <div class="text-[10px] text-slate-500">Lot: ${r.lot_size || 1} | Tick: ${r.tick_size || 0.05}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    if (countEl) countEl.innerText = '0 matches';
+                    resultsContainer.innerHTML = `
+                        <div class="p-8 text-center text-slate-500">
+                            <p>No instruments matching "${q}" in segment ${currentSearchSegment}</p>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error("Modal search failed:", e);
+            }
+        }, 150);
+    }
+
+    function handleModalSearchKeydown(e) {
+        if (!modalResultsData || modalResultsData.length === 0) {
+            if (e.key === 'Escape') closeSymbolSearchModal();
             return;
         }
 
-        searchDebounceTimer = setTimeout(async () => {
-            try {
-                const resp = await fetch(`/admin/api/symbols/search?q=${encodeURIComponent(val.trim())}&limit=15`);
-                const data = await resp.json();
-                if (data.results && data.results.length > 0) {
-                    dropdown.innerHTML = data.results.map(r => `
-                        <div onclick="selectSearchedSymbol('${r.name}')" 
-                             class="p-2 hover:bg-slate-800 rounded-lg cursor-pointer flex items-center justify-between transition group">
-                            <div>
-                                <span class="font-bold text-slate-100 group-hover:text-brand-400">${r.name}</span>
-                                <span class="text-[10px] text-slate-500 block truncate max-w-[180px]">${r.description}</span>
-                            </div>
-                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">${r.exchange_segment}</span>
-                        </div>
-                    `).join('');
-                    dropdown.classList.remove('hidden');
-                } else {
-                    dropdown.innerHTML = '<div class="p-3 text-slate-500 text-center">No matching instruments found</div>';
-                    dropdown.classList.remove('hidden');
-                }
-            } catch (e) {
-                console.error("Symbol search failed:", e);
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            modalSelectedIndex = Math.min(modalSelectedIndex + 1, modalResultsData.length - 1);
+            updateModalSelectionHighlight();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            modalSelectedIndex = Math.max(modalSelectedIndex - 1, 0);
+            updateModalSelectionHighlight();
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (modalSelectedIndex >= 0 && modalSelectedIndex < modalResultsData.length) {
+                selectModalSymbol(modalResultsData[modalSelectedIndex].name);
+            } else if (modalResultsData.length > 0) {
+                selectModalSymbol(modalResultsData[0].name);
             }
-        }, 200);
+        } else if (e.key === 'Escape') {
+            closeSymbolSearchModal();
+        }
     }
 
-    function selectSearchedSymbol(sym) {
-        const dropdown = document.getElementById('symbol-search-dropdown');
-        if (dropdown) dropdown.classList.add('hidden');
-        const input = document.getElementById('symbol-search-input');
-        if (input) input.value = sym;
+    function updateModalSelectionHighlight() {
+        modalResultsData.forEach((_, idx) => {
+            const el = document.getElementById(`modal-item-${idx}`);
+            if (el) {
+                if (idx === modalSelectedIndex) {
+                    el.className = "p-2.5 bg-slate-900 border border-brand-500 rounded-xl cursor-pointer flex items-center justify-between transition group";
+                    el.scrollIntoView({ block: 'nearest' });
+                } else {
+                    el.className = "p-2.5 hover:bg-slate-900 rounded-xl cursor-pointer flex items-center justify-between transition border border-transparent hover:border-slate-800 group";
+                }
+            }
+        });
+    }
+
+    function selectModalSymbol(sym) {
+        closeSymbolSearchModal();
         switchTradingSymbol(sym);
     }
 
-    document.addEventListener('click', (e) => {
-        const dropdown = document.getElementById('symbol-search-dropdown');
-        const input = document.getElementById('symbol-search-input');
-        if (dropdown && input && !dropdown.contains(e.target) && !input.contains(e.target)) {
-            dropdown.classList.add('hidden');
+    // Global Keydown Handler for Search (Ctrl+K or Cmd+K)
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            openSymbolSearchModal();
+        } else if (e.key === 'Escape') {
+            closeSymbolSearchModal();
+            closeIndicatorsModal();
         }
     });
+
+    // =========================================================================
+    // 📈 INDICATORS MANAGER CONTROLLER
+    // =========================================================================
+    function openIndicatorsModal() {
+        const modal = document.getElementById('indicators-modal');
+        if (modal) {
+            document.getElementById('ind-supertrend').checked = activeIndicators.supertrend;
+            document.getElementById('ind-st-period').value = activeIndicators.supertrend_period;
+            document.getElementById('ind-st-mult').value = activeIndicators.supertrend_multiplier;
+            document.getElementById('ind-ema9').checked = activeIndicators.ema9;
+            document.getElementById('ind-ema21').checked = activeIndicators.ema21;
+            document.getElementById('ind-bollinger').checked = activeIndicators.bollinger;
+            modal.classList.remove('hidden');
+        }
+    }
+
+    function closeIndicatorsModal() {
+        const modal = document.getElementById('indicators-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    function applyIndicatorSettings() {
+        activeIndicators.supertrend = document.getElementById('ind-supertrend').checked;
+        activeIndicators.supertrend_period = parseInt(document.getElementById('ind-st-period').value) || 10;
+        activeIndicators.supertrend_multiplier = parseFloat(document.getElementById('ind-st-mult').value) || 3.0;
+        activeIndicators.ema9 = document.getElementById('ind-ema9').checked;
+        activeIndicators.ema21 = document.getElementById('ind-ema21').checked;
+        activeIndicators.bollinger = document.getElementById('ind-bollinger').checked;
+
+        closeIndicatorsModal();
+        updateIndicatorTagsHUD();
+        refreshChartData();
+    }
+
+    function resetIndicatorsDefault() {
+        activeIndicators.supertrend = false;
+        activeIndicators.ema9 = false;
+        activeIndicators.ema21 = false;
+        activeIndicators.bollinger = false;
+
+        closeIndicatorsModal();
+        updateIndicatorTagsHUD();
+        refreshChartData();
+    }
+
+    function toggleSingleIndicator(key, value) {
+        activeIndicators[key] = value;
+        updateIndicatorTagsHUD();
+        refreshChartData();
+    }
+
+    function updateIndicatorTagsHUD() {
+        const tagsContainer = document.getElementById('chart-active-indicators-tags');
+        const countBadge = document.getElementById('active-indicators-count');
+        if (!tagsContainer) return;
+
+        const tags = [];
+        let count = 0;
+
+        if (activeIndicators.supertrend) {
+            count++;
+            tags.push(`
+                <span class="px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center gap-1.5 shadow-sm">
+                    <span>ST (${activeIndicators.supertrend_period}, ${activeIndicators.supertrend_multiplier})</span>
+                    <button type="button" onclick="toggleSingleIndicator('supertrend', false)" class="hover:text-white font-bold">✕</button>
+                </span>
+            `);
+        }
+        if (activeIndicators.ema9) {
+            count++;
+            tags.push(`
+                <span class="px-2 py-0.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center gap-1.5 shadow-sm">
+                    <span>EMA 9</span>
+                    <button type="button" onclick="toggleSingleIndicator('ema9', false)" class="hover:text-white font-bold">✕</button>
+                </span>
+            `);
+        }
+        if (activeIndicators.ema21) {
+            count++;
+            tags.push(`
+                <span class="px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center gap-1.5 shadow-sm">
+                    <span>EMA 21</span>
+                    <button type="button" onclick="toggleSingleIndicator('ema21', false)" class="hover:text-white font-bold">✕</button>
+                </span>
+            `);
+        }
+        if (activeIndicators.bollinger) {
+            count++;
+            tags.push(`
+                <span class="px-2 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-400 flex items-center gap-1.5 shadow-sm">
+                    <span>BB (20, 2)</span>
+                    <button type="button" onclick="toggleSingleIndicator('bollinger', false)" class="hover:text-white font-bold">✕</button>
+                </span>
+            `);
+        }
+
+        tagsContainer.innerHTML = tags.join('');
+        if (countBadge) {
+            if (count > 0) {
+                countBadge.innerText = count;
+                countBadge.classList.remove('hidden');
+            } else {
+                countBadge.classList.add('hidden');
+            }
+        }
+    }
 </script>
 {% endblock %}
