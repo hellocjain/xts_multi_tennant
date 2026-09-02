@@ -31,3 +31,7 @@ htmlcov/
 *.tar.gz
 *.gpg
 .backup_env
+
+# Local Reference Code & Ingestion Library
+references/
+
