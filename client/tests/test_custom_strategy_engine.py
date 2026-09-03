@@ -198,14 +198,78 @@ class RunawayStrategy(BaseStrategy):
     assert runner.last_error is not None
     assert "exceeded 2.0s wall-clock limit" in runner.last_error
 
+@pytest.mark.asyncio
+async def test_custom_strategy_cpu_busy_loop_process_termination():
+    """
+    Tests a genuine CPU-bound 'while True: pass' infinite loop.
+    Confirms that:
+    1. The runner terminates at 2.0s without hanging the event loop.
+    2. The OS worker process is forcefully killed (SIGKILL) and ceases to exist.
+    """
+    from custom_strategy_engine import run_strategy_in_isolated_process
+
+    busy_code = """
+class CpuHogStrategy(BaseStrategy):
+    def on_candle(self, candle, history, position):
+        # Genuine CPU-bound blocking infinite loop (cannot be interrupted by threads)
+        while True:
+            pass
+        return "BUY"
+"""
+    eval_candle = {"time": 1788426000, "open": 100, "high": 105, "low": 95, "close": 100, "volume": 10}
+    history = [eval_candle]
+
+    t0 = time.time()
+    sig, err, pid = await run_strategy_in_isolated_process(
+        busy_code, "cpu_hog_01", eval_candle, history, "FLIP", timeout=2.0
+    )
+    elapsed = time.time() - t0
+
+    assert 1.9 <= elapsed < 3.0
+    assert sig is None
+    assert err is not None
+    assert "exceeded 2.0s wall-clock limit" in err
+    assert pid is not None
+
+    # Verify that the worker process was terminated and is no longer running
+    time.sleep(0.1) # brief tick for OS reaping
+    try:
+        os.kill(pid, 0)
+        is_process_alive = True
+    except (ProcessLookupError, OSError):
+        is_process_alive = False
+
+    assert is_process_alive is False, f"Worker process PID {pid} is still alive and leaking CPU!"
+
+
 def test_safe_getattr_blocks_dunder():
-    from custom_strategy_engine import safe_getattr, safe_hasattr, safe_setattr
+    from custom_strategy_engine import safe_getattr, safe_hasattr, safe_setattr, safe_delattr
     class Dummy:
         pass
     d = Dummy()
     assert safe_hasattr(d, "__class__") is False
-    with pytest.raises(PermissionError):
+    with pytest.raises(PermissionError, match="Security Violation"):
         safe_getattr(d, "__class__")
-    with pytest.raises(PermissionError):
+    with pytest.raises(PermissionError, match="Security Violation"):
         safe_setattr(d, "__class__", int)
+    with pytest.raises(PermissionError, match="Security Violation"):
+        safe_delattr(d, "__class__")
+
+def test_safe_getattr_dynamic_non_literal_constructions():
+    from custom_strategy_engine import safe_getattr, safe_hasattr, safe_setattr
+    # 1. String concatenation bypass attempt
+    attr1 = "_" + "_class__"
+    with pytest.raises(PermissionError, match="Security Violation"):
+        safe_getattr((), attr1)
+
+    # 2. chr() constructed dunder attempt
+    attr2 = chr(95) + chr(95) + "bases" + chr(95) + chr(95)
+    with pytest.raises(PermissionError, match="Security Violation"):
+        safe_getattr(tuple, attr2)
+
+    # 3. join() constructed dunder attempt
+    attr3 = "".join(["__", "subclasses", "__"])
+    with pytest.raises(PermissionError, match="Security Violation"):
+        safe_getattr(object, attr3)
+
 

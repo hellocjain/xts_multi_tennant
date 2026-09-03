@@ -2,26 +2,36 @@ import asyncio
 import datetime
 import logging
 import math
+import os
 import time
 import uuid
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Tuple
 
 logger = logging.getLogger(__name__)
 
 def safe_getattr(obj, name, *default):
-    if str(name).startswith("__"):
+    s_name = str(name)
+    if s_name.startswith("__") or "__" in s_name:
         raise PermissionError(f"Security Violation: Access to dunder attribute '{name}' is prohibited.")
     return getattr(obj, name, *default)
 
 def safe_hasattr(obj, name):
-    if str(name).startswith("__"):
+    s_name = str(name)
+    if s_name.startswith("__") or "__" in s_name:
         return False
     return hasattr(obj, name)
 
 def safe_setattr(obj, name, value):
-    if str(name).startswith("__"):
+    s_name = str(name)
+    if s_name.startswith("__") or "__" in s_name:
         raise PermissionError(f"Security Violation: Setting dunder attribute '{name}' is prohibited.")
     return setattr(obj, name, value)
+
+def safe_delattr(obj, name):
+    s_name = str(name)
+    if s_name.startswith("__") or "__" in s_name:
+        raise PermissionError(f"Security Violation: Deleting dunder attribute '{name}' is prohibited.")
+    return delattr(obj, name)
 
 # Standard safe namespace for executing strategy scripts
 SAFE_BUILTINS = {
@@ -33,7 +43,8 @@ SAFE_BUILTINS = {
     "getattr": safe_getattr,
     "hasattr": safe_hasattr,
     "setattr": safe_setattr,
-    "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
+    "delattr": safe_delattr,
+    "abs": abs, "all": all, "any": any, "bool": bool, "chr": chr, "ord": ord, "dict": dict,
     "enumerate": enumerate, "filter": filter, "float": float, "format": format,
     "frozenset": frozenset, "int": int, "isinstance": isinstance, "issubclass": issubclass,
     "iter": iter, "len": len, "list": list, "map": map, "max": max,
@@ -114,6 +125,98 @@ def parse_timeframe_to_seconds(tf: str) -> int:
         return val * 60 if val < 100 else val
     except ValueError:
         return 900 # default 15m
+
+
+def _strategy_process_worker(code_content: str, strategy_id: str, eval_candle: dict, history: list, strategy_position: str, conn):
+    """Worker process target: executes on_candle() in complete OS-level process isolation."""
+    try:
+        import datetime as dt_mod
+        import json as json_mod
+        import math as math_mod
+        import time as time_mod
+
+        exec_globals = {
+            "__builtins__": SAFE_BUILTINS,
+            "BaseStrategy": BaseStrategy,
+            "math": math_mod,
+            "datetime": dt_mod,
+            "json": json_mod,
+            "time": time_mod,
+            "List": List, "Dict": Dict, "Any": Any, "Optional": Optional
+        }
+        compiled_bytecode = compile(code_content, f"<strategy_{strategy_id}>", "exec")
+        exec(compiled_bytecode, exec_globals)
+
+        target_cls = None
+        for k, v in exec_globals.items():
+            if isinstance(v, type) and issubclass(v, BaseStrategy) and v is not BaseStrategy:
+                target_cls = v
+                break
+        if not target_cls:
+            for k, v in exec_globals.items():
+                if isinstance(v, type) and hasattr(v, "on_candle") and k != "BaseStrategy":
+                    target_cls = v
+                    break
+
+        if not target_cls:
+            conn.send({"error": "No Strategy Class implementing on_candle() found in code."})
+            return
+
+        instance = target_cls()
+        sig = instance.on_candle(eval_candle, history, strategy_position)
+        conn.send({"result": sig})
+    except Exception as e:
+        conn.send({"error": str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+async def run_strategy_in_isolated_process(
+    code_content: str, strategy_id: str, eval_candle: dict, history: list, strategy_position: str, timeout: float = 2.0
+) -> Tuple[Optional[str], Optional[str], Optional[int]]:
+    """
+    Executes user strategy in a dedicated OS subprocess.
+    If execution exceeds timeout (e.g. CPU-bound while True: pass infinite loop),
+    the process is forcefully terminated via SIGKILL, ensuring zero CPU leakage.
+    Returns: (signal_str, error_message, worker_pid)
+    """
+    import multiprocessing as mp
+    ctx = mp.get_context("spawn")
+    parent_conn, child_conn = ctx.Pipe()
+
+    proc = ctx.Process(
+        target=_strategy_process_worker,
+        args=(code_content, strategy_id, eval_candle, history, strategy_position, child_conn)
+    )
+    proc.start()
+    worker_pid = proc.pid
+
+    try:
+        await asyncio.to_thread(proc.join, timeout)
+        if proc.is_alive():
+            # Forcefully kill the runaway subprocess to prevent CPU starvation
+            proc.kill()
+            await asyncio.to_thread(proc.join, 0.5)
+            return None, "Execution Timeout: on_candle() exceeded 2.0s wall-clock limit", worker_pid
+
+        if parent_conn.poll():
+            data = parent_conn.recv()
+            if "error" in data:
+                return None, f"Runtime Exception in on_candle(): {data['error']}", worker_pid
+            return str(data.get("result", "")), None, worker_pid
+        else:
+            return None, "Strategy process terminated unexpectedly without returning a signal", worker_pid
+    finally:
+        try:
+            parent_conn.close()
+        except Exception:
+            pass
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
 
 
 class SingleCustomStrategyRunner:
@@ -341,23 +444,21 @@ class SingleCustomStrategyRunner:
         if candle_ts == self.last_processed_candle_time:
             return # Already processed this closed candle
 
-        # 6. Execute User Strategy on_candle with 2.0s Hard Wall-Clock Timeout
-        try:
-            signal_raw = await asyncio.wait_for(
-                asyncio.to_thread(self.strategy_instance.on_candle, eval_candle, history, self.strategy_position),
-                timeout=2.0
-            )
-            signal = str(signal_raw).strip().upper()
-        except asyncio.TimeoutError:
-            self.last_error = "Execution Timeout: on_candle() exceeded 2.0s wall-clock limit"
-            logger.error(f"❌ Custom Strategy [{self.name}] execution timed out after 2.0s.")
+        # 6. Execute User Strategy on_candle in Isolated Process with Hard SIGKILL on 2.0s Timeout
+        signal_raw, exec_error, _ = await run_strategy_in_isolated_process(
+            self.code_content, self.id, eval_candle, history, self.strategy_position, timeout=2.0
+        )
+
+        if exec_error:
+            self.last_error = exec_error
+            if "Timeout" in exec_error:
+                logger.error(f"❌ Custom Strategy [{self.name}] execution timed out after 2.0s (subprocess killed).")
+            else:
+                logger.error(f"❌ Custom Strategy [{self.name}] runtime exception: {exec_error}")
             self.last_processed_candle_time = candle_ts
             return
-        except Exception as user_err:
-            self.last_error = f"Runtime Exception in on_candle(): {user_err}"
-            logger.error(f"❌ Custom Strategy [{self.name}] runtime exception: {user_err}", exc_info=True)
-            self.last_processed_candle_time = candle_ts
-            return
+
+        signal = str(signal_raw).strip().upper() if signal_raw else "HOLD"
 
         # 7. Execute Stop and Reverse (SAR) Signals
         if signal in ("BUY", "SELL"):
