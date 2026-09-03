@@ -31,3 +31,9 @@ htmlcov/
 *.tar.gz
 *.gpg
 .backup_env
+
+# Runtime data & dynamic ingress
+data/
+caddy/
+references/
+scripts/remote_ssh.py
