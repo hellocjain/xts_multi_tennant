@@ -21,7 +21,8 @@ def derive_backup_key(passphrase: str) -> bytes:
     key = hashlib.scrypt(passphrase.encode('utf-8'), salt=salt, n=16384, r=8, p=1, dklen=32)
     return base64.urlsafe_b64encode(key)
 
-def restore_disaster_backup(backup_file: str, passphrase: str, master_key: str, dest_root: str = "/opt/xts_multi"):
+def restore_disaster_backup(backup_file: str, passphrase: str, master_key: str, dest_root: str = None):
+    dest_root = dest_root or os.environ.get("XTS_RESTORE_DEST_ROOT") or os.environ.get("PORTAL_DATA_DIR") or "/opt/xts_multi"
     if not os.path.exists(backup_file):
         raise FileNotFoundError(f"Backup file not found: {backup_file}")
 

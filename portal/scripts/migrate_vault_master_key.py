@@ -82,36 +82,32 @@ def migrate_vault(old_key_str: str = None, new_key_str: str = None, update_env_f
 
     # 4. Write new key to .env file and set 0400 permissions
     if update_env_files:
-        env_paths = [
-            os.path.join(database.get_portal_data_dir(), ".env"),
-            os.path.join(PORTAL_DIR, ".env"),
-            "/opt/xts_multi/portal/.env"
-        ]
-        for env_path in set(env_paths):
-            if os.path.exists(os.path.dirname(env_path)):
-                lines = []
-                found = False
-                if os.path.exists(env_path):
-                    try:
-                        with open(env_path, "r") as f:
-                            for line in f:
-                                if line.startswith("PORTAL_MASTER_KEY="):
-                                    lines.append(f"PORTAL_MASTER_KEY={new_key_str}\n")
-                                    found = True
-                                else:
-                                    lines.append(line)
-                    except Exception:
-                        pass
-                if not found:
-                    lines.append(f"PORTAL_MASTER_KEY={new_key_str}\n")
-
+        portal_dir = database.get_portal_data_dir()
+        env_path = os.path.join(portal_dir, ".env")
+        if os.path.exists(portal_dir):
+            lines = []
+            found = False
+            if os.path.exists(env_path):
                 try:
-                    with open(env_path, "w") as f:
-                        f.writelines(lines)
-                    os.chmod(env_path, 0o400)
-                    logger.info(f"Wrote PORTAL_MASTER_KEY to {env_path} (chmod 0400)")
-                except Exception as ex:
-                    logger.warning(f"Could not write to {env_path}: {ex}")
+                    with open(env_path, "r") as f:
+                        for line in f:
+                            if line.startswith("PORTAL_MASTER_KEY="):
+                                lines.append(f"PORTAL_MASTER_KEY={new_key_str}\n")
+                                found = True
+                            else:
+                                lines.append(line)
+                except Exception:
+                    pass
+            if not found:
+                lines.append(f"PORTAL_MASTER_KEY={new_key_str}\n")
+
+            try:
+                with open(env_path, "w") as f:
+                    f.writelines(lines)
+                os.chmod(env_path, 0o400)
+                logger.info(f"Wrote PORTAL_MASTER_KEY to {env_path} (chmod 0400)")
+            except Exception as ex:
+                logger.warning(f"Could not write to {env_path}: {ex}")
 
     # 5. Re-write client config files using the new master key
     for r in tenant_rows:
