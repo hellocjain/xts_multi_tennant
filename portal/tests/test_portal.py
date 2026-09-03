@@ -82,7 +82,7 @@ def test_migrate_vault_script(monkeypatch):
             conn.execute("INSERT OR REPLACE INTO tenants (id, name, status, created_at, updated_at) VALUES ('mig_test', 'Mig Test', 'ACTIVE', 0, 0)")
             conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('mig_test', ?, 0)", (enc,))
     
-    res = migrator.migrate_vault(old_key, new_key)
+    res = migrator.migrate_vault(old_key, new_key, update_env_files=False)
     assert res["status"] == "success"
     assert res["re_encrypted_tenants"] >= 1
     
