@@ -272,4 +272,71 @@ def test_safe_getattr_dynamic_non_literal_constructions():
     with pytest.raises(PermissionError, match="Security Violation"):
         safe_getattr(object, attr3)
 
+@pytest.mark.asyncio
+async def test_end_to_end_dynamic_dunder_string_strategy_execution_caught_at_runtime():
+    """
+    End-to-End Integration Test for dynamic non-literal dunder construction.
+    1. Tenant uploads a plain source-code string containing runtime dynamic concatenation.
+    2. The strategy passes parse-time AST check (since attr is non-literal).
+    3. During execution in the isolated worker process, safe_getattr intercepts the call-time dunder resolution.
+    4. Proves the violation is caught via IPC pipe without crashing the host process.
+    """
+    from custom_strategy_engine import run_strategy_in_isolated_process, SingleCustomStrategyRunner
+
+    tenant_uploaded_code = """
+class DynamicEscapeStrategy(BaseStrategy):
+    def on_candle(self, candle, history, position):
+        # Dynamically built string at runtime
+        attr = "_" + "_class__"
+        cls = getattr((), attr)
+        return "BUY"
+"""
+    eval_candle = {"time": 1788426000, "open": 100, "high": 105, "low": 95, "close": 100, "volume": 10}
+    history = [eval_candle]
+
+    # Run through the real isolated subprocess pipeline
+    sig, err, pid = await run_strategy_in_isolated_process(
+        tenant_uploaded_code, "dyn_esc_01", eval_candle, history, "FLIP", timeout=2.0
+    )
+
+    assert sig is None
+    assert err is not None
+    assert "Security Violation: Access to dunder attribute '__class__' is prohibited" in err
+
+    # Also test via SingleCustomStrategyRunner.evaluate_cycle
+    runner = SingleCustomStrategyRunner({
+        "id": "dyn_runner_01",
+        "name": "Dynamic Escape Runner",
+        "symbol": "GOLDPETAL1!",
+        "timeframe": "15m",
+        "quantity": 1,
+        "is_enabled": True,
+        "code_content": tenant_uploaded_code
+    })
+
+    class MockXtsApi:
+        @staticmethod
+        def resolve_contract(sym):
+            return {"inst_id": 12345, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000}
+        @staticmethod
+        def get_positions_telemetry():
+            return {"positions": []}
+        @staticmethod
+        def get_broker_orders():
+            return []
+        @staticmethod
+        def fetch_ohlc_candles(seg, iid, tf, count):
+            return [
+                {"time": 1788425100, "open": 100, "high": 105, "low": 95, "close": 100, "volume": 10},
+                {"time": 1788426000, "open": 100, "high": 105, "low": 95, "close": 100, "volume": 10}
+            ]
+
+    class MockMain:
+        pass
+
+    await runner.evaluate_cycle(MockXtsApi, MockMain)
+    assert runner.last_error is not None
+    assert "Security Violation: Access to dunder attribute '__class__' is prohibited" in runner.last_error
+
+
 
