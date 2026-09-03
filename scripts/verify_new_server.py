@@ -150,7 +150,7 @@ assert xts_api.COMMON_ALIASES.get("LEADMINI") is None, "LEADMINI alias not remov
 
 print("ENGINE_OK")
 '''
-    code, out = run_cmd(f"docker exec xts_portal python3 -c '{test_script}' 2>&1 || python3 -c '{test_script}' 2>&1")
+    code, out = run_cmd(f"docker run --rm -v /opt/xts_multi/client:/app xts_client:latest python3 -c '{test_script}' 2>&1 || docker exec xts_bot python3 -c '{test_script}' 2>&1 || python3 -c '{test_script}' 2>&1")
     engine_ok = "ENGINE_OK" in out
     log_check("Structural :59 Candle-Close Rule", engine_ok)
     log_check("Timeframe Grid IST 09:00:00 Boundary", engine_ok)
@@ -164,9 +164,10 @@ def audit_web_ingress():
     login_ok = out.strip() in ("200", "302", "303")
     log_check("Portal Login Endpoint HTTP 200 (Port 80)", login_ok, f"(HTTP {out})")
 
-    code, out = run_cmd("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8500/admin/login")
+    code, out = run_cmd("docker exec xts_portal curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/admin/login || curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/admin/login")
     direct_ok = out.strip() in ("200", "302", "303")
-    log_check("Direct Portal Container Port 8500", direct_ok, f"(HTTP {out})")
+    log_check("Direct Portal Container Port 8000", direct_ok, f"(HTTP {out})")
+
 
 def audit_systemd_timers():
     header("6. SYSTEMD SERVICES & AUTOMATED TIMERS")
