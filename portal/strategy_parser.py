@@ -80,14 +80,42 @@ def validate_strategy_code(code_str: str) -> Dict[str, Any]:
 
         # 2. Inspect Function Calls for Security
         elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in BLOCKED_CALLS:
+            if isinstance(node.func, ast.Name):
+                if node.func.id in BLOCKED_CALLS:
+                    return {
+                        "valid": False,
+                        "error": f"Security Violation: Call to built-in function '{node.func.id}()' is prohibited.",
+                        "warnings": warnings
+                    }
+                if node.func.id in ("getattr", "hasattr", "setattr", "delattr"):
+                    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+                        if node.args[1].value.startswith("__"):
+                            return {
+                                "valid": False,
+                                "error": f"Security Violation: Access to dunder attribute '{node.args[1].value}' via {node.func.id}() is prohibited in strategy sandbox.",
+                                "warnings": warnings
+                            }
+
+        # 3. Inspect Attribute Access for Dunders (__class__, __subclasses__, __globals__, etc.)
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("__"):
                 return {
                     "valid": False,
-                    "error": f"Security Violation: Call to built-in function '{node.func.id}()' is prohibited.",
+                    "error": f"Security Violation: Access to private/dunder attribute '{node.attr}' is prohibited in strategy sandbox.",
                     "warnings": warnings
                 }
 
-        # 3. Inspect Strategy Class Structure
+        # 4. Inspect Subscripts for Dunder string keys (obj["__dict__"], obj["__globals__"])
+        elif isinstance(node, ast.Subscript):
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if node.slice.value.startswith("__"):
+                    return {
+                        "valid": False,
+                        "error": f"Security Violation: Access to dunder key '{node.slice.value}' via subscript is prohibited in strategy sandbox.",
+                        "warnings": warnings
+                    }
+
+        # 5. Inspect Strategy Class Structure
         elif isinstance(node, ast.ClassDef):
             # Find the primary strategy class
             if not class_found or "Strategy" in node.name:

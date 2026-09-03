@@ -147,3 +147,65 @@ class CrashingStrategy(BaseStrategy):
     await runner.evaluate_cycle(MockXtsApi, MockMain)
     assert runner.last_error is not None
     assert "division by zero" in runner.last_error.lower()
+
+@pytest.mark.asyncio
+async def test_custom_strategy_infinite_loop_timeout():
+    # User strategy with an intentional infinite loop in on_candle
+    loop_code = """
+class RunawayStrategy(BaseStrategy):
+    def on_candle(self, candle, history, position):
+        # Runaway loop exceeding 2.0s timeout
+        time.sleep(3.0)
+        return "BUY"
+"""
+    runner = SingleCustomStrategyRunner({
+        "id": "loop_runner",
+        "name": "Runaway Strategy",
+        "symbol": "GOLDPETAL1!",
+        "timeframe": "15m",
+        "quantity": 1,
+        "is_enabled": True,
+        "code_content": loop_code
+    })
+
+    class MockXtsApi:
+        @staticmethod
+        def resolve_contract(sym):
+            return {"inst_id": 12345, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000}
+        @staticmethod
+        def get_positions_telemetry():
+            return {"positions": []}
+        @staticmethod
+        def get_broker_orders():
+            return []
+        @staticmethod
+        def fetch_ohlc_candles(seg, iid, tf, count):
+            now = int(time.time())
+            return [
+                {"time": now - 1800, "open": 100, "high": 105, "low": 95, "close": 100, "volume": 10},
+                {"time": now - 900, "open": 100, "high": 105, "low": 95, "close": 100, "volume": 10},
+                {"time": now, "open": 100, "high": 105, "low": 95, "close": 100, "volume": 10}
+            ]
+
+    class MockMain:
+        pass
+
+    # Should catch TimeoutError and not hang indefinitely
+    t0 = time.time()
+    await runner.evaluate_cycle(MockXtsApi, MockMain)
+    elapsed = time.time() - t0
+    assert elapsed < 3.0
+    assert runner.last_error is not None
+    assert "exceeded 2.0s wall-clock limit" in runner.last_error
+
+def test_safe_getattr_blocks_dunder():
+    from custom_strategy_engine import safe_getattr, safe_hasattr, safe_setattr
+    class Dummy:
+        pass
+    d = Dummy()
+    assert safe_hasattr(d, "__class__") is False
+    with pytest.raises(PermissionError):
+        safe_getattr(d, "__class__")
+    with pytest.raises(PermissionError):
+        safe_setattr(d, "__class__", int)
+

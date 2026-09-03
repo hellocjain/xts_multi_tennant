@@ -8,6 +8,21 @@ from typing import Dict, Any, List, Optional, Callable
 
 logger = logging.getLogger(__name__)
 
+def safe_getattr(obj, name, *default):
+    if str(name).startswith("__"):
+        raise PermissionError(f"Security Violation: Access to dunder attribute '{name}' is prohibited.")
+    return getattr(obj, name, *default)
+
+def safe_hasattr(obj, name):
+    if str(name).startswith("__"):
+        return False
+    return hasattr(obj, name)
+
+def safe_setattr(obj, name, value):
+    if str(name).startswith("__"):
+        raise PermissionError(f"Security Violation: Setting dunder attribute '{name}' is prohibited.")
+    return setattr(obj, name, value)
+
 # Standard safe namespace for executing strategy scripts
 SAFE_BUILTINS = {
     "__build_class__": __build_class__,
@@ -15,9 +30,9 @@ SAFE_BUILTINS = {
     "staticmethod": staticmethod,
     "classmethod": classmethod,
     "property": property,
-    "getattr": getattr,
-    "hasattr": hasattr,
-    "setattr": setattr,
+    "getattr": safe_getattr,
+    "hasattr": safe_hasattr,
+    "setattr": safe_setattr,
     "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
     "enumerate": enumerate, "filter": filter, "float": float, "format": format,
     "frozenset": frozenset, "int": int, "isinstance": isinstance, "issubclass": issubclass,
@@ -143,6 +158,7 @@ class SingleCustomStrategyRunner:
             import datetime as dt_mod
             import json as json_mod
             import math as math_mod
+            import time as time_mod
 
             exec_globals = {
                 "__builtins__": SAFE_BUILTINS,
@@ -150,6 +166,7 @@ class SingleCustomStrategyRunner:
                 "math": math_mod,
                 "datetime": dt_mod,
                 "json": json_mod,
+                "time": time_mod,
                 "List": List, "Dict": Dict, "Any": Any, "Optional": Optional
             }
 
@@ -254,7 +271,7 @@ class SingleCustomStrategyRunner:
         return True
 
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:
-        if not self.is_enabled or self.status in ("STOPPED", "ERROR"):
+        if not self.is_enabled or not self.strategy_instance or self.status in ("STOPPED", "ERROR"):
             return
 
         # 1. Resolve Instrument
@@ -324,9 +341,18 @@ class SingleCustomStrategyRunner:
         if candle_ts == self.last_processed_candle_time:
             return # Already processed this closed candle
 
-        # 6. Execute User Strategy on_candle
+        # 6. Execute User Strategy on_candle with 2.0s Hard Wall-Clock Timeout
         try:
-            signal = str(self.strategy_instance.on_candle(eval_candle, history, self.strategy_position)).strip().upper()
+            signal_raw = await asyncio.wait_for(
+                asyncio.to_thread(self.strategy_instance.on_candle, eval_candle, history, self.strategy_position),
+                timeout=2.0
+            )
+            signal = str(signal_raw).strip().upper()
+        except asyncio.TimeoutError:
+            self.last_error = "Execution Timeout: on_candle() exceeded 2.0s wall-clock limit"
+            logger.error(f"❌ Custom Strategy [{self.name}] execution timed out after 2.0s.")
+            self.last_processed_candle_time = candle_ts
+            return
         except Exception as user_err:
             self.last_error = f"Runtime Exception in on_candle(): {user_err}"
             logger.error(f"❌ Custom Strategy [{self.name}] runtime exception: {user_err}", exc_info=True)
@@ -485,6 +511,7 @@ class MultiCustomStrategyEngine:
             import datetime as dt_mod
             import json as json_mod
             import math as math_mod
+            import time as time_mod
 
             exec_globals = {
                 "__builtins__": SAFE_BUILTINS,
@@ -492,6 +519,7 @@ class MultiCustomStrategyEngine:
                 "math": math_mod,
                 "datetime": dt_mod,
                 "json": json_mod,
+                "time": time_mod,
                 "List": List, "Dict": Dict, "Any": Any, "Optional": Optional
             }
 

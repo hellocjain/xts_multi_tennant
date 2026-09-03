@@ -67,6 +67,39 @@ class EvalStrategy(BaseStrategy):
     assert res["valid"] is False
     assert "Security Violation: Call to built-in function 'eval()'" in res["error"]
 
+def test_ast_validator_dunder_reflection_escape():
+    # Attempt Python sandbox escape via tuple reflection
+    escape_code = """
+class EscapeStrategy(BaseStrategy):
+    def on_candle(self, candle, history, position):
+        subclasses = ().__class__.__base__.__subclasses__()
+        return "HOLD"
+"""
+    res = strategy_parser.validate_strategy_code(escape_code)
+    assert res["valid"] is False
+    assert "Security Violation: Access to private/dunder attribute" in res["error"]
+
+def test_ast_validator_dunder_subscript_and_getattr():
+    subscript_code = """
+class SubscriptStrategy(BaseStrategy):
+    def on_candle(self, candle, history, position):
+        d = globals()
+        return d["__builtins__"]
+"""
+    res = strategy_parser.validate_strategy_code(subscript_code)
+    assert res["valid"] is False
+    assert "Security Violation" in res["error"]
+
+    getattr_code = """
+class GetattrStrategy(BaseStrategy):
+    def on_candle(self, candle, history, position):
+        c = getattr(candle, "__class__")
+        return "HOLD"
+"""
+    res = strategy_parser.validate_strategy_code(getattr_code)
+    assert res["valid"] is False
+    assert "Security Violation: Access to dunder attribute '__class__'" in res["error"]
+
 def test_boilerplate_generator_is_valid():
     code = strategy_parser.generate_boilerplate_code()
     assert code is not None
