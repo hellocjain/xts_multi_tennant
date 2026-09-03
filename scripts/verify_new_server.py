@@ -164,9 +164,10 @@ def audit_web_ingress():
     login_ok = out.strip() in ("200", "302", "303")
     log_check("Portal Login Endpoint HTTP 200 (Port 80)", login_ok, f"(HTTP {out})")
 
-    code, out = run_cmd("docker exec xts_portal curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/admin/login || curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/admin/login")
+    code, out = run_cmd("docker exec xts_portal curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8500/admin/login")
     direct_ok = out.strip() in ("200", "302", "303")
-    log_check("Direct Portal Container Port 8000", direct_ok, f"(HTTP {out})")
+    log_check("Direct Portal Container Port 8500", direct_ok, f"(HTTP {out})")
+
 
 
 def audit_systemd_timers():
