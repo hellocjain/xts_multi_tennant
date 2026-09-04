@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager, closing
 from collections import OrderedDict
@@ -455,6 +455,22 @@ app = FastAPI(title="XTS Client Execution Gateway", lifespan=lifespan)
 
 import openalgo_router
 app.include_router(openalgo_router.router)
+
+from ws_manager import default_ws_manager
+
+@app.websocket("/ws")
+async def websocket_proxy_endpoint(websocket: WebSocket):
+    await default_ws_manager.connect(websocket)
+    expected_api_key = str(getattr(config, "API_KEY", "") or getattr(config, "WEBHOOK_SECRET", "")).strip()
+    try:
+        while True:
+            raw_text = await websocket.receive_text()
+            await default_ws_manager.handle_message(websocket, raw_text, expected_api_key=expected_api_key)
+    except WebSocketDisconnect:
+        default_ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.debug(f"Client WebSocket disconnected: {e}")
+        default_ws_manager.disconnect(websocket)
 
 MAX_WEBHOOK_BODY_BYTES = getattr(config, "MAX_WEBHOOK_BODY_BYTES", 10_000)
 

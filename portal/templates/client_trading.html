@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block title %}Trading Terminal - {{ client.name }}{% endblock %}
+
+{% block content %}
+<div class="flex flex-col h-[calc(100vh-5rem)] -m-4 md:-m-6 bg-[#0B0E14] text-slate-200 overflow-hidden font-sans select-none">
+
+    <!-- 1. Top Navigation Bar (Matching Screenshot) -->
+    <header class="h-12 border-b border-bordercolor bg-[#121722] px-4 flex items-center justify-between z-20 flex-shrink-0">
+        <div class="flex items-center gap-4">
+            <!-- Brand / Broker Info -->
+            <div class="flex items-center gap-2.5">
+                <div class="w-7 h-7 rounded-lg bg-brand-500/20 border border-brand-500/40 flex items-center justify-center text-brand-400 font-bold font-mono text-xs">
+                    AC
+                </div>
+                <div class="hidden sm:block">
+                    <div class="text-xs font-bold text-slate-100 flex items-center gap-2">
+                        AC Agarwal
+                        <span class="text-[9px] px-1.5 py-0.2 rounded font-mono {% if client.paper_mode %}bg-blue-500/10 text-blue-400 border border-blue-500/30{% else %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/30{% endif %}">
+                            {% if client.paper_mode %}PAPER{% else %}LIVE BROKER{% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Navigation Links -->
+            <nav class="flex items-center gap-1">
+                <a href="/client/dashboard" class="px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition">
+                    Dashboard
+                </a>
+                <a href="/client/trading" class="px-3 py-1.5 rounded-lg text-xs font-mono font-bold bg-brand-500/20 text-brand-400 border border-brand-500/40 transition">
+                    Trading
+                </a>
+                <a href="/client/dashboard" class="px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition hidden md:inline-block">
+                    Orderbook
+                </a>
+                <a href="/client/dashboard" class="px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition hidden md:inline-block">
+                    Positions
+                </a>
+            </nav>
+        </div>
+
+        <!-- Right Quick Controls -->
+        <div class="flex items-center gap-2.5">
+            <!-- WebSocket Liveness Indicator -->
+            <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 border border-bordercolor rounded-lg text-[11px] font-mono">
+                <span id="ws-status-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+                <span id="ws-status-text" class="text-slate-400">CONNECTING</span>
+            </div>
+
+            <!-- Emergency Panic Square Off -->
+            <form action="/client/panic-square-off" method="POST" onsubmit="return confirm('🚨 EMERGENCY: Square off ALL open positions immediately?');">
+                <button type="submit" class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-lg text-xs font-bold transition flex items-center gap-1">
+                    <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+                    <span class="hidden sm:inline">Panic Square Off</span>
+                </button>
+            </form>
+
+            <a href="/client/logout" class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition" title="Logout">
+                <i data-lucide="log-out" class="w-4 h-4"></i>
+            </a>
+        </div>
+    </header>
+
+    <!-- 2. Chart Top Toolbar (Matching Screenshot) -->
+    <div class="h-11 border-b border-bordercolor bg-[#151A24] px-3 flex items-center justify-between text-xs font-mono z-10 flex-shrink-0">
+        <div class="flex items-center gap-2 overflow-x-auto py-1">
+            <!-- Symbol Search Pill with Dropdown -->
+            <div class="relative">
+                <div id="btn-symbol-search" class="flex items-center gap-2 bg-slate-900/90 hover:bg-slate-800 border border-bordercolor rounded-lg px-2.5 py-1 cursor-pointer transition">
+                    <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400"></i>
+                    <span id="current-symbol-display" class="font-bold text-slate-100">SILVER10030SEP26FUT</span>
+                    <span id="current-exchange-display" class="text-[10px] px-1 py-0.2 bg-brand-500/20 text-brand-400 border border-brand-500/30 rounded">MCX</span>
+                </div>
+
+                <!-- Autocomplete Dropdown Modal -->
+                <div id="search-dropdown-modal" class="hidden absolute left-0 top-full mt-1 w-80 bg-slate-950 border border-bordercolor rounded-xl shadow-2xl z-50 overflow-hidden">
+                    <div class="p-2 border-b border-bordercolor bg-slate-900/50">
+                        <input id="symbol-search-input" type="text" placeholder="Type contract (e.g. INFY, NIFTY, SILVER)..." class="w-full bg-slate-900 border border-bordercolor rounded-lg px-3 py-1.5 text-xs text-slate-100 font-mono focus:border-brand-500 focus:outline-none uppercase">
+                    </div>
+                    <div id="search-results-list" class="max-h-64 overflow-y-auto divide-y divide-slate-800/60">
+                        <div class="p-4 text-center text-xs text-slate-500">Type at least 2 characters...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Timeframe Selector -->
+            <div class="flex items-center bg-slate-900/80 border border-bordercolor rounded-lg p-0.5">
+                <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="1m">1m</button>
+                <button class="timeframe-btn px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 font-bold transition" data-interval="5m">5m</button>
+                <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="15m">15m</button>
+                <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="30m">30m</button>
+                <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="1h">1h</button>
+                <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="D">1D</button>
+            </div>
+
+            <!-- Product Type Pill -->
+            <button id="btn-product-toggle" class="px-2.5 py-1 bg-brand-500/20 text-brand-400 border border-brand-500/40 rounded-lg text-xs font-bold hover:bg-brand-500/30 transition" title="Toggle Product (NRML / MIS / CNC)">
+                NRML
+            </button>
+
+            <!-- Lots Input Stepper -->
+            <div class="flex items-center gap-1.5 bg-slate-900/80 border border-bordercolor rounded-lg px-2 py-1">
+                <span class="text-slate-400 text-[11px]">Lots</span>
+                <input id="lots-input" type="number" min="1" max="500" value="1" class="w-10 bg-transparent text-center font-bold text-slate-100 focus:outline-none">
+            </div>
+
+            <!-- Indicators Modal Button -->
+            <button id="btn-indicators-modal" class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/80 hover:bg-slate-800 border border-bordercolor rounded-lg text-slate-300 transition">
+                <i data-lucide="activity" class="w-3.5 h-3.5 text-brand-400"></i>
+                <span>Indicators</span>
+                <span id="indicators-count-badge" class="px-1.5 py-0.2 rounded-full text-[10px] bg-brand-500/20 text-brand-400 font-bold">1</span>
+            </button>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- Fullscreen -->
+            <button id="btn-fullscreen" class="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition" title="Toggle Fullscreen">
+                <i data-lucide="maximize-2" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- 3. Main Chart Canvas Area + Left Drawing Rail -->
+    <div class="flex flex-1 relative overflow-hidden">
+
+        <!-- Left Drawing Rail (Matching Screenshot) -->
+        <aside class="w-11 border-r border-bordercolor bg-[#121722] flex flex-col items-center py-2 gap-1.5 z-10 flex-shrink-0">
+            <button class="draw-tool-btn p-2 rounded-lg text-brand-400 bg-brand-500/20 hover:bg-brand-500/30 transition" data-tool="crosshair" title="Crosshair">
+                <i data-lucide="crosshair" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="trend-line" title="Trend Line">
+                <i data-lucide="trending-up" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="horizontal-line" title="Horizontal Line">
+                <i data-lucide="minus" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="fib-retracement" title="Fibonacci Retracement">
+                <i data-lucide="git-commit" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="rectangle" title="Rectangle Box">
+                <i data-lucide="square" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="text" title="Text Note">
+                <i data-lucide="type" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="measure" title="Measure Ruler">
+                <i data-lucide="ruler" class="w-4 h-4"></i>
+            </button>
+            
+            <div class="w-6 h-px bg-slate-800 my-1"></div>
+
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="undo" title="Undo Drawing">
+                <i data-lucide="undo-2" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition" data-tool="redo" title="Redo Drawing">
+                <i data-lucide="redo-2" class="w-4 h-4"></i>
+            </button>
+            <button class="draw-tool-btn p-2 rounded-lg text-rose-400 hover:text-white hover:bg-rose-500/20 transition" data-tool="clear" title="Clear All Drawings">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+        </aside>
+
+        <!-- Canvas Chart Viewport -->
+        <main class="flex-1 relative bg-[#0B0E14] overflow-hidden">
+            <!-- Loading Spinner -->
+            <div id="chart-loading-spinner" class="absolute inset-0 bg-[#0B0E14]/80 backdrop-blur-sm z-30 flex items-center justify-center flex-col gap-3">
+                <div class="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-xs font-mono text-slate-400">Loading Candle History...</span>
+            </div>
+
+            <!-- Floating OHLCV Legend in Top-Left (Matching Screenshot) -->
+            <div id="chart-legend" class="absolute top-2.5 left-4 z-20 pointer-events-none">
+                <div class="text-xs font-mono text-slate-300">Initializing chart feed...</div>
+            </div>
+
+            <!-- On-Chart Interactive Trading Pills ([SELL] [1L] [BUY]) -->
+            <div id="chart-quick-trade-bar" class="absolute top-12 left-4 z-20 flex items-center gap-1 shadow-2xl bg-slate-950/80 p-1 rounded-xl border border-bordercolor/60 backdrop-blur-md">
+                <!-- SELL Pill -->
+                <button id="pill-sell-btn" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-rose-600/30">
+                    <span id="pill-sell-price" class="text-[11px] leading-tight">2359.00</span>
+                    <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">SELL</span>
+                </button>
+
+                <!-- Lot Badge -->
+                <div id="pill-lot-badge" class="px-2 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono font-bold border border-slate-700">
+                    1L
+                </div>
+
+                <!-- BUY Pill -->
+                <button id="pill-buy-btn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-emerald-600/30">
+                    <span id="pill-buy-price" class="text-[11px] leading-tight">2359.00</span>
+                    <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">BUY</span>
+                </button>
+            </div>
+
+            <!-- Canvas Mounting Element -->
+            <div id="chart-container" class="w-full h-full"></div>
+        </main>
+    </div>
+
+    <!-- 4. Technical Indicators Modal -->
+    <div id="indicators-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div class="p-4 border-b border-bordercolor flex items-center justify-between">
+                <div class="flex items-center gap-2 font-mono text-sm font-bold text-slate-100">
+                    <i data-lucide="activity" class="w-4 h-4 text-brand-400"></i>
+                    <span>Technical Indicators</span>
+                </div>
+                <button id="btn-close-indicators-modal" class="text-slate-400 hover:text-slate-100 p-1 rounded-lg">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <div class="p-4 space-y-3 max-h-80 overflow-y-auto font-mono text-xs">
+                <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-bordercolor">
+                    <div>
+                        <div class="font-bold text-slate-100">Parabolic SAR</div>
+                        <div class="text-[10px] text-slate-400">Step 0.02, Max 0.2</div>
+                    </div>
+                    <button class="indicator-toggle-btn px-3 py-1.5 rounded-lg bg-brand-500 text-obsidian font-bold transition" data-indicator="Parabolic SAR">
+                        Active
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-bordercolor">
+                    <div>
+                        <div class="font-bold text-slate-100">SuperTrend</div>
+                        <div class="text-[10px] text-slate-400">ATR 10, Multiplier 3</div>
+                    </div>
+                    <button class="indicator-toggle-btn px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-bold transition hover:bg-slate-700" data-indicator="SuperTrend">
+                        Add
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-bordercolor">
+                    <div>
+                        <div class="font-bold text-slate-100">EMA 20</div>
+                        <div class="text-[10px] text-slate-400">Exponential Moving Average (20)</div>
+                    </div>
+                    <button class="indicator-toggle-btn px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-bold transition hover:bg-slate-700" data-indicator="EMA 20">
+                        Add
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. Toast Feedback Banner -->
+    <div id="terminal-toast" class="fixed bottom-6 right-6 px-4 py-2.5 rounded-xl shadow-2xl text-xs font-mono z-50 transition transform duration-300 opacity-0 translate-y-4 pointer-events-none flex items-center gap-2">
+    </div>
+
+</div>
+
+<!-- Bundle Scripts -->
+<script src="/static/js/openalgo-charts.bundle.js"></script>
+<script src="/static/js/trading_terminal.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    window.terminalInstance = new OpenAlgoTradingTerminal({
+        apiKey: "{{ api_key }}",
+        defaultSymbol: "SILVER10030SEP26FUT",
+        defaultExchange: "MCX",
+        defaultInterval: "5m"
+    });
+});
+</script>
+{% endblock %}

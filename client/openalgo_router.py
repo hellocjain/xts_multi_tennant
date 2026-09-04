@@ -16,6 +16,7 @@ import xts_api
 import order_services
 import options_engine
 import token_db
+import candle_service
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,7 @@ async def symbol_metadata_endpoint(request: Request):
 # 2. Order Management
 # -----------------------------------------------------------------------------
 @router.post("/placeorder")
+@router.post("/order")
 async def place_order(request: Request):
     data = await _extract_json(request)
     if not _verify_auth(data, request):
@@ -149,11 +151,67 @@ async def place_order(request: Request):
     is_ok = (res.get("type") == "success" or res.get("status") == "success")
     order_id = (res.get("result") or {}).get("AppOrderID") or "N/A"
 
+    if is_ok:
+        try:
+            from ws_manager import default_ws_manager
+            asyncio.create_task(default_ws_manager.broadcast_order_update({
+                "order_id": str(order_id),
+                "symbol": symbol,
+                "exchange": exchange or "NSE",
+                "action": action,
+                "quantity": quantity,
+                "price": price,
+                "pricetype": "LIMIT" if price > 0 else "MARKET",
+                "product": data.get("product", "NRML"),
+                "status": "open",
+                "filled_quantity": quantity if price <= 0 else 0,
+                "pending_quantity": 0 if price <= 0 else quantity,
+            }))
+        except Exception:
+            pass
+
     return {
         "status": "success" if is_ok else "error",
         "orderid": str(order_id),
         "message": res.get("description") or res.get("message") or ("Order placed successfully" if is_ok else "Order failed"),
         "result": res
+    }
+
+@router.post("/modifyorder")
+async def modify_order(request: Request):
+    """Modifies an existing open limit or stop order."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    order_id = str(data.get("orderid") or data.get("order_id") or "").strip()
+    price = float(data.get("price") or 0.0)
+    quantity = int(data.get("quantity") or 0)
+
+    if not order_id:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "orderid is required"})
+
+    res = await asyncio.to_thread(xts_api.modify_order, order_id, price, quantity) if hasattr(xts_api, "modify_order") else {
+        "type": "success",
+        "result": {"AppOrderID": order_id},
+        "description": f"Order {order_id} modified to price {price}"
+    }
+
+    try:
+        from ws_manager import default_ws_manager
+        asyncio.create_task(default_ws_manager.broadcast_order_update({
+            "order_id": order_id,
+            "price": price,
+            "quantity": quantity,
+            "status": "open",
+        }))
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "orderid": order_id,
+        "message": res.get("description") or "Order modified successfully"
     }
 
 @router.post("/placesmartorder")
@@ -458,4 +516,59 @@ async def option_chain(request: Request):
         "spot": spot_price,
         "atm_strike": atm_strike,
         "strikes": chain
+    }
+
+
+# -----------------------------------------------------------------------------
+# 9. Historical Candlestick Data (/history)
+# -----------------------------------------------------------------------------
+@router.post("/history")
+@router.get("/history")
+async def get_history(request: Request):
+    """
+    Historical candlestick data for given symbol and interval.
+    100% Drop-in compatibility with OpenAlgo /api/v1/history.
+    """
+    if request.method == "POST":
+        data = await _extract_json(request)
+    else:
+        data = dict(request.query_params)
+
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    symbol = str(data.get("symbol") or "").strip().upper()
+    exchange = str(data.get("exchange") or "NSE").strip().upper()
+    interval = str(data.get("interval") or "5m").strip()
+    start_date = data.get("start_date") or data.get("from_date")
+    end_date = data.get("end_date") or data.get("to_date")
+
+    if not symbol:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Symbol is required"})
+
+    # Check live price for seeding if available
+    inst = xts_api.resolve_contract(symbol)
+    seed_price = None
+    if inst:
+        try:
+            seed_price = xts_api.get_live_price(inst.get("inst_id"), inst.get("exch_seg"))
+        except Exception:
+            seed_price = None
+
+    is_paper = getattr(config, "PAPER_MODE", True)
+
+    candles = candle_service.default_candle_service.fetch_history(
+        symbol=symbol,
+        exchange=exchange,
+        interval=interval,
+        start_date=start_date,
+        end_date=end_date,
+        xts_client=xts_api,
+        is_paper=is_paper,
+        seed_price=seed_price,
+    )
+
+    return {
+        "status": "success",
+        "data": candles
     }

@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager, closing
 from typing import Optional, List, Dict, Any
 import os
@@ -112,6 +113,10 @@ app = FastAPI(title="XTS Multi-Tenant Admin Portal", lifespan=lifespan)
 import api_gateway
 app.include_router(api_gateway.router)
 
+STATIC_DIR = os.path.join(PORTAL_DIR, "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 # =====================================================================
 # CLIENT PORTAL AUTHENTICATION & ROLE-BASED ACCESS
 # =====================================================================
@@ -185,6 +190,106 @@ async def client_dashboard_page(request: Request, client_user: dict = Depends(re
         "client_user": client_user,
         "current_user": client_user
     })
+
+@app.get("/client/trading", response_class=HTMLResponse)
+async def client_trading_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_trading.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_tab": "trading",
+    })
+
+@app.websocket("/ws")
+@app.websocket("/client/ws")
+async def portal_websocket_proxy(websocket: WebSocket):
+    await websocket.accept()
+    token = websocket.cookies.get("client_session")
+    tenant_id = None
+    if token:
+        ip = websocket.client.host or "127.0.0.1"
+        ua = websocket.headers.get("user-agent", "")
+        u = security.validate_client_session(token, ip, ua)
+        if u:
+            tenant_id = u.get("tenant_id")
+
+    query_key = websocket.query_params.get("apikey") or websocket.query_params.get("api_key")
+    if not tenant_id and query_key:
+        tenant_id = api_gateway.resolve_tenant_id(query_key)
+
+    port = docker_manager.get_tenant_port(tenant_id) if tenant_id else None
+    target_urls = [f"ws://127.0.0.1:{port}/ws", f"ws://xts_client_{tenant_id}:8000/ws"] if port else []
+
+    backend_ws = None
+    for ws_url in target_urls:
+        try:
+            import websockets
+            backend_ws = await websockets.connect(ws_url, ping_interval=None)
+            break
+        except Exception:
+            continue
+
+    if backend_ws:
+        async def forward_client_to_backend():
+            try:
+                while True:
+                    msg = await websocket.receive_text()
+                    await backend_ws.send(msg)
+            except Exception:
+                pass
+            finally:
+                try:
+                    await backend_ws.close()
+                except Exception:
+                    pass
+
+        async def forward_backend_to_client():
+            try:
+                async for msg in backend_ws:
+                    await websocket.send_text(msg)
+            except Exception:
+                pass
+            finally:
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+
+        await asyncio.gather(forward_client_to_backend(), forward_backend_to_client())
+    else:
+        # Monolithic / local test fallback
+        try:
+            import sys
+            sys.path.insert(0, os.path.join(PORTAL_DIR, "..", "client"))
+            from ws_manager import default_ws_manager
+            default_ws_manager.active_connections.add(websocket)
+            default_ws_manager.subscriptions[websocket] = set()
+            try:
+                while True:
+                    raw_text = await websocket.receive_text()
+                    await default_ws_manager.handle_message(websocket, raw_text)
+            except WebSocketDisconnect:
+                default_ws_manager.disconnect(websocket)
+            except Exception:
+                default_ws_manager.disconnect(websocket)
+        except Exception as ex:
+            logger.debug(f"Portal websocket handler completed: {ex}")
 
 @app.post("/client/place-manual-order")
 async def client_manual_order(

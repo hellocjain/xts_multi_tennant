@@ -99,9 +99,13 @@
 
     <!-- 3. Navigation Tabs -->
     <div class="flex items-center gap-2 border-b border-bordercolor pb-3 overflow-x-auto">
+        <a href="/client/trading" class="px-4 py-2 rounded-xl text-xs font-mono font-bold transition flex items-center gap-2 bg-brand-500/20 text-brand-400 border border-brand-500/40 hover:bg-brand-500/30">
+            <i data-lucide="candlestick-chart" class="w-4 h-4"></i>
+            <span>Interactive Chart Terminal</span>
+        </a>
         <button @click="activeTab = 'trading'" :class="activeTab === 'trading' ? 'bg-brand-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-4 py-2 rounded-xl text-xs font-mono transition flex items-center gap-2">
             <i data-lucide="terminal" class="w-4 h-4"></i>
-            <span>Trading Terminal</span>
+            <span>Quick Order Ticket</span>
         </button>
         <button @click="activeTab = 'positions'" :class="activeTab === 'positions' ? 'bg-brand-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-4 py-2 rounded-xl text-xs font-mono transition flex items-center gap-2">
             <i data-lucide="layers" class="w-4 h-4"></i>
