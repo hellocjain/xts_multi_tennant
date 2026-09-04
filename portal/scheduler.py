@@ -130,9 +130,17 @@ async def start_scheduler_loop(poll_interval_sec=5):
             # 1. Check Drawdown Circuit Breakers across active clients
             await check_drawdown_circuit_breakers()
 
-            # 2. Check 08:30 IST cache warmup
+            # 2. Check 08:30 IST master contract refresh & cache warmup
             now_ist = datetime.datetime.now(IST)
             if now_ist.hour == 8 and now_ist.minute == 30 and now_ist.second < 15:
+                try:
+                    import master_contract_service
+                    logger.info("🌅 [08:30 IST] Downloading and compiling daily Symphony XTS master contracts...")
+                    res = await asyncio.to_thread(master_contract_service.download_and_refresh_master_contracts)
+                    logger.info(f"🌅 [08:30 IST] Master contract refresh result: {res}")
+                except Exception as mc_err:
+                    logger.error(f"Failed to refresh master contracts at 08:30 IST: {mc_err}")
+
                 await run_rolling_cache_warmup()
                 await asyncio.sleep(30)
         except Exception as e:

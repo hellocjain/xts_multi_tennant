@@ -15,6 +15,7 @@ import asyncio
 import xts_api
 import order_services
 import options_engine
+import token_db
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,53 @@ async def ping(request: Request):
     return {"status": "success", "message": "pong", "broker": "AC Agarwal (Symphony XTS)"}
 
 # -----------------------------------------------------------------------------
+# 1B. Symbol Services & Master Contract Discovery
+# -----------------------------------------------------------------------------
+@router.get("/search")
+@router.post("/search")
+async def search_symbols_endpoint(request: Request):
+    """
+    OpenAlgo-compatible symbol search across all 6 segments and indices.
+    Supports query string (e.g. ?query=NIFTY&exchange=NFO) or JSON body.
+    """
+    if request.method == "POST":
+        data = await _extract_json(request)
+        query = data.get("query")
+        exchange = data.get("exchange")
+        limit = int(data.get("limit", 50))
+    else:
+        query = request.query_params.get("query")
+        exchange = request.query_params.get("exchange")
+        limit = int(request.query_params.get("limit", 50))
+
+    results = token_db.search_symbols(query=query, exchange=exchange, limit=limit)
+    return {"status": "success", "data": results, "count": len(results)}
+
+@router.post("/symbols")
+async def symbol_metadata_endpoint(request: Request):
+    """
+    Retrieves full contract metadata for a given canonical OpenAlgo symbol.
+    """
+    data = await _extract_json(request)
+    symbol = str(data.get("symbol", "")).strip().upper()
+    exchange = str(data.get("exchange", "")).strip().upper()
+
+    if not symbol:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "symbol is required"})
+
+    info = token_db.get_symbol_info(symbol, exchange) if exchange else None
+    if not info:
+        for ex in ("NSE", "NFO", "MCX", "BSE", "BFO", "CDS", "NSE_INDEX", "BSE_INDEX"):
+            info = token_db.get_symbol_info(symbol, ex)
+            if info:
+                break
+
+    if not info:
+        return JSONResponse(status_code=404, content={"status": "error", "message": f"Symbol '{symbol}' not found in master contract"})
+
+    return {"status": "success", "data": info.to_dict()}
+
+# -----------------------------------------------------------------------------
 # 2. Order Management
 # -----------------------------------------------------------------------------
 @router.post("/placeorder")
@@ -70,6 +118,7 @@ async def place_order(request: Request):
 
     action = str(data.get("action", "BUY")).upper()
     symbol = str(data.get("symbol", "")).strip()
+    exchange = str(data.get("exchange", "")).strip().upper()
     quantity = int(data.get("quantity", 0))
     price = float(data.get("price", 0.0))
     order_ref = data.get("order_ref") or data.get("strategy") or f"OA_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
@@ -77,6 +126,17 @@ async def place_order(request: Request):
 
     if not symbol or quantity <= 0:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Symbol and positive quantity are required"})
+
+    # Check token_db for tick_size quantization
+    sym_info = token_db.get_symbol_info(symbol, exchange) if exchange else None
+    if not sym_info:
+        for ex in ("NSE", "NFO", "MCX", "BSE", "BFO", "CDS"):
+            sym_info = token_db.get_symbol_info(symbol, ex)
+            if sym_info:
+                break
+
+    if sym_info and price > 0 and sym_info.tick_size > 0:
+        price = round(round(price / sym_info.tick_size) * sym_info.tick_size, 4)
 
     res = await asyncio.to_thread(
         xts_api.execute_trade_with_retry,
@@ -236,6 +296,15 @@ async def order_book(request: Request):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
 
     orders = xts_api.get_broker_orders()
+    for o in orders:
+        if isinstance(o, dict):
+            tok = o.get("ExchangeInstrumentID") or o.get("token")
+            seg = o.get("ExchangeSegment", "")
+            if tok and seg:
+                oa_sym = token_db.get_symbol(tok, seg)
+                if oa_sym:
+                    o["symbol"] = oa_sym
+                    o["TradingSymbol"] = oa_sym
     return {"status": "success", "data": orders}
 
 @router.post("/positionbook")
@@ -245,7 +314,17 @@ async def position_book(request: Request):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
 
     pos_data = xts_api.get_positions_telemetry()
-    return {"status": "success", "data": pos_data.get("positions", []), "net_mtm": pos_data.get("net_mtm", 0.0)}
+    positions = pos_data.get("positions", [])
+    for p in positions:
+        if isinstance(p, dict):
+            tok = p.get("ExchangeInstrumentID") or p.get("token")
+            seg = p.get("ExchangeSegment") or p.get("exchange", "")
+            if tok and seg:
+                oa_sym = token_db.get_symbol(tok, seg)
+                if oa_sym:
+                    p["symbol"] = oa_sym
+                    p["TradingSymbol"] = oa_sym
+    return {"status": "success", "data": positions, "net_mtm": pos_data.get("net_mtm", 0.0)}
 
 @router.post("/tradebook")
 async def trade_book(request: Request):
@@ -254,6 +333,15 @@ async def trade_book(request: Request):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
 
     trades = xts_api.get_broker_trades()
+    for t in trades:
+        if isinstance(t, dict):
+            tok = t.get("ExchangeInstrumentID") or t.get("token")
+            seg = t.get("ExchangeSegment", "")
+            if tok and seg:
+                oa_sym = token_db.get_symbol(tok, seg)
+                if oa_sym:
+                    t["symbol"] = oa_sym
+                    t["TradingSymbol"] = oa_sym
     return {"status": "success", "data": trades}
 
 @router.post("/funds")

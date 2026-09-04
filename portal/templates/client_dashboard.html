@@ -147,9 +147,48 @@
 
                 <!-- Symbol & Quantity -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-mono text-slate-400 mb-1.5">Symbol / Contract</label>
-                        <input type="text" name="symbol" placeholder="e.g. CRUDEOIL1!, NIFTY, GOLDM1!" required class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:border-brand-500 focus:outline-none uppercase">
+                    <div class="relative" x-data="{
+                        query: '',
+                        suggestions: [],
+                        showSuggestions: false,
+                        async searchSymbols() {
+                            if (this.query.length < 2) { this.suggestions = []; this.showSuggestions = false; return; }
+                            try {
+                                const res = await fetch(`/api/v1/search?query=${encodeURIComponent(this.query)}&limit=8`);
+                                const data = await res.json();
+                                if (data.status === 'success') {
+                                    this.suggestions = data.data || [];
+                                    this.showSuggestions = this.suggestions.length > 0;
+                                }
+                            } catch(e) { this.suggestions = []; }
+                        },
+                        selectSymbol(item) {
+                            this.query = item.symbol;
+                            this.showSuggestions = false;
+                            if (item.lotsize && item.lotsize > 1) {
+                                const qtyInput = document.querySelector('input[name=quantity]');
+                                if (qtyInput && !qtyInput.value) qtyInput.value = item.lotsize;
+                            }
+                        }
+                    }">
+                        <label class="block text-xs font-mono text-slate-400 mb-1.5">Symbol / Contract (Live Search)</label>
+                        <input type="text" name="symbol" x-model="query" @input.debounce.250ms="searchSymbols()" @focus="if(suggestions.length) showSuggestions=true" @click.away="showSuggestions=false" placeholder="e.g. INFY, NIFTY26MAR2624500CE, CRUDEOIL..." required class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:border-brand-500 focus:outline-none uppercase">
+                        
+                        <!-- Autocomplete Dropdown -->
+                        <div x-show="showSuggestions" x-cloak class="absolute left-0 right-0 top-full mt-1.5 bg-slate-950 border border-bordercolor rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-800">
+                            <template x-for="item in suggestions" :key="item.symbol">
+                                <div @click="selectSymbol(item)" class="p-2.5 hover:bg-slate-800 cursor-pointer flex justify-between items-center text-xs font-mono transition">
+                                    <div>
+                                        <span class="font-bold text-slate-200" x-text="item.symbol"></span>
+                                        <span class="text-[10px] text-slate-500 ml-1.5" x-text="item.name"></span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="px-1.5 py-0.5 rounded text-[10px] bg-brand-500/10 text-brand-400 border border-brand-500/30" x-text="item.exchange"></span>
+                                        <span class="text-[10px] text-slate-400" x-text="'Lot: ' + item.lotsize"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
                     </div>
                     <div>
                         <label class="block text-xs font-mono text-slate-400 mb-1.5">Quantity (Units / Shares)</label>

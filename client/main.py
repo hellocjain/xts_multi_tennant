@@ -21,6 +21,7 @@ import asyncio
 
 import config
 import xts_api
+import token_db
 from supertrend_engine import SuperTrendEngine
 from custom_strategy_engine import MultiCustomStrategyEngine
 
@@ -343,6 +344,7 @@ async def lifespan(app: FastAPI):
         pass
 
     db_init()
+    token_db.init_token_db()
     stale_window = getattr(config, "STALE_SIGNAL_WINDOW_SECONDS", 30.0)
     unfinished = db_fetch_unfinished()
     

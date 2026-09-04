@@ -1886,6 +1886,19 @@ async def rotate_master_key(request: Request, new_master_key: str = Form(...), u
         logger.error(f"Key rotation failed: {e}")
         return RedirectResponse(url=f"/admin/settings?err=Key+rotation+failed:+{str(e)}", status_code=303)
 
+@app.post("/admin/master-contract/refresh")
+async def admin_refresh_master_contracts(request: Request, user: dict = Depends(require_auth)):
+    try:
+        import master_contract_service
+        res = await asyncio.to_thread(master_contract_service.download_and_refresh_master_contracts)
+        database.record_audit(user["username"], "REFRESH_MASTER_CONTRACTS", res)
+        if res.get("status") == "success":
+            return JSONResponse(content={"status": "success", "message": f"Successfully compiled {res.get('count', 0)} symbols.", "count": res.get("count", 0)})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": res.get("message", "Refresh failed")})
+    except Exception as e:
+        logger.error(f"Manual master contract refresh failed: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
 # =====================================================================
 # CUSTOM PYTHON STRATEGY HUB ROUTES
