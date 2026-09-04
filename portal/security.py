@@ -227,3 +227,62 @@ def destroy_session(raw_token: str):
     with closing(get_db_connection()) as conn:
         with conn:
             conn.execute("DELETE FROM admin_sessions WHERE token_hash=?", (token_hash,))
+
+# =========================================================================
+# Client Session Management
+# =========================================================================
+
+def create_client_session(user_id: str, tenant_id: str, ip_address: str, user_agent: str, lifetime_seconds=43200) -> str:
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    now = time.time()
+    expires_at = now + lifetime_seconds
+
+    with closing(get_db_connection()) as conn:
+        with conn:
+            conn.execute(
+                "INSERT INTO client_sessions (token_hash, client_user_id, tenant_id, expires_at, created_at, ip_address, user_agent) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (token_hash, user_id, tenant_id, expires_at, now, ip_address, user_agent)
+            )
+    return raw_token
+
+def validate_client_session(raw_token: str, ip_address: str, user_agent: str) -> dict | None:
+    if not raw_token:
+        return None
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    now = time.time()
+
+    with closing(get_db_connection()) as conn:
+        row = conn.execute("""
+            SELECT s.token_hash, s.client_user_id, s.tenant_id, s.expires_at, u.username, t.name as tenant_name
+            FROM client_sessions s
+            JOIN client_users u ON s.client_user_id = u.id
+            JOIN tenants t ON s.tenant_id = t.id
+            WHERE s.token_hash=?
+        """, (token_hash,)).fetchone()
+
+        if not row:
+            return None
+
+        if row["expires_at"] < now:
+            with conn:
+                conn.execute("DELETE FROM client_sessions WHERE token_hash=?", (token_hash,))
+            return None
+
+        return {
+            "user_id": row["client_user_id"],
+            "tenant_id": row["tenant_id"],
+            "tenant_name": row["tenant_name"],
+            "username": row["username"],
+            "role": "client"
+        }
+
+def destroy_client_session(raw_token: str):
+    if not raw_token:
+        return
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    with closing(get_db_connection()) as conn:
+        with conn:
+            conn.execute("DELETE FROM client_sessions WHERE token_hash=?", (token_hash,))
+

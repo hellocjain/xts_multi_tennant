@@ -451,6 +451,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="XTS Client Execution Gateway", lifespan=lifespan)
 
+import openalgo_router
+app.include_router(openalgo_router.router)
+
 MAX_WEBHOOK_BODY_BYTES = getattr(config, "MAX_WEBHOOK_BODY_BYTES", 10_000)
 
 def generate_order_ref(data: dict, action: str, symbol: str, quantity: int, price: float, now: float) -> str:
@@ -466,9 +469,8 @@ def generate_order_ref(data: dict, action: str, symbol: str, quantity: int, pric
     if bar_time:
         sig_raw = f"{action}_{symbol}_{quantity}_{price:.4f}_{bar_time}"
     else:
-        # Use a 5-second bucket so webhook re-transmissions within dedup window yield identical ref
-        bucket = int(now // 5) * 5
-        sig_raw = f"{action}_{symbol}_{quantity}_{price:.4f}_{bucket}"
+        # High resolution fallback to prevent hash collisions across rapid multi-symbol orders
+        sig_raw = f"{action}_{symbol}_{quantity}_{price:.4f}_{now:.4f}_{uuid.uuid4().hex[:6]}"
 
     sig_hash_id = hashlib.md5(sig_raw.encode()).hexdigest()[:14]
     return f"TVBot_{sig_hash_id}"

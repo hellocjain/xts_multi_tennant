@@ -79,6 +79,26 @@ def generate_caddyfile_content() -> str:
         }}
     }}
 
+    # 1B. Client Trading Portal (Role-Based Access for Individual Clients)
+    handle /client* {{
+        reverse_proxy xts_portal:8500 {{
+            header_up X-Forwarded-For {{remote_host}}
+            header_up X-Real-IP {{remote_host}}
+        }}
+    }}
+
+    # 1C. Universal OpenAlgo Drop-In API Gateway (/api/v1/*)
+    handle /api/v1/* {{
+        reverse_proxy xts_portal:8500 {{
+            header_up X-Forwarded-For {{remote_host}}
+            header_up X-Real-IP {{remote_host}}
+        }}
+    }}
+
+    handle / {{
+        redir /client/login
+    }}
+
     # 2. Internal Portal-to-Client Telemetry Proxy (xts_mgmt_net only)
     handle /internal-client-proxy/* {{
         @blocked_internal {{

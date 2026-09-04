@@ -6,13 +6,21 @@ import uuid
 import sys
 from pathlib import Path
 
-# Add project roots to path
-client_path = str(Path(__file__).parent.parent / "client")
+import os
+import importlib.util
+
+BASE_DIR = str(Path(__file__).parent.parent)
+client_path = os.path.join(BASE_DIR, "client")
 if client_path not in sys.path:
     sys.path.insert(0, client_path)
 
 import xts_api
-import main as client_main
+
+# Explicitly load client/main.py to prevent namespace collision with portal/main.py
+client_main_file = os.path.join(client_path, "main.py")
+spec = importlib.util.spec_from_file_location("client_main_audit", client_main_file)
+client_main = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(client_main)
 from supertrend_engine import SingleSuperTrendRunner, MultiSuperTrendEngine, calculate_supertrend, slice_quantity_for_freeze
 
 

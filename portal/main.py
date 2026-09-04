@@ -109,8 +109,208 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="XTS Multi-Tenant Admin Portal", lifespan=lifespan)
 
+import api_gateway
+app.include_router(api_gateway.router)
+
 # =====================================================================
-# AUTHENTICATION ROUTES
+# CLIENT PORTAL AUTHENTICATION & ROLE-BASED ACCESS
+# =====================================================================
+
+def get_current_client_user(request: Request) -> dict | None:
+    token = request.cookies.get("client_session")
+    if not token:
+        return None
+    ip = request.client.host or "127.0.0.1"
+    ua = request.headers.get("user-agent", "")
+    return security.validate_client_session(token, ip, ua)
+
+def require_client_auth(request: Request) -> dict:
+    user = get_current_client_user(request)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            headers={"Location": "/client/login"}
+        )
+    return user
+
+@app.get("/client/login", response_class=HTMLResponse)
+async def client_login_page(request: Request, error: str = None):
+    if get_current_client_user(request):
+        return RedirectResponse(url="/client/dashboard", status_code=303)
+    return templates.TemplateResponse(request=request, name="client_login.html", context={"error": error, "current_user": None})
+
+@app.post("/client/login")
+async def client_login_action(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...)
+):
+    ip = request.client.host or "127.0.0.1"
+    ua = request.headers.get("user-agent", "")
+    user = database.get_client_user_by_username(username.strip())
+
+    if not user or not user.get("is_active") or not security.verify_password(password, user["password_hash"]):
+        database.record_audit(username, "FAILED_CLIENT_LOGIN", {"ip": ip})
+        return templates.TemplateResponse(request=request, name="client_login.html", context={"error": "Invalid client credentials", "current_user": None})
+
+    session_token = security.create_client_session(user["id"], user["tenant_id"], ip, ua)
+    database.record_audit(username, "SUCCESSFUL_CLIENT_LOGIN", {"ip": ip, "tenant_id": user["tenant_id"]})
+    resp = RedirectResponse(url="/client/dashboard", status_code=303)
+    resp.set_cookie(key="client_session", value=session_token, httponly=True, samesite="lax")
+    return resp
+
+@app.get("/client/logout")
+async def client_logout(request: Request):
+    token = request.cookies.get("client_session")
+    if token:
+        security.destroy_client_session(token)
+    resp = RedirectResponse(url="/client/login", status_code=303)
+    resp.delete_cookie(key="client_session")
+    return resp
+
+@app.get("/client/dashboard", response_class=HTMLResponse)
+async def client_dashboard_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    return templates.TemplateResponse(request=request, name="client_dashboard.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user
+    })
+
+@app.post("/client/place-manual-order")
+async def client_manual_order(
+    request: Request,
+    symbol: str = Form(...),
+    action: str = Form(...),
+    quantity: int = Form(...),
+    order_type: str = Form("MARKET"),
+    price: float = Form(0.0),
+    product: str = Form("NRML"),
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    caddy_base = os.environ.get("CADDY_PROXY_BASE", "http://caddy/internal-client-proxy")
+    dest_url = f"http://127.0.0.1:{port}/api/v1/placeorder"
+
+    payload = {
+        "symbol": symbol.strip().upper(),
+        "action": action.strip().upper(),
+        "quantity": int(quantity),
+        "pricetype": order_type,
+        "price": float(price),
+        "product": product,
+        "strategy": "MANUAL_WEB_UI"
+    }
+
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [dest_url, f"http://xts_client_{tenant_id}:8000/api/v1/placeorder", f"{caddy_base}/{tenant_id}/api/v1/placeorder"]:
+            try:
+                resp = await http_client.post(target, json=payload, headers=headers)
+                if resp.status_code in (200, 400):
+                    break
+            except Exception:
+                continue
+
+    return RedirectResponse(url="/client/dashboard", status_code=303)
+
+@app.post("/client/square-off-symbol")
+async def client_square_off_single(
+    request: Request,
+    symbol: str = Form(...),
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    dest_url = f"http://127.0.0.1:{port}/api/v1/closeposition"
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [dest_url, f"http://xts_client_{tenant_id}:8000/api/v1/closeposition"]:
+            try:
+                await http_client.post(target, json={"symbol": symbol.strip()}, headers=headers)
+                break
+            except Exception:
+                continue
+
+    return RedirectResponse(url="/client/dashboard", status_code=303)
+
+@app.post("/client/panic-square-off")
+async def client_panic_square_off(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    dest_url = f"http://127.0.0.1:{port}/api/v1/closeposition"
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [dest_url, f"http://xts_client_{tenant_id}:8000/api/v1/closeposition"]:
+            try:
+                await http_client.post(target, json={}, headers=headers)
+                break
+            except Exception:
+                continue
+
+    return RedirectResponse(url="/client/dashboard", status_code=303)
+
+@app.post("/client/cancel-all-orders")
+async def client_cancel_all(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    dest_url = f"http://127.0.0.1:{port}/api/v1/cancelallorder"
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [dest_url, f"http://xts_client_{tenant_id}:8000/api/v1/cancelallorder"]:
+            try:
+                await http_client.post(target, json={}, headers=headers)
+                break
+            except Exception:
+                continue
+
+    return RedirectResponse(url="/client/dashboard", status_code=303)
+
+@app.post("/admin/clients/{tenant_id}/create-user")
+async def admin_create_client_user(
+    request: Request,
+    tenant_id: str,
+    username: str = Form(...),
+    password: str = Form(...),
+    email: str = Form(""),
+    user: dict = Depends(require_auth)
+):
+    pass_hash = security.hash_password(password.strip())
+    try:
+        uid = database.create_client_user(tenant_id, username.strip(), pass_hash, email.strip())
+        database.record_audit(user["username"], "CREATE_CLIENT_USER", {"tenant_id": tenant_id, "client_username": username.strip()})
+    except Exception as e:
+        logger.error(f"Error creating client user: {e}")
+    return RedirectResponse(url=f"/admin/clients/{tenant_id}", status_code=303)
+
+# =====================================================================
+# ADMIN AUTHENTICATION ROUTES
 # =====================================================================
 
 @app.get("/admin/login", response_class=HTMLResponse)

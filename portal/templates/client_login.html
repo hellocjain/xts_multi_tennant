@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Client Portal Login - TradeBridge Pro{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center min-h-[75vh]">
+    <div class="bg-cardbg border border-bordercolor w-full max-w-md p-8 rounded-2xl shadow-2xl space-y-6">
+        <div class="text-center space-y-2">
+            <div class="w-12 h-12 rounded-2xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 mx-auto">
+                <i data-lucide="trending-up" class="w-6 h-6"></i>
+            </div>
+            <h1 class="text-xl font-bold text-slate-100">Client Trading Portal</h1>
+            <p class="text-xs text-slate-400">Algorithmic Trading &bull; Symphony XTS Execution</p>
+        </div>
+
+        {% if error %}
+        <div class="bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3.5 rounded-xl flex items-center gap-2">
+            <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
+            <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <form method="POST" action="/client/login" class="space-y-4">
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Username</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500 pointer-events-none">
+                        <i data-lucide="user" class="w-4 h-4"></i>
+                    </span>
+                    <input type="text" name="username" required autofocus placeholder="Your username"
+                        class="w-full bg-slate-950 border border-bordercolor rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">Password</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500 pointer-events-none">
+                        <i data-lucide="lock" class="w-4 h-4"></i>
+                    </span>
+                    <input type="password" name="password" required placeholder="••••••••••••"
+                        class="w-full bg-slate-950 border border-bordercolor rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
+                </div>
+            </div>
+
+            <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition duration-150 shadow-lg shadow-brand-600/30 text-xs flex items-center justify-center gap-2">
+                <i data-lucide="log-in" class="w-4 h-4"></i>
+                <span>Sign In to Terminal</span>
+            </button>
+        </form>
+
+        <div class="text-center pt-2 border-t border-bordercolor">
+            <a href="/admin/login" class="text-xs text-slate-500 hover:text-slate-400 transition font-mono">Switch to Institutional Admin Login &rarr;</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

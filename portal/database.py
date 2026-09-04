@@ -265,6 +265,35 @@ def init_portal_db():
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tenant_custom_strat ON tenant_custom_strategies(tenant_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_custom_strat_id ON tenant_custom_strategies(strategy_id)")
+
+            # 9. Client User Accounts (Role-Based Access for Individual Clients)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS client_users (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    email TEXT DEFAULT '',
+                    is_active INTEGER DEFAULT 1,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_client_users_tenant ON client_users(tenant_id)")
+
+            # 10. Client User Sessions
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS client_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    client_user_id TEXT NOT NULL REFERENCES client_users(id) ON DELETE CASCADE,
+                    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    expires_at REAL NOT NULL,
+                    created_at REAL NOT NULL,
+                    ip_address TEXT,
+                    user_agent TEXT
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_client_sessions_user ON client_sessions(client_user_id)")
     logger.info("Portal database initialized successfully.")
 
 def record_audit(actor: str, action: str, details: dict, target_tenant_id: str = None):
@@ -377,4 +406,41 @@ def delete_tenant_custom_strategy(id: str):
     with closing(get_db_connection()) as conn:
         with conn:
             conn.execute("DELETE FROM tenant_custom_strategies WHERE id=?", (id,))
+
+# =========================================================================
+# Client User Management Helpers (Role-Based Access)
+# =========================================================================
+
+def create_client_user(tenant_id: str, username: str, password_hash: str, email: str = "") -> str:
+    import uuid
+    user_id = str(uuid.uuid4())
+    now = time.time()
+    with closing(get_db_connection()) as conn:
+        with conn:
+            conn.execute("""
+                INSERT INTO client_users (id, tenant_id, username, password_hash, email, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            """, (user_id, tenant_id, username.strip(), password_hash, email.strip(), now, now))
+    return user_id
+
+def get_client_user_by_username(username: str) -> dict | None:
+    with closing(get_db_connection()) as conn:
+        row = conn.execute("SELECT * FROM client_users WHERE username=?", (username.strip(),)).fetchone()
+        return dict(row) if row else None
+
+def get_client_user_by_id(user_id: str) -> dict | None:
+    with closing(get_db_connection()) as conn:
+        row = conn.execute("SELECT * FROM client_users WHERE id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+def get_client_users_for_tenant(tenant_id: str) -> list:
+    with closing(get_db_connection()) as conn:
+        rows = conn.execute("SELECT id, tenant_id, username, email, is_active, created_at FROM client_users WHERE tenant_id=?", (tenant_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+def delete_client_user(user_id: str):
+    with closing(get_db_connection()) as conn:
+        with conn:
+            conn.execute("DELETE FROM client_users WHERE id=?", (user_id,))
+
 

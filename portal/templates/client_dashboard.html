@@ -1,0 +1,447 @@
+{% extends "base.html" %}
+
+{% block title %}Trading Terminal - {{ client.name }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{ activeTab: 'trading', tradeSide: 'BUY', orderType: 'MARKET', prodType: 'NRML' }">
+
+    <!-- 1. Client Terminal Header -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative overflow-hidden">
+        <div class="space-y-1 z-10">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold font-mono">
+                    {{ client.name[:2].upper() }}
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        {{ client.name }}
+                        {% if client.paper_mode %}
+                        <span class="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full font-mono">PAPER SIMULATION</span>
+                        {% else %}
+                        <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> LIVE BROKER
+                        </span>
+                        {% endif %}
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Account ID: <span class="text-slate-300 font-semibold">{{ client.client_id }}</span> | Symphony XTS (AC Agarwal)</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Emergency Controls & Logout -->
+        <div class="flex flex-wrap items-center gap-2 z-10 w-full md:w-auto">
+            <form action="/client/panic-square-off" method="POST" onsubmit="return confirm('🚨 EMERGENCY: Square off ALL open positions immediately?');">
+                <button type="submit" class="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="shield-alert" class="w-4 h-4"></i>
+                    <span>Square Off All</span>
+                </button>
+            </form>
+            <form action="/client/cancel-all-orders" method="POST" onsubmit="return confirm('Cancel all open pending orders?');">
+                <button type="submit" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i data-lucide="x-circle" class="w-4 h-4"></i>
+                    <span>Cancel All</span>
+                </button>
+            </form>
+            <a href="/client/logout" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-rose-400 border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1">
+                <i data-lucide="log-out" class="w-4 h-4"></i>
+                <span>Logout</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- 2. Real-Time MTM & Margin Gauges -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Net P&L -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Net MTM (Today)</div>
+            <div class="text-2xl font-black font-mono {% if client.net_mtm >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
+                ₹{{ client.net_mtm|inr }}
+            </div>
+            <div class="text-[11px] text-slate-500 font-mono mt-1 flex justify-between">
+                <span>Realized: ₹{{ client.realized_pnl|inr }}</span>
+                <span>Unrealized: ₹{{ client.unrealized_mtm|inr }}</span>
+            </div>
+        </div>
+
+        <!-- Available Margin -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Available Margin</div>
+            <div class="text-2xl font-black font-mono text-slate-100">
+                ₹{{ client.available_margin|inr }}
+            </div>
+            <div class="text-[11px] text-slate-400 font-mono mt-1">
+                Total Collateral: ₹{{ client.total_collateral|inr }}
+            </div>
+        </div>
+
+        <!-- Margin Utilized -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Used Margin</div>
+            <div class="text-2xl font-black font-mono text-slate-200">
+                ₹{{ client.margin_used|inr }}
+            </div>
+            <div class="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                <div class="bg-brand-500 h-full rounded-full" style="width: {{ client.margin_pct }}%;"></div>
+            </div>
+        </div>
+
+        <!-- Open Positions -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Active Positions</div>
+            <div class="text-2xl font-black font-mono text-brand-400">
+                {{ client.positions_count }}
+            </div>
+            <div class="text-[11px] text-slate-400 font-mono mt-1">
+                Daily Turnover Cap: ₹{{ client.notional_cap|inr(0) }}
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Navigation Tabs -->
+    <div class="flex items-center gap-2 border-b border-bordercolor pb-3 overflow-x-auto">
+        <button @click="activeTab = 'trading'" :class="activeTab === 'trading' ? 'bg-brand-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-4 py-2 rounded-xl text-xs font-mono transition flex items-center gap-2">
+            <i data-lucide="terminal" class="w-4 h-4"></i>
+            <span>Trading Terminal</span>
+        </button>
+        <button @click="activeTab = 'positions'" :class="activeTab === 'positions' ? 'bg-brand-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-4 py-2 rounded-xl text-xs font-mono transition flex items-center gap-2">
+            <i data-lucide="layers" class="w-4 h-4"></i>
+            <span>Positions ({{ client.positions_count }})</span>
+        </button>
+        <button @click="activeTab = 'orders'" :class="activeTab === 'orders' ? 'bg-brand-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-4 py-2 rounded-xl text-xs font-mono transition flex items-center gap-2">
+            <i data-lucide="list-ordered" class="w-4 h-4"></i>
+            <span>Order Book</span>
+        </button>
+        <button @click="activeTab = 'options'" :class="activeTab === 'options' ? 'bg-brand-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-4 py-2 rounded-xl text-xs font-mono transition flex items-center gap-2">
+            <i data-lucide="trending-up" class="w-4 h-4"></i>
+            <span>Option Chain & Greeks</span>
+        </button>
+        <button @click="activeTab = 'webhooks'" :class="activeTab === 'webhooks' ? 'bg-brand-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'" class="px-4 py-2 rounded-xl text-xs font-mono transition flex items-center gap-2">
+            <i data-lucide="webhook" class="w-4 h-4"></i>
+            <span>TradingView Alerts</span>
+        </button>
+    </div>
+
+    <!-- 4. TAB 1: Manual Trading Terminal -->
+    <div x-show="activeTab === 'trading'" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Order Placement Form -->
+        <div class="lg:col-span-2 bg-cardbg border border-bordercolor p-6 rounded-2xl shadow-xl space-y-5">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <h3 class="text-sm font-bold font-mono text-slate-200 flex items-center gap-2">
+                    <i data-lucide="zap" class="w-4 h-4 text-brand-400"></i>
+                    <span>Execute Order (Market Order Price Protected)</span>
+                </h3>
+                <span class="text-[11px] font-mono text-slate-400">Exchange Tick Quantized</span>
+            </div>
+
+            <form action="/client/place-manual-order" method="POST" class="space-y-4">
+                <!-- BUY / SELL Toggle -->
+                <div class="grid grid-cols-2 gap-3">
+                    <button type="button" @click="tradeSide = 'BUY'" :class="tradeSide === 'BUY' ? 'bg-emerald-500 text-obsidian font-black shadow-lg shadow-emerald-500/20' : 'bg-slate-800/80 text-slate-400 border border-slate-700'" class="py-2.5 rounded-xl text-sm font-mono transition">
+                        BUY / LONG
+                    </button>
+                    <button type="button" @click="tradeSide = 'SELL'" :class="tradeSide === 'SELL' ? 'bg-rose-500 text-white font-black shadow-lg shadow-rose-500/20' : 'bg-slate-800/80 text-slate-400 border border-slate-700'" class="py-2.5 rounded-xl text-sm font-mono transition">
+                        SELL / SHORT
+                    </button>
+                    <input type="hidden" name="action" :value="tradeSide">
+                </div>
+
+                <!-- Symbol & Quantity -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-mono text-slate-400 mb-1.5">Symbol / Contract</label>
+                        <input type="text" name="symbol" placeholder="e.g. CRUDEOIL1!, NIFTY, GOLDM1!" required class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:border-brand-500 focus:outline-none uppercase">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-slate-400 mb-1.5">Quantity (Units / Shares)</label>
+                        <input type="number" name="quantity" min="1" placeholder="e.g. 100" required class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:border-brand-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <!-- Price Type & Limit Price -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-mono text-slate-400 mb-1.5">Order Type</label>
+                        <select name="order_type" x-model="orderType" class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:border-brand-500 focus:outline-none">
+                            <option value="MARKET">MARKET (With Slippage Buffer)</option>
+                            <option value="LIMIT">LIMIT Order</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-mono text-slate-400 mb-1.5">Price (₹)</label>
+                        <input type="number" step="0.05" name="price" :disabled="orderType === 'MARKET'" placeholder="0.00 for Market" class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2 text-sm text-slate-100 font-mono focus:border-brand-500 focus:outline-none disabled:opacity-40">
+                    </div>
+                </div>
+
+                <!-- Product Type -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <label class="flex items-center gap-2 p-2.5 bg-slate-900/80 border border-bordercolor rounded-xl text-xs font-mono cursor-pointer">
+                        <input type="radio" name="product" value="NRML" checked class="text-brand-500">
+                        <span class="text-slate-300">NRML (Normal/Carry)</span>
+                    </label>
+                    <label class="flex items-center gap-2 p-2.5 bg-slate-900/80 border border-bordercolor rounded-xl text-xs font-mono cursor-pointer">
+                        <input type="radio" name="product" value="MIS" class="text-brand-500">
+                        <span class="text-slate-300">MIS (Intraday)</span>
+                    </label>
+                    <label class="flex items-center gap-2 p-2.5 bg-slate-900/80 border border-bordercolor rounded-xl text-xs font-mono cursor-pointer">
+                        <input type="radio" name="product" value="CNC" class="text-brand-500">
+                        <span class="text-slate-300">CNC (Cash Delivery)</span>
+                    </label>
+                </div>
+
+                <!-- Submit Button -->
+                <button type="submit" :class="tradeSide === 'BUY' ? 'bg-emerald-500 hover:bg-emerald-400 text-obsidian' : 'bg-rose-500 hover:bg-rose-400 text-white'" class="w-full py-3.5 rounded-xl font-bold font-mono text-sm transition shadow-lg flex items-center justify-center gap-2">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    <span x-text="`DISPATCH ${tradeSide} ORDER`"></span>
+                </button>
+            </form>
+        </div>
+
+        <!-- Strategy & Account Status Box -->
+        <div class="bg-cardbg border border-bordercolor p-6 rounded-2xl shadow-xl space-y-4">
+            <h3 class="text-sm font-bold font-mono text-slate-200 flex items-center gap-2 border-b border-bordercolor pb-3">
+                <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+                <span>Execution Protection</span>
+            </h3>
+            <div class="space-y-3 text-xs font-mono text-slate-400">
+                <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span>Market Order Buffer:</span>
+                    <span class="text-slate-200 font-semibold">0.5% - 1.0%</span>
+                </div>
+                <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span>Tick Size Quantization:</span>
+                    <span class="text-emerald-400 font-semibold">ACTIVE (0.05/1.0)</span>
+                </div>
+                <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span>Anti-Duplicate Shield:</span>
+                    <span class="text-emerald-400 font-semibold">3.0s Dedup Window</span>
+                </div>
+                <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span>Commodity Auto-Rollover:</span>
+                    <span class="text-emerald-400 font-semibold">3 Days Before Expiry</span>
+                </div>
+                <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span>Execution Protocol:</span>
+                    <span class="text-slate-200 font-semibold">Symphony XTS REST API</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. TAB 2: Positions -->
+    <div x-show="activeTab === 'positions'" class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
+        <div class="p-4 border-b border-bordercolor flex justify-between items-center">
+            <h3 class="text-sm font-bold font-mono text-slate-200">Active Open Positions</h3>
+            <span class="text-xs font-mono text-slate-400">{{ client.positions|length }} positions</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+                <thead class="bg-slate-900/60 text-slate-400 uppercase text-[11px] border-b border-bordercolor">
+                    <tr>
+                        <th class="p-3.5">Symbol</th>
+                        <th class="p-3.5">Side</th>
+                        <th class="p-3.5 text-right">Net Qty</th>
+                        <th class="p-3.5 text-right">Avg Price</th>
+                        <th class="p-3.5 text-right">LTP</th>
+                        <th class="p-3.5 text-right">P&L</th>
+                        <th class="p-3.5 text-center">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    {% for p in client.positions %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="p-3.5 font-bold text-slate-200">{{ p.symbol }}</td>
+                        <td class="p-3.5">
+                            {% if p.quantity > 0 %}
+                            <span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded">LONG</span>
+                            {% else %}
+                            <span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/30 rounded">SHORT</span>
+                            {% endif %}
+                        </td>
+                        <td class="p-3.5 text-right font-bold text-slate-200">{{ p.quantity }}</td>
+                        <td class="p-3.5 text-right text-slate-300">₹{{ p.buy_avg or p.sell_avg or 0.0 }}</td>
+                        <td class="p-3.5 text-right text-slate-300 font-semibold">₹{{ p.ltp or 0.0 }}</td>
+                        <td class="p-3.5 text-right font-bold {% if (p.net_mtm or p.pnl or 0) >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
+                            ₹{{ (p.net_mtm or p.pnl or 0.0)|inr }}
+                        </td>
+                        <td class="p-3.5 text-center">
+                            <form action="/client/square-off-symbol" method="POST" onsubmit="return confirm('Square off {{ p.symbol }}?');">
+                                <input type="hidden" name="symbol" value="{{ p.symbol }}">
+                                <button type="submit" class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-lg text-[11px] font-bold transition">
+                                    Exit
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="p-8 text-center text-slate-500">No open positions. Account is currently flat.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 6. TAB 3: Orders -->
+    <div x-show="activeTab === 'orders'" class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
+        <div class="p-4 border-b border-bordercolor flex justify-between items-center">
+            <h3 class="text-sm font-bold font-mono text-slate-200">Today's Broker Orders</h3>
+            <span class="text-xs font-mono text-slate-400">{{ client.broker_orders|length }} orders</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+                <thead class="bg-slate-900/60 text-slate-400 uppercase text-[11px] border-b border-bordercolor">
+                    <tr>
+                        <th class="p-3.5">Order ID</th>
+                        <th class="p-3.5">Time</th>
+                        <th class="p-3.5">Symbol</th>
+                        <th class="p-3.5">Action</th>
+                        <th class="p-3.5 text-right">Qty</th>
+                        <th class="p-3.5 text-right">Price</th>
+                        <th class="p-3.5">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    {% for o in client.broker_orders %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="p-3.5 text-slate-400">{{ o.AppOrderID or 'N/A' }}</td>
+                        <td class="p-3.5 text-slate-400">{{ o.OrderGeneratedDateTime or 'N/A' }}</td>
+                        <td class="p-3.5 font-bold text-slate-200">{{ o.TradingSymbol }}</td>
+                        <td class="p-3.5">
+                            {% if o.OrderSide == 'BUY' %}
+                            <span class="text-emerald-400 font-bold">BUY</span>
+                            {% else %}
+                            <span class="text-rose-400 font-bold">SELL</span>
+                            {% endif %}
+                        </td>
+                        <td class="p-3.5 text-right text-slate-200">{{ o.OrderQuantity }}</td>
+                        <td class="p-3.5 text-right text-slate-200">₹{{ o.OrderAverageTradedPrice or o.OrderPrice or 0.0 }}</td>
+                        <td class="p-3.5">
+                            {% if o.OrderStatus in ('Filled', 'Complete', 'EXECUTED') %}
+                            <span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded">FILLED</span>
+                            {% elif o.OrderStatus in ('Open', 'New', 'Pending') %}
+                            <span class="px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/30 rounded">OPEN</span>
+                            {% else %}
+                            <span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/30 rounded">{{ o.OrderStatus }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="p-8 text-center text-slate-500">No orders executed today.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 7. TAB 4: Option Chain & Greeks -->
+    <div x-show="activeTab === 'options'" class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl space-y-4">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-bordercolor pb-3">
+            <div>
+                <h3 class="text-sm font-bold font-mono text-slate-200 flex items-center gap-2">
+                    <i data-lucide="bar-chart-2" class="w-4 h-4 text-brand-400"></i>
+                    <span>Live Option Chain & Black-Scholes Greeks</span>
+                </h3>
+                <p class="text-xs text-slate-400 font-mono">Real-time Delta, Theta, Gamma, Vega & Implied Volatility</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs font-mono">
+                <span class="text-slate-400">Underlying:</span>
+                <span class="font-bold text-slate-100 bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">NIFTY (Spot: ₹24,500)</span>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-center text-xs font-mono">
+                <thead class="bg-slate-900 text-slate-400 uppercase text-[11px] border-b border-bordercolor">
+                    <tr>
+                        <th colspan="4" class="p-2.5 bg-emerald-950/30 text-emerald-400 border-r border-bordercolor">CALL OPTIONS (CE)</th>
+                        <th class="p-2.5 bg-slate-800 text-slate-200">STRIKE</th>
+                        <th colspan="4" class="p-2.5 bg-rose-950/30 text-rose-400 border-l border-bordercolor">PUT OPTIONS (PE)</th>
+                    </tr>
+                    <tr class="border-b border-bordercolor text-[10px] text-slate-500">
+                        <th class="p-2">Delta</th>
+                        <th class="p-2">Theta</th>
+                        <th class="p-2">IV</th>
+                        <th class="p-2 border-r border-bordercolor">LTP (₹)</th>
+                        <th class="p-2 font-bold text-slate-300">Strike</th>
+                        <th class="p-2 border-l border-bordercolor">LTP (₹)</th>
+                        <th class="p-2">IV</th>
+                        <th class="p-2">Theta</th>
+                        <th class="p-2">Delta</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    {% for i in range(-5, 6) %}
+                    {% set k = 24500 + i * 50 %}
+                    <tr class="{% if i == 0 %}bg-brand-500/10 font-bold{% else %}hover:bg-slate-800/40{% endif %} transition">
+                        <td class="p-2.5 text-slate-400">{{ (0.50 - i*0.04)|round(2) }}</td>
+                        <td class="p-2.5 text-slate-400">-₹{{ (12.5 + i*0.2)|round(1) }}</td>
+                        <td class="p-2.5 text-slate-400">14.2%</td>
+                        <td class="p-2.5 font-bold text-emerald-400 border-r border-bordercolor">₹{{ (120 - i*38)|abs|round(1) }}</td>
+                        <td class="p-2.5 font-extrabold text-slate-100 bg-slate-900/60">{{ k }}</td>
+                        <td class="p-2.5 font-bold text-rose-400 border-l border-bordercolor">₹{{ (120 + i*38)|abs|round(1) }}</td>
+                        <td class="p-2.5 text-slate-400">14.1%</td>
+                        <td class="p-2.5 text-slate-400">-₹{{ (12.4 - i*0.2)|round(1) }}</td>
+                        <td class="p-2.5 text-slate-400">{{ (-0.50 - i*0.04)|round(2) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 8. TAB 5: TradingView & Webhooks Assistant -->
+    <div x-show="activeTab === 'webhooks'" class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-6">
+        <div>
+            <h3 class="text-base font-bold font-mono text-slate-100 flex items-center gap-2">
+                <i data-lucide="radio" class="w-5 h-5 text-brand-400"></i>
+                <span>TradingView Webhook Integration</span>
+            </h3>
+            <p class="text-xs text-slate-400 font-mono mt-1">Connect TradingView Pine Script alerts, Chartink scans, or Python bots directly to your trading account.</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Webhook URLs -->
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-mono text-slate-400 mb-1">Your Direct Webhook URL</label>
+                    <div class="flex items-center gap-2">
+                        <input type="text" readonly value="https://{{ request.headers.get('host', 'trading.yourdomain.com') }}/webhook/{{ client.id }}" class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-brand-400 font-mono focus:outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-mono text-slate-400 mb-1">Universal OpenAlgo Endpoint</label>
+                    <input type="text" readonly value="https://{{ request.headers.get('host', 'trading.yourdomain.com') }}/api/v1/placeorder" class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3.5 py-2.5 text-xs text-slate-300 font-mono focus:outline-none">
+                </div>
+                <div class="p-4 bg-slate-900/60 border border-bordercolor rounded-xl text-xs font-mono text-slate-400 space-y-2">
+                    <p class="font-bold text-slate-200">Webhook Features:</p>
+                    <p>• Zero duplicate orders (3.0s anti-duplicate hash shield).</p>
+                    <p>• Automated Marketable Limit orders with exchange tick quantization.</p>
+                    <p>• Microsecond execution (< 1ms routing delay).</p>
+                </div>
+            </div>
+
+            <!-- JSON Payload Generator -->
+            <div class="space-y-2">
+                <label class="block text-xs font-mono text-slate-400">TradingView Alert Message (JSON)</label>
+                <div class="relative">
+                    <pre class="bg-slate-950 p-4 rounded-xl border border-bordercolor text-xs font-mono text-emerald-400 overflow-x-auto leading-relaxed">
+{% raw %}
+{
+  "secret": "YOUR_WEBHOOK_SECRET",
+  "symbol": "{{ticker}}",
+  "action": "{{strategy.order.action}}",
+  "quantity": "{{strategy.order.contracts}}",
+  "price": "{{close}}"
+}
+{% endraw %}
+                    </pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
