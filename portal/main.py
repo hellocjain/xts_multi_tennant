@@ -185,10 +185,17 @@ async def client_dashboard_page(request: Request, client_user: dict = Depends(re
     async with httpx.AsyncClient(timeout=10.0) as http_client:
         client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
 
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
     return templates.TemplateResponse(request=request, name="client_dashboard.html", context={
         "client": client_data,
         "client_user": client_user,
-        "current_user": client_user
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "dashboard"
     })
 
 @app.get("/client/trading", response_class=HTMLResponse)
@@ -214,7 +221,210 @@ async def client_trading_page(request: Request, client_user: dict = Depends(requ
         "current_user": client_user,
         "api_key": api_key,
         "active_tab": "trading",
+        "active_page": "trading"
     })
+
+@app.get("/client/orders", response_class=HTMLResponse)
+async def client_orders_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_orders.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "orders"
+    })
+
+@app.get("/client/positions", response_class=HTMLResponse)
+async def client_positions_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_positions.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "positions"
+    })
+
+@app.get("/client/options", response_class=HTMLResponse)
+async def client_options_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_options.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "options"
+    })
+
+@app.get("/client/strategies", response_class=HTMLResponse)
+async def client_strategies_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_strategies.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "strategies"
+    })
+
+@app.get("/client/logs", response_class=HTMLResponse)
+async def client_logs_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_logs.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "logs"
+    })
+
+@app.get("/client/developer", response_class=HTMLResponse)
+async def client_developer_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_developer.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "developer"
+    })
+
+@app.post("/client/cancel-order")
+async def client_cancel_order(
+    request: Request,
+    client_user: dict = Depends(require_client_auth),
+    order_id: str = Form(...)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    dest_url = f"http://127.0.0.1:{port}/api/v1/cancelorder"
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [dest_url, f"http://xts_client_{tenant_id}:8000/api/v1/cancelorder"]:
+            try:
+                await http_client.post(target, json={"orderid": order_id}, headers=headers)
+                break
+            except Exception:
+                continue
+
+    referer = request.headers.get("referer", "/client/orders")
+    return RedirectResponse(url=referer, status_code=303)
+
+@app.post("/client/square-off-position")
+async def client_square_off_position(
+    request: Request,
+    client_user: dict = Depends(require_client_auth),
+    symbol: str = Form(...),
+    product: str = Form("NRML"),
+    quantity: int = Form(0)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    dest_url = f"http://127.0.0.1:{port}/api/v1/closeposition"
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [dest_url, f"http://xts_client_{tenant_id}:8000/api/v1/closeposition"]:
+            try:
+                await http_client.post(target, json={"symbol": symbol, "product": product, "quantity": quantity}, headers=headers)
+                break
+            except Exception:
+                continue
+
+    referer = request.headers.get("referer", "/client/positions")
+    return RedirectResponse(url=referer, status_code=303)
 
 @app.websocket("/ws")
 @app.websocket("/client/ws")

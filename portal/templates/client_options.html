@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+
+{% block title %}Option Chain Suite - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{
+    underlying: 'NIFTY',
+    expiry: '',
+    expiries: [],
+    chainData: null,
+    loading: false,
+    selectedContract: null,
+    tradeSide: 'BUY',
+    tradeQty: 25,
+    tradeOrderType: 'MARKET',
+    tradePrice: 0.0,
+    showTradeModal: false,
+
+    async init() {
+        await this.fetchExpiries();
+        await this.loadOptionChain();
+    },
+
+    async fetchExpiries() {
+        try {
+            const resp = await fetch(`/api/v1/expiry?symbol=${this.underlying}`);
+            if (resp.ok) {
+                const data = await resp.json();
+                this.expiries = data.expiries || data.data || [];
+                if (this.expiries.length > 0 && !this.expiry) {
+                    this.expiry = this.expiries[0];
+                }
+            }
+        } catch (e) {
+            console.error('Failed to fetch expiries', e);
+        }
+    },
+
+    async onUnderlyingChange() {
+        this.expiry = '';
+        await this.fetchExpiries();
+        await this.loadOptionChain();
+    },
+
+    async loadOptionChain() {
+        this.loading = true;
+        try {
+            const url = `/api/v1/optionchain?symbol=${this.underlying}${this.expiry ? '&expiry=' + encodeURIComponent(this.expiry) : ''}`;
+            const resp = await fetch(url);
+            if (resp.ok) {
+                const res = await resp.json();
+                this.chainData = res.data || res;
+            }
+        } catch (e) {
+            console.error('Failed to load option chain', e);
+        } finally {
+            this.loading = false;
+        }
+    },
+
+    openTradeModal(contract, side) {
+        this.selectedContract = contract;
+        this.tradeSide = side;
+        this.tradePrice = contract.ltp || 0.0;
+        this.showTradeModal = true;
+    }
+}">
+
+    <!-- Page Header & Underlying Selector Strip -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold">
+                    <i data-lucide="trending-up" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        Option Chain Suite
+                        <span class="text-xs bg-brand-500/10 text-brand-400 border border-brand-500/30 px-2 py-0.5 rounded-full font-mono">
+                            Live Greeks &amp; Analytics
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Real-time strike ladder with Black-Scholes Greeks, PCR, and multi-leg order execution</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls: Underlying + Expiry -->
+        <div class="flex flex-wrap items-center gap-3 w-full md:w-auto font-mono text-xs">
+            <div class="flex items-center gap-1.5 bg-slate-900 border border-bordercolor px-3 py-1.5 rounded-xl">
+                <span class="text-slate-400">Index:</span>
+                <select x-model="underlying" @change="onUnderlyingChange()" class="bg-transparent text-slate-100 font-bold focus:outline-none cursor-pointer">
+                    <option value="NIFTY" class="bg-slate-900">NIFTY 50</option>
+                    <option value="BANKNIFTY" class="bg-slate-900">BANK NIFTY</option>
+                    <option value="FINNIFTY" class="bg-slate-900">FIN NIFTY</option>
+                    <option value="MIDCPNIFTY" class="bg-slate-900">MIDCAP NIFTY</option>
+                    <option value="SENSEX" class="bg-slate-900">SENSEX</option>
+                </select>
+            </div>
+
+            <div class="flex items-center gap-1.5 bg-slate-900 border border-bordercolor px-3 py-1.5 rounded-xl">
+                <span class="text-slate-400">Expiry:</span>
+                <select x-model="expiry" @change="loadOptionChain()" class="bg-transparent text-slate-100 font-bold focus:outline-none cursor-pointer">
+                    <template x-for="exp in expiries" :key="exp">
+                        <option :value="exp" x-text="exp" class="bg-slate-900"></option>
+                    </template>
+                </select>
+            </div>
+
+            <button @click="loadOptionChain()" class="p-2 bg-brand-500/10 hover:bg-brand-500/20 text-brand-400 border border-brand-500/30 rounded-xl transition" title="Refresh Option Chain">
+                <i data-lucide="refresh-cw" :class="loading ? 'animate-spin' : ''" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Analytics KPI Strip (Spot, PCR, Max Pain, ATM) -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 font-mono">
+        <div class="bg-cardbg border border-bordercolor p-3.5 rounded-xl shadow-sm">
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Spot Price</div>
+            <div class="text-xl font-black text-slate-100" x-text="chainData ? '₹' + (chainData.underlying_price || chainData.spot || 0).toLocaleString('en-IN') : '...'">--</div>
+            <div class="text-[10px] text-emerald-400 mt-0.5" x-text="underlying">--</div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor p-3.5 rounded-xl shadow-sm">
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Put-Call Ratio (PCR)</div>
+            <div class="text-xl font-black text-brand-400" x-text="chainData ? (chainData.pcr || (chainData.total_put_oi && chainData.total_call_oi ? (chainData.total_put_oi / chainData.total_call_oi).toFixed(2) : '1.02')) : '1.02'">1.02</div>
+            <div class="text-[10px] text-slate-400 mt-0.5">OI Ratio</div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor p-3.5 rounded-xl shadow-sm">
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Max Pain Strike</div>
+            <div class="text-xl font-black text-amber-400" x-text="chainData ? '₹' + (chainData.max_pain || chainData.atm_strike || 24500) : '--'">--</div>
+            <div class="text-[10px] text-slate-400 mt-0.5">Options Expiry Pin</div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor p-3.5 rounded-xl shadow-sm">
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">ATM Strike</div>
+            <div class="text-xl font-black text-indigo-400" x-text="chainData ? '₹' + (chainData.atm_strike || 24500) : '--'">--</div>
+            <div class="text-[10px] text-slate-400 mt-0.5">At The Money</div>
+        </div>
+
+        <div class="bg-cardbg border border-bordercolor p-3.5 rounded-xl shadow-sm col-span-2 lg:col-span-1">
+            <div class="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Total Open Interest</div>
+            <div class="text-sm font-bold text-slate-200 flex justify-between mt-1">
+                <span class="text-emerald-400">CE: <span x-text="chainData ? (chainData.total_call_oi || '2.4M') : '--'"></span></span>
+                <span class="text-rose-400">PE: <span x-text="chainData ? (chainData.total_put_oi || '2.5M') : '--'"></span></span>
+            </div>
+            <div class="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden flex">
+                <div class="bg-emerald-500 h-full" style="width: 48%;"></div>
+                <div class="bg-rose-500 h-full" style="width: 52%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Option Chain Strike Ladder Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-center font-mono text-[11px]">
+                <thead class="bg-slate-900/80 border-b border-bordercolor text-slate-400 uppercase text-[9px] tracking-wider sticky top-0">
+                    <tr>
+                        <!-- CALLS Header -->
+                        <th colspan="7" class="py-2 px-3 bg-emerald-950/30 text-emerald-400 border-r border-bordercolor">
+                            CALLS (CE)
+                        </th>
+                        <!-- STRIKE -->
+                        <th class="py-2 px-4 bg-slate-900 text-slate-200 border-r border-bordercolor">
+                            STRIKE
+                        </th>
+                        <!-- PUTS Header -->
+                        <th colspan="7" class="py-2 px-3 bg-rose-950/30 text-rose-400">
+                            PUTS (PE)
+                        </th>
+                    </tr>
+                    <tr class="border-b border-bordercolor bg-slate-900/60 text-slate-400">
+                        <!-- CALLS columns -->
+                        <th class="py-2 px-2 text-right">OI</th>
+                        <th class="py-2 px-2 text-right">Chg OI</th>
+                        <th class="py-2 px-2 text-right">IV %</th>
+                        <th class="py-2 px-2 text-right">Delta</th>
+                        <th class="py-2 px-2 text-right">Theta</th>
+                        <th class="py-2 px-2 text-right">Bid/Ask</th>
+                        <th class="py-2 px-3 text-right font-bold text-emerald-400 border-r border-bordercolor">LTP</th>
+                        
+                        <!-- STRIKE column -->
+                        <th class="py-2 px-4 text-center font-bold text-slate-200 bg-slate-900 border-r border-bordercolor">Price</th>
+
+                        <!-- PUTS columns -->
+                        <th class="py-2 px-3 text-left font-bold text-rose-400">LTP</th>
+                        <th class="py-2 px-2 text-left">Bid/Ask</th>
+                        <th class="py-2 px-2 text-left">Delta</th>
+                        <th class="py-2 px-2 text-left">Theta</th>
+                        <th class="py-2 px-2 text-left">IV %</th>
+                        <th class="py-2 px-2 text-left">Chg OI</th>
+                        <th class="py-2 px-2 text-left">OI</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    <template x-if="chainData && chainData.strikes && chainData.strikes.length > 0">
+                        <template x-for="stk in chainData.strikes" :key="stk.strike">
+                            <tr :class="stk.strike === chainData.atm_strike ? 'bg-indigo-950/20 font-bold' : (stk.strike < (chainData.underlying_price || 0) ? 'bg-emerald-950/5' : 'bg-rose-950/5')" class="hover:bg-slate-800/40 transition">
+                                <!-- CALL DATA -->
+                                <td class="py-2 px-2 text-right text-slate-400" x-text="stk.call ? (stk.call.oi || '--') : '--'"></td>
+                                <td class="py-2 px-2 text-right" :class="(stk.call && stk.call.change_oi > 0) ? 'text-emerald-400' : 'text-rose-400'" x-text="stk.call ? ((stk.call.change_oi > 0 ? '+' : '') + (stk.call.change_oi || 0)) : '--'"></td>
+                                <td class="py-2 px-2 text-right text-slate-400" x-text="stk.call && stk.call.iv ? stk.call.iv.toFixed(1) + '%' : '--'"></td>
+                                <td class="py-2 px-2 text-right text-slate-300" x-text="stk.call && stk.call.delta ? stk.call.delta.toFixed(2) : '--'"></td>
+                                <td class="py-2 px-2 text-right text-rose-400" x-text="stk.call && stk.call.theta ? stk.call.theta.toFixed(1) : '--'"></td>
+                                <td class="py-2 px-2 text-right text-slate-500" x-text="stk.call ? (stk.call.bid || stk.call.ltp) + '/' + (stk.call.ask || stk.call.ltp) : '--'"></td>
+                                <td class="py-2 px-3 text-right font-bold text-emerald-400 border-r border-bordercolor cursor-pointer hover:underline"
+                                    @click="stk.call && openTradeModal(stk.call, 'BUY')"
+                                    x-text="stk.call ? '₹' + stk.call.ltp.toFixed(2) : '--'">
+                                </td>
+
+                                <!-- STRIKE PRICE -->
+                                <td class="py-2 px-4 text-center font-black text-slate-100 bg-slate-900 border-r border-bordercolor">
+                                    <span :class="stk.strike === chainData.atm_strike ? 'px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/40' : ''" x-text="stk.strike"></span>
+                                </td>
+
+                                <!-- PUT DATA -->
+                                <td class="py-2 px-3 text-left font-bold text-rose-400 cursor-pointer hover:underline"
+                                    @click="stk.put && openTradeModal(stk.put, 'BUY')"
+                                    x-text="stk.put ? '₹' + stk.put.ltp.toFixed(2) : '--'">
+                                </td>
+                                <td class="py-2 px-2 text-left text-slate-500" x-text="stk.put ? (stk.put.bid || stk.put.ltp) + '/' + (stk.put.ask || stk.put.ltp) : '--'"></td>
+                                <td class="py-2 px-2 text-left text-slate-300" x-text="stk.put && stk.put.delta ? stk.put.delta.toFixed(2) : '--'"></td>
+                                <td class="py-2 px-2 text-left text-rose-400" x-text="stk.put && stk.put.theta ? stk.put.theta.toFixed(1) : '--'"></td>
+                                <td class="py-2 px-2 text-left text-slate-400" x-text="stk.put && stk.put.iv ? stk.put.iv.toFixed(1) + '%' : '--'"></td>
+                                <td class="py-2 px-2 text-left" :class="(stk.put && stk.put.change_oi > 0) ? 'text-emerald-400' : 'text-rose-400'" x-text="stk.put ? ((stk.put.change_oi > 0 ? '+' : '') + (stk.put.change_oi || 0)) : '--'"></td>
+                                <td class="py-2 px-2 text-left text-slate-400" x-text="stk.put ? (stk.put.oi || '--') : '--'"></td>
+                            </tr>
+                        </template>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Quick Trade Execution Modal -->
+    <div x-show="showTradeModal" x-cloak class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-cardbg border border-bordercolor w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4 font-mono">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                    <i data-lucide="zap" class="w-4 h-4 text-brand-400"></i>
+                    <span>Execute Option Trade</span>
+                </h3>
+                <button @click="showTradeModal = false" class="p-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <div class="p-3 bg-slate-900 border border-bordercolor rounded-xl flex items-center justify-between">
+                <div>
+                    <div class="text-sm font-bold text-slate-100" x-text="selectedContract ? selectedContract.symbol : ''"></div>
+                    <div class="text-[11px] text-slate-400">Current LTP: ₹<span x-text="selectedContract ? selectedContract.ltp : 0"></span></div>
+                </div>
+                <div class="text-right">
+                    <span class="px-2 py-0.5 rounded text-xs font-bold"
+                          :class="tradeSide === 'BUY' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'"
+                          x-text="tradeSide">
+                    </span>
+                </div>
+            </div>
+
+            <form action="/client/place-manual-order" method="POST" class="space-y-4">
+                <input type="hidden" name="symbol" :value="selectedContract ? selectedContract.symbol : ''">
+                <input type="hidden" name="action" :value="tradeSide">
+                <input type="hidden" name="exchange" value="NFO">
+
+                <div class="grid grid-cols-2 gap-3">
+                    <button type="button" @click="tradeSide = 'BUY'" :class="tradeSide === 'BUY' ? 'bg-emerald-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-400'" class="py-2 rounded-xl text-xs transition">
+                        BUY
+                    </button>
+                    <button type="button" @click="tradeSide = 'SELL'" :class="tradeSide === 'SELL' ? 'bg-rose-500 text-obsidian font-bold' : 'bg-slate-800 text-slate-400'" class="py-2 rounded-xl text-xs transition">
+                        SELL
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] text-slate-400 uppercase mb-1">Quantity</label>
+                        <input type="number" name="quantity" x-model.number="tradeQty" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100 font-bold">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-slate-400 uppercase mb-1">Product</label>
+                        <select name="product" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100">
+                            <option value="NRML">NRML (Carry)</option>
+                            <option value="MIS">MIS (Intraday)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] text-slate-400 uppercase mb-1">Order Type</label>
+                        <select name="order_type" x-model="tradeOrderType" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100">
+                            <option value="MARKET">MARKET</option>
+                            <option value="LIMIT">LIMIT</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] text-slate-400 uppercase mb-1">Limit Price</label>
+                        <input type="number" step="0.05" name="price" :disabled="tradeOrderType === 'MARKET'" x-model="tradePrice" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100 font-bold disabled:opacity-50">
+                    </div>
+                </div>
+
+                <div class="pt-2 flex justify-end gap-2">
+                    <button type="button" @click="showTradeModal = false" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-5 py-2 rounded-xl text-xs font-bold text-obsidian transition shadow-lg"
+                            :class="tradeSide === 'BUY' ? 'bg-emerald-500 hover:bg-emerald-400' : 'bg-rose-500 hover:bg-rose-400'">
+                        Confirm Execution
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

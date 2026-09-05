@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+
+{% block title %}Developer Hub &amp; API Docs - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{
+    showApiKey: false,
+    activeCodeTab: 'pine',
+    copiedSnippet: false
+}">
+
+    <!-- Page Header Strip -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold">
+                    <i data-lucide="terminal" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        Developer Hub &amp; API Docs
+                        <span class="text-xs bg-brand-500/10 text-brand-400 border border-brand-500/30 px-2 py-0.5 rounded-full font-mono">
+                            REST v1 Parity
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Integrate TradingView, AmiBroker, Python, and external bots with 100% OpenAlgo schema parity</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 font-mono text-xs">
+            <a href="/docs" target="_blank" class="px-4 py-2 bg-brand-500/10 hover:bg-brand-500/20 text-brand-400 border border-brand-500/30 rounded-xl font-bold transition flex items-center gap-1.5 shadow-sm">
+                <i data-lucide="book-open" class="w-4 h-4"></i>
+                <span>Interactive Swagger UI (/docs)</span>
+            </a>
+            <a href="/redoc" target="_blank" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition" title="Redoc API Specs">
+                <i data-lucide="file-text" class="w-4 h-4"></i>
+                <span class="hidden sm:inline">Redoc</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- API Key Management Card -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-4 font-mono">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center gap-2">
+                <i data-lucide="key" class="w-4 h-4 text-brand-400"></i>
+                <h3 class="text-sm font-bold text-slate-100">Tenant API Key &amp; Webhook Credentials</h3>
+            </div>
+            <span class="text-[11px] text-slate-400">Required in all headers or JSON bodies</span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div class="lg:col-span-2 space-y-1.5">
+                <label class="block text-[11px] text-slate-400 uppercase tracking-wider">Your API Secret Key</label>
+                <div class="flex items-center gap-2 bg-slate-900 border border-bordercolor rounded-xl p-2.5">
+                    <input type="text" id="api-key-input"
+                           :type="showApiKey ? 'text' : 'password'"
+                           value="{{ api_key }}"
+                           readonly
+                           class="flex-1 bg-transparent text-xs text-slate-100 font-bold focus:outline-none select-all">
+                    <button type="button" @click="showApiKey = !showApiKey" class="p-1.5 text-slate-400 hover:text-slate-200 transition" title="Toggle Visibility">
+                        <i data-lucide="eye" x-show="!showApiKey" class="w-4 h-4"></i>
+                        <i data-lucide="eye-off" x-show="showApiKey" class="w-4 h-4"></i>
+                    </button>
+                    <button type="button" onclick="copyElementText('api-key-input', this)" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy</span>
+                    </button>
+                </div>
+                <p class="text-[10px] text-slate-500">Keep this key secret. Pass it as <code class="text-slate-300">{"apikey": "..."}</code> in JSON bodies or <code class="text-slate-300">X-API-KEY</code> header.</p>
+            </div>
+
+            <div class="space-y-1.5">
+                <label class="block text-[11px] text-slate-400 uppercase tracking-wider">Primary Webhook URL</label>
+                <div class="flex items-center gap-2 bg-slate-900 border border-bordercolor rounded-xl p-2.5">
+                    <input type="text" id="webhook-url-input"
+                           value="{{ request.base_url }}api/v1/placesmartorder"
+                           readonly
+                           class="flex-1 bg-transparent text-xs text-brand-400 font-bold focus:outline-none select-all">
+                    <button type="button" onclick="copyElementText('webhook-url-input', this)" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy</span>
+                    </button>
+                </div>
+                <p class="text-[10px] text-slate-500">Paste this URL into TradingView Alert Webhook field.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Code Generator Tabs -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl overflow-hidden font-mono text-xs">
+        <div class="p-4 border-b border-bordercolor flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <i data-lucide="code" class="w-4 h-4 text-brand-400"></i>
+                <span>Integration Code Snippets</span>
+            </h3>
+            <span class="text-[11px] text-slate-400">Ready to copy &amp; deploy</span>
+        </div>
+
+        <!-- Code Sub-Tabs -->
+        <div class="flex items-center gap-1 bg-slate-900/80 p-2 border-b border-bordercolor overflow-x-auto">
+            <button @click="activeCodeTab = 'pine'" :class="activeCodeTab === 'pine' ? 'bg-brand-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                TradingView Pine Script v5
+            </button>
+            <button @click="activeCodeTab = 'python'" :class="activeCodeTab === 'python' ? 'bg-brand-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                Python SDK (requests)
+            </button>
+            <button @click="activeCodeTab = 'nodejs'" :class="activeCodeTab === 'nodejs' ? 'bg-brand-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                Node.js / Fetch
+            </button>
+            <button @click="activeCodeTab = 'afl'" :class="activeCodeTab === 'afl' ? 'bg-brand-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                AmiBroker AFL
+            </button>
+            <button @click="activeCodeTab = 'curl'" :class="activeCodeTab === 'curl' ? 'bg-brand-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                cURL CLI
+            </button>
+        </div>
+
+        <!-- Code Display Container -->
+        <div class="p-5 bg-slate-950/90 relative group">
+
+            <!-- 1. Pine Script -->
+            <div x-show="activeCodeTab === 'pine'">
+                <pre class="text-xs text-emerald-400 overflow-x-auto leading-relaxed" id="snippet-pine">// TradingView Pine Script v5 Alert Message (JSON format)
+// In your Pine Script strategy:
+alert_payload = '{"apikey": "{{ api_key }}", "strategy": "SuperTrend_Strategy", "symbol": "RELIANCE", "action": "' + (strategy.position_size > 0 ? "BUY" : "SELL") + '", "exchange": "NSE", "pricetype": "MARKET", "product": "MIS", "quantity": "10", "position_size": "' + str.tostring(strategy.position_size) + '"}'
+
+if ta.crossover(ta.supertrend(10, 3), close)
+    alert(alert_payload, alert.freq_once_per_bar_close)</pre>
+                <div class="pt-3">
+                    <button type="button" onclick="copyElementText('snippet-pine', this)" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy Pine Script</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 2. Python -->
+            <div x-show="activeCodeTab === 'python'">
+                <pre class="text-xs text-indigo-300 overflow-x-auto leading-relaxed" id="snippet-python">import requests
+
+url = "{{ request.base_url }}api/v1/placesmartorder"
+headers = {"Content-Type": "application/json"}
+
+payload = {
+    "apikey": "{{ api_key }}",
+    "strategy": "Python_Algo_V1",
+    "symbol": "NIFTY24SEP24500CE",
+    "action": "BUY",
+    "exchange": "NFO",
+    "pricetype": "MARKET",
+    "product": "NRML",
+    "quantity": 25,
+    "position_size": 25
+}
+
+response = requests.post(url, json=payload, headers=headers, timeout=5)
+print("Order Response:", response.json())</pre>
+                <div class="pt-3">
+                    <button type="button" onclick="copyElementText('snippet-python', this)" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy Python Script</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3. Node.js -->
+            <div x-show="activeCodeTab === 'nodejs'">
+                <pre class="text-xs text-amber-300 overflow-x-auto leading-relaxed" id="snippet-nodejs">const fetch = require('node-fetch');
+
+async function placeTrade() {
+    const res = await fetch("{{ request.base_url }}api/v1/placesmartorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            apikey: "{{ api_key }}",
+            strategy: "Node_Bot",
+            symbol: "INFY",
+            action: "BUY",
+            exchange: "NSE",
+            pricetype: "MARKET",
+            product: "MIS",
+            quantity: 10
+        })
+    });
+    const data = await res.json();
+    console.log("Order result:", data);
+}
+
+placeTrade();</pre>
+                <div class="pt-3">
+                    <button type="button" onclick="copyElementText('snippet-nodejs', this)" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy Node.js Script</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 4. AFL -->
+            <div x-show="activeCodeTab === 'afl'">
+                <pre class="text-xs text-rose-300 overflow-x-auto leading-relaxed" id="snippet-afl">// AmiBroker AFL Webhook Trigger (via WinHTTP or Python Bridge)
+// Place this inside your AFL buy/sell rules:
+api_key = "{{ api_key }}";
+endpoint = "{{ request.base_url }}api/v1/placesmartorder";
+
+BuySignal = Cross(Close, MA(Close, 20));
+if (LastValue(BuySignal)) {
+    payload = StrFormat("{\"apikey\":\"%s\",\"strategy\":\"AFL_MA\",\"symbol\":\"%s\",\"action\":\"BUY\",\"exchange\":\"NSE\",\"quantity\":\"10\",\"product\":\"MIS\"}", api_key, Name());
+    // Send via OpenAlgo AFL bridge
+}</pre>
+                <div class="pt-3">
+                    <button type="button" onclick="copyElementText('snippet-afl', this)" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy AFL Snippet</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 5. cURL -->
+            <div x-show="activeCodeTab === 'curl'">
+                <pre class="text-xs text-sky-300 overflow-x-auto leading-relaxed" id="snippet-curl">curl -X POST "{{ request.base_url }}api/v1/placesmartorder" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "apikey": "{{ api_key }}",
+    "strategy": "cURL_Test",
+    "symbol": "RELIANCE",
+    "action": "BUY",
+    "exchange": "NSE",
+    "pricetype": "MARKET",
+    "product": "MIS",
+    "quantity": 10
+  }'</pre>
+                <div class="pt-3">
+                    <button type="button" onclick="copyElementText('snippet-curl', this)" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        <span>Copy cURL Command</span>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- REST API Endpoints Cheat Sheet -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl p-6 font-mono text-xs space-y-4">
+        <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2 border-b border-bordercolor pb-3">
+            <i data-lucide="layers" class="w-4 h-4 text-brand-400"></i>
+            <span>OpenAlgo Core REST API Endpoint Reference</span>
+        </h3>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left">
+                <thead class="bg-slate-900/60 border-b border-bordercolor text-slate-400 uppercase text-[10px]">
+                    <tr>
+                        <th class="py-2.5 px-3">Method</th>
+                        <th class="py-2.5 px-3">Endpoint</th>
+                        <th class="py-2.5 px-3">Purpose</th>
+                        <th class="py-2.5 px-3">Key Parameters</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">POST</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/placesmartorder</td>
+                        <td class="py-2.5 px-3 text-slate-300">Auto position reversal, qty slicing &amp; slippage buffer</td>
+                        <td class="py-2.5 px-3 text-slate-400">symbol, action, quantity, strategy, position_size</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">POST</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/placeorder</td>
+                        <td class="py-2.5 px-3 text-slate-300">Standard single order execution with tick quantization</td>
+                        <td class="py-2.5 px-3 text-slate-400">symbol, action, quantity, pricetype, price, product</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">POST</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/closeposition</td>
+                        <td class="py-2.5 px-3 text-slate-300">Instantly square off an open position</td>
+                        <td class="py-2.5 px-3 text-slate-400">symbol, product, quantity</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">POST</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/cancelorder</td>
+                        <td class="py-2.5 px-3 text-slate-300">Cancel open pending order by ID</td>
+                        <td class="py-2.5 px-3 text-slate-400">orderid</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">POST</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/orderstatus</td>
+                        <td class="py-2.5 px-3 text-slate-300">Inquire live status of an order</td>
+                        <td class="py-2.5 px-3 text-slate-400">orderid</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 font-bold">GET</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/optionchain</td>
+                        <td class="py-2.5 px-3 text-slate-300">Full option chain with Black-Scholes Greeks &amp; OI</td>
+                        <td class="py-2.5 px-3 text-slate-400">symbol, expiry</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

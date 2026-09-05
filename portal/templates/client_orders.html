@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}Order Book - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{
+    filterTab: 'all',
+    searchQuery: '',
+    actionFilter: 'ALL'
+}">
+
+    <!-- Page Header Strip -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold">
+                    <i data-lucide="list-ordered" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        Order Book
+                        <span class="text-xs bg-brand-500/10 text-brand-400 border border-brand-500/30 px-2 py-0.5 rounded-full font-mono">
+                            {{ client.broker_orders|length if client.broker_orders else 0 }} Orders
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Real-time audit log of all broker and algorithmic executions</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <form action="/client/cancel-all-orders" method="POST" onsubmit="return confirm('Cancel all open pending orders?');">
+                <button type="submit" class="px-4 py-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="x-circle" class="w-4 h-4"></i>
+                    <span>Cancel All Pending</span>
+                </button>
+            </form>
+            <button onclick="window.location.reload()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition" title="Refresh">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Quick Metrics Strip -->
+    {% set total_orders = client.broker_orders|length if client.broker_orders else 0 %}
+    {% set open_orders = [] %}
+    {% set completed_orders = [] %}
+    {% set rejected_orders = [] %}
+    {% if client.broker_orders %}
+        {% for o in client.broker_orders %}
+            {% set st = (o.get('order_status') or o.get('status') or '')|lower %}
+            {% if st in ['open', 'pending', 'trigger pending', 'active'] %}
+                {% set _ = open_orders.append(o) %}
+            {% elif st in ['complete', 'filled', 'executed'] %}
+                {% set _ = completed_orders.append(o) %}
+            {% else %}
+                {% set _ = rejected_orders.append(o) %}
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Total Orders</div>
+            <div class="text-2xl font-black text-slate-100">{{ total_orders }}</div>
+            <div class="text-[11px] text-slate-500 mt-1">Today's Session</div>
+        </div>
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Completed / Filled</div>
+            <div class="text-2xl font-black text-emerald-400">{{ completed_orders|length }}</div>
+            <div class="text-[11px] text-emerald-500/70 mt-1">Successfully Executed</div>
+        </div>
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Open / Pending</div>
+            <div class="text-2xl font-black text-amber-400">{{ open_orders|length }}</div>
+            <div class="text-[11px] text-amber-500/70 mt-1">Awaiting Execution</div>
+        </div>
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Cancelled / Rejected</div>
+            <div class="text-2xl font-black text-rose-400">{{ rejected_orders|length }}</div>
+            <div class="text-[11px] text-rose-500/70 mt-1">Failed / Aborted</div>
+        </div>
+    </div>
+
+    <!-- Filter & Search Bar -->
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+        <!-- Sub-Tabs -->
+        <div class="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-bordercolor font-mono text-xs overflow-x-auto">
+            <button @click="filterTab = 'all'" :class="filterTab === 'all' ? 'bg-brand-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                All ({{ total_orders }})
+            </button>
+            <button @click="filterTab = 'open'" :class="filterTab === 'open' ? 'bg-amber-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                Open ({{ open_orders|length }})
+            </button>
+            <button @click="filterTab = 'completed'" :class="filterTab === 'completed' ? 'bg-emerald-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                Completed ({{ completed_orders|length }})
+            </button>
+            <button @click="filterTab = 'rejected'" :class="filterTab === 'rejected' ? 'bg-rose-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                Cancelled / Rejected ({{ rejected_orders|length }})
+            </button>
+        </div>
+
+        <!-- Search Input -->
+        <div class="flex items-center gap-2">
+            <div class="relative flex-1 md:w-64">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-slate-400"></i>
+                <input type="text" x-model="searchQuery" placeholder="Search symbol, ID..." class="w-full pl-9 pr-3 py-1.5 bg-slate-900 border border-bordercolor rounded-xl text-xs font-mono text-slate-200 placeholder-slate-500 focus:border-brand-500 focus:outline-none">
+            </div>
+            <select x-model="actionFilter" class="bg-slate-900 border border-bordercolor text-slate-300 text-xs font-mono px-3 py-1.5 rounded-xl focus:outline-none">
+                <option value="ALL">All Actions</option>
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Orders Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono text-xs">
+                <thead class="bg-slate-900/60 border-b border-bordercolor text-slate-400 uppercase text-[10px] tracking-wider">
+                    <tr>
+                        <th class="py-3.5 px-4">Time</th>
+                        <th class="py-3.5 px-4">Order ID</th>
+                        <th class="py-3.5 px-4">Symbol</th>
+                        <th class="py-3.5 px-4">Action</th>
+                        <th class="py-3.5 px-4">Type</th>
+                        <th class="py-3.5 px-4">Product</th>
+                        <th class="py-3.5 px-4 text-right">Qty</th>
+                        <th class="py-3.5 px-4 text-right">Price</th>
+                        <th class="py-3.5 px-4 text-center">Status</th>
+                        <th class="py-3.5 px-4 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    {% if client.broker_orders %}
+                        {% for ord in client.broker_orders %}
+                        {% set st = (ord.get('order_status') or ord.get('status') or '')|lower %}
+                        {% set act = (ord.get('action') or ord.get('trans_type') or 'BUY')|upper %}
+                        {% set sym = ord.get('symbol') or ord.get('tradingsymbol') or 'N/A' %}
+                        {% set oid = ord.get('order_id') or ord.get('orderid') or ord.get('AppOrderID') or 'N/A' %}
+                        <tr class="hover:bg-slate-800/40 transition"
+                            x-show="(
+                                (filterTab === 'all') ||
+                                (filterTab === 'open' && ['open', 'pending', 'trigger pending', 'active'].includes('{{ st }}')) ||
+                                (filterTab === 'completed' && ['complete', 'filled', 'executed'].includes('{{ st }}')) ||
+                                (filterTab === 'rejected' && !['open', 'pending', 'trigger pending', 'active', 'complete', 'filled', 'executed'].includes('{{ st }}'))
+                            ) && (
+                                '{{ actionFilter }}' === 'ALL' || '{{ act }}' === '{{ actionFilter }}'
+                            ) && (
+                                !searchQuery || '{{ sym }}'.toLowerCase().includes(searchQuery.toLowerCase()) || '{{ oid }}'.toLowerCase().includes(searchQuery.toLowerCase())
+                            )">
+                            <td class="py-3 px-4 text-slate-400">{{ ord.get('time') or ord.get('OrderGeneratedDateTime') or '--:--:--' }}</td>
+                            <td class="py-3 px-4 text-slate-300 font-bold">#{{ oid }}</td>
+                            <td class="py-3 px-4 text-slate-100 font-semibold">{{ sym }}</td>
+                            <td class="py-3 px-4">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold {% if act == 'BUY' %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/30{% else %}bg-rose-500/10 text-rose-400 border border-rose-500/30{% endif %}">
+                                    {{ act }}
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 text-slate-300">{{ ord.get('order_type') or ord.get('pricetype') or 'MARKET' }}</td>
+                            <td class="py-3 px-4 text-slate-400">{{ ord.get('product') or ord.get('producttype') or 'NRML' }}</td>
+                            <td class="py-3 px-4 text-right text-slate-200">
+                                {{ ord.get('filled_quantity', ord.get('quantity', 0)) }} / {{ ord.get('quantity', 0) }}
+                            </td>
+                            <td class="py-3 px-4 text-right text-slate-200 font-bold">
+                                ₹{{ ord.get('price', 0.0)|inr }}
+                            </td>
+                            <td class="py-3 px-4 text-center">
+                                {% if st in ['complete', 'filled', 'executed'] %}
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Complete</span>
+                                {% elif st in ['open', 'pending', 'trigger pending', 'active'] %}
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">Open</span>
+                                {% else %}
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">{{ ord.get('order_status') or 'Rejected' }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-3 px-4 text-right">
+                                {% if st in ['open', 'pending', 'trigger pending', 'active'] %}
+                                <form action="/client/cancel-order" method="POST" class="inline">
+                                    <input type="hidden" name="order_id" value="{{ oid }}">
+                                    <button type="submit" class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white rounded border border-rose-500/30 text-[10px] font-bold transition">
+                                        Cancel
+                                    </button>
+                                </form>
+                                {% else %}
+                                <span class="text-slate-500 text-[10px]">&bull;</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="10" class="py-8 text-center text-slate-500 font-mono">
+                                No orders executed today. Webhook signals and manual trades will appear here automatically.
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

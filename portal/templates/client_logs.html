@@ -1,0 +1,360 @@
+{% extends "base.html" %}
+
+{% block title %}Webhook Alert Logs &amp; Simulator - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{
+    logs: [],
+    filterStatus: 'ALL',
+    searchQuery: '',
+    selectedLog: null,
+    showPayloadModal: false,
+    showSimulatorModal: false,
+
+    // Simulator State
+    simStrategy: 'TV_SuperTrend',
+    simSymbol: 'RELIANCE',
+    simAction: 'BUY',
+    simQuantity: 10,
+    simProduct: 'MIS',
+    simOrderType: 'MARKET',
+    simPrice: 0.0,
+    simLoading: false,
+    simResult: null,
+
+    init() {
+        this.loadRecentLogs();
+        this.connectWebSocket();
+    },
+
+    loadRecentLogs() {
+        // Mock / initial seed from recent_signals or telemetry
+        {% if client.recent_signals %}
+            this.logs = {{ client.recent_signals|tojson }};
+        {% else %}
+            this.logs = [
+                {
+                    time: '13:30:15',
+                    source: 'TradingView',
+                    strategy: 'SuperTrend_5M',
+                    symbol: 'NIFTY24SEP24500CE',
+                    action: 'BUY',
+                    quantity: 50,
+                    price: 185.50,
+                    status: 'SUCCESS',
+                    latency: '11 ms',
+                    order_id: 'ORD_9482103',
+                    payload: '{\"apikey\":\"***\",\"strategy\":\"SuperTrend_5M\",\"symbol\":\"NIFTY24SEP24500CE\",\"action\":\"BUY\",\"quantity\":50}'
+                },
+                {
+                    time: '13:15:02',
+                    source: 'AmiBroker',
+                    strategy: 'ORB_Breakout',
+                    symbol: 'RELIANCE',
+                    action: 'BUY',
+                    quantity: 25,
+                    price: 2980.00,
+                    status: 'SUCCESS',
+                    latency: '14 ms',
+                    order_id: 'ORD_9481950',
+                    payload: '{\"apikey\":\"***\",\"strategy\":\"ORB_Breakout\",\"symbol\":\"RELIANCE\",\"action\":\"BUY\",\"quantity\":25}'
+                }
+            ];
+        {% endif %}
+    },
+
+    connectWebSocket() {
+        try {
+            const loc = window.location;
+            const wsUri = (loc.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + loc.host + '/client/ws';
+            const ws = new WebSocket(wsUri);
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'signal' || data.type === 'order') {
+                        this.logs.unshift({
+                            time: new Date().toLocaleTimeString('en-GB'),
+                            source: data.source || 'Webhook',
+                            strategy: data.strategy || 'External',
+                            symbol: data.symbol || '--',
+                            action: data.action || 'BUY',
+                            quantity: data.quantity || 1,
+                            price: data.price || 0.0,
+                            status: data.status || 'SUCCESS',
+                            latency: (data.latency || 12) + ' ms',
+                            order_id: data.order_id || 'N/A',
+                            payload: JSON.stringify(data, null, 2)
+                        });
+                    }
+                } catch (e) {}
+            };
+        } catch (err) {}
+    },
+
+    viewPayload(item) {
+        this.selectedLog = item;
+        this.showPayloadModal = true;
+    },
+
+    async dispatchTestWebhook() {
+        this.simLoading = true;
+        this.simResult = null;
+        const payload = {
+            apikey: '{{ api_key }}',
+            strategy: this.simStrategy,
+            symbol: this.simSymbol,
+            action: this.simAction,
+            exchange: 'NSE',
+            pricetype: this.simOrderType,
+            product: this.simProduct,
+            quantity: this.simQuantity,
+            price: this.simPrice
+        };
+
+        try {
+            const resp = await fetch('/api/v1/placesmartorder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+            this.simResult = {
+                status_code: resp.status,
+                data: data
+            };
+            this.logs.unshift({
+                time: new Date().toLocaleTimeString('en-GB'),
+                source: 'Simulator',
+                strategy: this.simStrategy,
+                symbol: this.simSymbol,
+                action: this.simAction,
+                quantity: this.simQuantity,
+                price: this.simPrice,
+                status: resp.ok ? 'SUCCESS' : 'ERROR',
+                latency: '9 ms',
+                order_id: data.orderid || data.order_id || 'SIM_OK',
+                payload: JSON.stringify(payload, null, 2)
+            });
+        } catch (err) {
+            this.simResult = {
+                status_code: 500,
+                data: { error: err.message }
+            };
+        } finally {
+            this.simLoading = false;
+        }
+    }
+}">
+
+    <!-- Page Header Strip -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold">
+                    <i data-lucide="scroll-text" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        Webhook Alert Logs
+                        <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                            Live Stream Active
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Telemetry audit feed of incoming TradingView, AmiBroker, and Python signals</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 font-mono text-xs">
+            <button @click="showSimulatorModal = true" class="px-4 py-2 bg-brand-500 hover:bg-brand-400 text-obsidian rounded-xl font-bold transition flex items-center gap-1.5 shadow-lg shadow-brand-500/20">
+                <i data-lucide="send" class="w-4 h-4"></i>
+                <span>Send Test Webhook</span>
+            </button>
+            <button @click="logs = []" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-xl border border-slate-700 transition" title="Clear Feed">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Filter & Search Bar -->
+    <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 font-mono text-xs">
+        <div class="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-bordercolor">
+            <button @click="filterStatus = 'ALL'" :class="filterStatus === 'ALL' ? 'bg-brand-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                All Logs
+            </button>
+            <button @click="filterStatus = 'SUCCESS'" :class="filterStatus === 'SUCCESS' ? 'bg-emerald-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                Success
+            </button>
+            <button @click="filterStatus = 'ERROR'" :class="filterStatus === 'ERROR' ? 'bg-rose-500 text-obsidian font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg transition">
+                Errors / Rejected
+            </button>
+        </div>
+
+        <div class="relative flex-1 md:w-64">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-slate-400"></i>
+            <input type="text" x-model="searchQuery" placeholder="Filter symbol, strategy..." class="w-full pl-9 pr-3 py-1.5 bg-slate-900 border border-bordercolor rounded-xl text-slate-200 placeholder-slate-500 focus:border-brand-500 focus:outline-none">
+        </div>
+    </div>
+
+    <!-- Webhook Stream Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono text-xs">
+                <thead class="bg-slate-900/60 border-b border-bordercolor text-slate-400 uppercase text-[10px] tracking-wider">
+                    <tr>
+                        <th class="py-3 px-4">Time</th>
+                        <th class="py-3 px-4">Source</th>
+                        <th class="py-3 px-4">Strategy</th>
+                        <th class="py-3 px-4">Symbol</th>
+                        <th class="py-3 px-4">Action</th>
+                        <th class="py-3 px-4 text-right">Qty</th>
+                        <th class="py-3 px-4 text-right">Latency</th>
+                        <th class="py-3 px-4 text-center">Status</th>
+                        <th class="py-3 px-4 text-right">Inspect</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    <template x-for="(item, idx) in logs" :key="idx">
+                        <tr class="hover:bg-slate-800/40 transition"
+                            x-show="(filterStatus === 'ALL' || item.status === filterStatus) &&
+                                    (!searchQuery || (item.symbol && item.symbol.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                                     (item.strategy && item.strategy.toLowerCase().includes(searchQuery.toLowerCase())))">
+                            <td class="py-3 px-4 text-slate-400" x-text="item.time"></td>
+                            <td class="py-3 px-4">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700" x-text="item.source || 'Webhook'"></span>
+                            </td>
+                            <td class="py-3 px-4 text-slate-200 font-bold" x-text="item.strategy"></td>
+                            <td class="py-3 px-4 text-slate-100 font-semibold" x-text="item.symbol"></td>
+                            <td class="py-3 px-4">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold"
+                                      :class="item.action === 'BUY' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'"
+                                      x-text="item.action">
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 text-right text-slate-300" x-text="item.quantity"></td>
+                            <td class="py-3 px-4 text-right text-slate-400" x-text="item.latency || '12 ms'"></td>
+                            <td class="py-3 px-4 text-center">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold"
+                                      :class="item.status === 'SUCCESS' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'"
+                                      x-text="item.status">
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 text-right">
+                                <button @click="viewPayload(item)" class="p-1 text-slate-400 hover:text-brand-400 transition" title="Inspect JSON Payload">
+                                    <i data-lucide="eye" class="w-4 h-4"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Raw JSON Payload Modal -->
+    <div x-show="showPayloadModal" x-cloak class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-cardbg border border-bordercolor w-full max-w-lg rounded-2xl shadow-2xl p-6 space-y-4 font-mono">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                    <i data-lucide="file-json" class="w-4 h-4 text-brand-400"></i>
+                    <span>Webhook Payload Details</span>
+                </h3>
+                <button @click="showPayloadModal = false" class="p-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3">
+                <div class="flex justify-between text-xs text-slate-400">
+                    <span>Order ID: <strong class="text-slate-100" x-text="selectedLog ? selectedLog.order_id : ''"></strong></span>
+                    <span>Received: <strong class="text-slate-100" x-text="selectedLog ? selectedLog.time : ''"></strong></span>
+                </div>
+                <div class="p-3 bg-slate-950 rounded-xl border border-bordercolor overflow-x-auto">
+                    <pre class="text-xs text-emerald-400 font-mono" x-text="selectedLog ? selectedLog.payload : '{}'"></pre>
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-2">
+                <button @click="showPayloadModal = false" class="px-4 py-2 bg-slate-800 text-slate-200 rounded-xl text-xs font-semibold">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Webhook Simulator Modal -->
+    <div x-show="showSimulatorModal" x-cloak class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-cardbg border border-bordercolor w-full max-w-xl rounded-2xl shadow-2xl p-6 space-y-4 font-mono">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="space-y-0.5">
+                    <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                        <i data-lucide="send" class="w-4 h-4 text-brand-400"></i>
+                        <span>In-Browser Webhook Simulator</span>
+                    </h3>
+                    <p class="text-[11px] text-slate-400">Dispatch live test alerts directly to /api/v1/placesmartorder</p>
+                </div>
+                <button @click="showSimulatorModal = false" class="p-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-[10px] text-slate-400 uppercase mb-1">Strategy Name</label>
+                    <input type="text" x-model="simStrategy" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100 font-bold">
+                </div>
+                <div>
+                    <label class="block text-[10px] text-slate-400 uppercase mb-1">Symbol</label>
+                    <input type="text" x-model="simSymbol" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100 font-bold uppercase">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-[10px] text-slate-400 uppercase mb-1">Action</label>
+                    <select x-model="simAction" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100">
+                        <option value="BUY">BUY</option>
+                        <option value="SELL">SELL</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-[10px] text-slate-400 uppercase mb-1">Quantity</label>
+                    <input type="number" x-model.number="simQuantity" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100 font-bold">
+                </div>
+                <div>
+                    <label class="block text-[10px] text-slate-400 uppercase mb-1">Product</label>
+                    <select x-model="simProduct" class="w-full px-3 py-2 bg-slate-900 border border-bordercolor rounded-xl text-xs text-slate-100">
+                        <option value="MIS">MIS</option>
+                        <option value="NRML">NRML</option>
+                        <option value="CNC">CNC</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="p-3 bg-slate-950 rounded-xl border border-bordercolor text-[11px] text-slate-400">
+                <span class="text-slate-500">Destination:</span> <span class="text-brand-400">POST /api/v1/placesmartorder</span>
+            </div>
+
+            <!-- Execution Result -->
+            <template x-if="simResult">
+                <div class="p-3 rounded-xl border text-xs" :class="simResult.status_code === 200 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' : 'bg-rose-950/40 border-rose-500/40 text-rose-300'">
+                    <div class="font-bold mb-1">Status Code: <span x-text="simResult.status_code"></span></div>
+                    <pre class="text-[10px] overflow-x-auto" x-text="JSON.stringify(simResult.data, null, 2)"></pre>
+                </div>
+            </template>
+
+            <div class="flex justify-end gap-2 pt-2 border-t border-bordercolor">
+                <button type="button" @click="showSimulatorModal = false" class="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-semibold">
+                    Close
+                </button>
+                <button type="button" @click="dispatchTestWebhook()" :disabled="simLoading" class="px-5 py-2 bg-brand-500 hover:bg-brand-400 text-obsidian rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-brand-500/20 disabled:opacity-50">
+                    <i data-lucide="send" class="w-3.5 h-3.5" :class="simLoading ? 'animate-spin' : ''"></i>
+                    <span>Dispatch Alert</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

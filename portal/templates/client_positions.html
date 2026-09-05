@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}Position Book - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Page Header Strip -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold">
+                    <i data-lucide="layers" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        Position Book
+                        <span class="text-xs bg-brand-500/10 text-brand-400 border border-brand-500/30 px-2 py-0.5 rounded-full font-mono">
+                            {{ client.positions_count if client.positions_count is defined else (client.positions|length if client.positions else 0) }} Active
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Live portfolio positions, MTM valuation, and square-off controls</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <form action="/client/panic-square-off" method="POST" onsubmit="return confirm('🚨 EMERGENCY: Square off ALL open positions immediately at market?');">
+                <button type="submit" class="px-4 py-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="shield-alert" class="w-4 h-4"></i>
+                    <span>Square Off All</span>
+                </button>
+            </form>
+            <button onclick="window.location.reload()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition" title="Refresh">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- MTM Gauges Strip -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 font-mono">
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Net MTM (Today)</div>
+            <div class="text-2xl font-black {% if client.net_mtm >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
+                ₹{{ client.net_mtm|inr }}
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">Live Valuation</div>
+        </div>
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Realized P&amp;L</div>
+            <div class="text-2xl font-black {% if client.realized_pnl >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
+                ₹{{ client.realized_pnl|inr }}
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">Locked Profits/Losses</div>
+        </div>
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Unrealized MTM</div>
+            <div class="text-2xl font-black {% if client.unrealized_mtm >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
+                ₹{{ client.unrealized_mtm|inr }}
+            </div>
+            <div class="text-[11px] text-slate-500 mt-1">Open Positions Float</div>
+        </div>
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Used Margin</div>
+            <div class="text-2xl font-black text-slate-200">
+                ₹{{ client.margin_used|inr }}
+            </div>
+            <div class="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                <div class="bg-brand-500 h-full rounded-full" style="width: {{ client.margin_pct }}%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Open Positions Table -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl overflow-hidden space-y-3">
+        <div class="p-4 border-b border-bordercolor flex items-center justify-between">
+            <h3 class="text-sm font-bold font-mono text-slate-200 flex items-center gap-2">
+                <i data-lucide="radio" class="w-4 h-4 text-emerald-400 animate-pulse"></i>
+                <span>Active Open Positions</span>
+            </h3>
+            <span class="text-xs font-mono text-slate-400">
+                {{ client.positions|length if client.positions else 0 }} Open Legs
+            </span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono text-xs">
+                <thead class="bg-slate-900/60 border-b border-bordercolor text-slate-400 uppercase text-[10px] tracking-wider">
+                    <tr>
+                        <th class="py-3 px-4">Symbol</th>
+                        <th class="py-3 px-4">Product</th>
+                        <th class="py-3 px-4 text-right">Net Qty</th>
+                        <th class="py-3 px-4 text-right">Buy Avg</th>
+                        <th class="py-3 px-4 text-right">Sell Avg</th>
+                        <th class="py-3 px-4 text-right">Live LTP</th>
+                        <th class="py-3 px-4 text-right">Unrealized P&amp;L</th>
+                        <th class="py-3 px-4 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    {% if client.positions and client.positions|length > 0 %}
+                        {% for pos in client.positions %}
+                        {% set qty = pos.get('quantity', pos.get('net_qty', 0)) %}
+                        {% set pnl = pos.get('pnl', pos.get('unrealized_pnl', 0.0)) %}
+                        {% set sym = pos.get('symbol') or pos.get('tradingsymbol') or 'N/A' %}
+                        {% set prod = pos.get('product') or pos.get('producttype') or 'NRML' %}
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="py-3.5 px-4 font-bold text-slate-100 flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full {% if qty > 0 %}bg-emerald-400{% else %}bg-rose-400{% endif %}"></span>
+                                <span>{{ sym }}</span>
+                            </td>
+                            <td class="py-3.5 px-4 text-slate-300">{{ prod }}</td>
+                            <td class="py-3.5 px-4 text-right font-bold {% if qty > 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                                {{ qty }}
+                            </td>
+                            <td class="py-3.5 px-4 text-right text-slate-300">₹{{ pos.get('buy_avg', 0.0)|inr }}</td>
+                            <td class="py-3.5 px-4 text-right text-slate-300">₹{{ pos.get('sell_avg', 0.0)|inr }}</td>
+                            <td class="py-3.5 px-4 text-right text-slate-100 font-bold">₹{{ pos.get('ltp', 0.0)|inr }}</td>
+                            <td class="py-3.5 px-4 text-right font-black {% if pnl >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
+                                ₹{{ pnl|inr }}
+                            </td>
+                            <td class="py-3.5 px-4 text-right">
+                                <form action="/client/square-off-position" method="POST" class="inline" onsubmit="return confirm('Square off {{ sym }}?');">
+                                    <input type="hidden" name="symbol" value="{{ sym }}">
+                                    <input type="hidden" name="product" value="{{ prod }}">
+                                    <input type="hidden" name="quantity" value="{{ qty }}">
+                                    <button type="submit" class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white rounded border border-rose-500/30 text-[10px] font-bold transition">
+                                        Square Off
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="8" class="py-8 text-center text-slate-500 font-mono">
+                                No open positions active right now.
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Closed / Squared-off Positions Table -->
+    {% if client.closed_positions and client.closed_positions|length > 0 %}
+    <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl overflow-hidden space-y-3">
+        <div class="p-4 border-b border-bordercolor flex items-center justify-between">
+            <h3 class="text-sm font-bold font-mono text-slate-300 flex items-center gap-2">
+                <i data-lucide="check-circle" class="w-4 h-4 text-slate-400"></i>
+                <span>Closed Intraday Positions</span>
+            </h3>
+            <span class="text-xs font-mono text-slate-500">{{ client.closed_positions|length }} Closed</span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono text-xs">
+                <thead class="bg-slate-900/60 border-b border-bordercolor text-slate-400 uppercase text-[10px] tracking-wider">
+                    <tr>
+                        <th class="py-3 px-4">Symbol</th>
+                        <th class="py-3 px-4">Product</th>
+                        <th class="py-3 px-4 text-right">Buy Avg</th>
+                        <th class="py-3 px-4 text-right">Sell Avg</th>
+                        <th class="py-3 px-4 text-right">Realized P&amp;L</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-bordercolor">
+                    {% for cpos in client.closed_positions %}
+                    {% set rpnl = cpos.get('realized_pnl', cpos.get('pnl', 0.0)) %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="py-3 px-4 text-slate-300 font-medium">{{ cpos.get('symbol') or 'N/A' }}</td>
+                        <td class="py-3 px-4 text-slate-400">{{ cpos.get('product') or 'NRML' }}</td>
+                        <td class="py-3 px-4 text-right text-slate-400">₹{{ cpos.get('buy_avg', 0.0)|inr }}</td>
+                        <td class="py-3 px-4 text-right text-slate-400">₹{{ cpos.get('sell_avg', 0.0)|inr }}</td>
+                        <td class="py-3 px-4 text-right font-bold {% if rpnl >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
+                            ₹{{ rpnl|inr }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}
