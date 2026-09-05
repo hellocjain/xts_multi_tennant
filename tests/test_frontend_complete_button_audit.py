@@ -145,3 +145,58 @@ def test_emergency_button_form_actions_redirect_cleanly(auth_portal_client):
     res_single = auth_portal_client.post('/client/square-off-symbol', data={'symbol': 'RELIANCE'}, follow_redirects=False)
     assert res_single.status_code == 303
     assert res_single.headers['location'] == '/client/dashboard'
+
+
+def test_all_frontend_internal_hrefs_exist():
+    tmpl_dir = Path(portal_path) / 'templates'
+    registered_routes = []
+    for route in portal_main.app.routes:
+        if hasattr(route, 'path'):
+            regex = re.sub(r"\{[^}]+\}", r"[^/]+", route.path)
+            registered_routes.append((route.path, re.compile(f"^{regex}$")))
+
+    unmatched = []
+    for tmpl_file in tmpl_dir.glob('*.html'):
+        with open(tmpl_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        for m in re.finditer(r'href=["\'](/[^"\'#?]+)["\']', content):
+            href = m.group(1)
+            norm_href = re.sub(r"\{\{[^}]+\}\}", "dummy_id", href).strip()
+            if norm_href in ('/docs', '/redoc', '/openapi.json'):
+                continue
+            matched = any(r[1].match(norm_href) for r in registered_routes)
+            if not matched:
+                unmatched.append((tmpl_file.name, href))
+
+    assert len(unmatched) == 0, f'Found broken internal hrefs: {unmatched}'
+
+
+def test_all_frontend_fetch_targets_exist():
+    tmpl_dir = Path(portal_path) / 'templates'
+    registered_routes = []
+    for route in portal_main.app.routes:
+        if hasattr(route, 'path'):
+            regex = re.sub(r"\{[^}]+\}", r"[^/]+", route.path)
+            registered_routes.append((route.path, re.compile(f"^{regex}$")))
+
+    unmatched = []
+    for tmpl_file in tmpl_dir.glob('*.html'):
+        with open(tmpl_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        for m in re.finditer(r'fetch\(["\'`](/[^"\'`?]+)["\'`]', content):
+            target = m.group(1)
+            # Remove JS query string templates like ${symParam}
+            clean_target = re.sub(r"\$\{[^}]*param[^}]*\}", "", target, flags=re.IGNORECASE)
+            clean_target = clean_target.split('?')[0]
+            norm_target = re.sub(r"\$\{[^}]+\}", "dummy_id", clean_target).strip()
+            if norm_target.startswith('/api/v1/'):
+                continue
+            matched = any(r[1].match(norm_target) for r in registered_routes)
+            if not matched:
+                # Handle concatenated routes like /admin/strategies/' + stratId + '/code
+                if norm_target.startswith('/admin/strategies/'):
+                    continue
+                unmatched.append((tmpl_file.name, target))
+
+    assert len(unmatched) == 0, f'Found unmapped fetch targets: {unmatched}'
+

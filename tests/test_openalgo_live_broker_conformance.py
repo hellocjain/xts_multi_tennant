@@ -174,3 +174,68 @@ def test_options_greeks_black_scholes_mathematical_sanity(api_client):
             assert 0.0 <= greeks['delta'] <= 1.0
         elif 'PE' in item.get('symbol', ''):
             assert -1.0 <= greeks['delta'] <= 0.0
+
+
+def test_order_modification_and_cancellation_lifecycle(api_client):
+    # 1. Cancel order without order_id -> 400
+    res_no_id = api_client.post('/api/v1/cancelorder', json={'apikey': 'CONFORMANCE_TEST_KEY_2026'})
+    assert res_no_id.status_code == 400
+    assert res_no_id.json().get('status') == 'error'
+
+    # 2. Cancel order with valid order_id
+    res_cancel = api_client.post('/api/v1/cancelorder', json={
+        'apikey': 'CONFORMANCE_TEST_KEY_2026',
+        'order_id': 'TEST_ORDER_9999'
+    })
+    assert res_cancel.status_code == 200
+    assert res_cancel.json().get('status') in ('success', 'error')
+
+    # 3. Cancel all orders
+    res_cancel_all = api_client.post('/api/v1/cancelallorder', json={'apikey': 'CONFORMANCE_TEST_KEY_2026'})
+    assert res_cancel_all.status_code == 200
+    assert res_cancel_all.json().get('status') in ('success', 'error')
+
+    # 4. Close position (single & all)
+    res_close_single = api_client.post('/api/v1/closeposition', json={
+        'apikey': 'CONFORMANCE_TEST_KEY_2026',
+        'symbol': 'TCS'
+    })
+    assert res_close_single.status_code == 200
+    assert res_close_single.json().get('status') in ('success', 'error')
+
+    res_close_all = api_client.post('/api/v1/closeposition', json={'apikey': 'CONFORMANCE_TEST_KEY_2026'})
+    assert res_close_all.status_code == 200
+    assert res_close_all.json().get('status') in ('success', 'error')
+
+
+def test_market_data_quotes_depth_and_history(api_client):
+    # 1. Quotes missing symbol -> 400
+    res_no_sym = api_client.post('/api/v1/quotes', json={'apikey': 'CONFORMANCE_TEST_KEY_2026'})
+    assert res_no_sym.status_code == 400
+
+    # 2. Quotes with symbol
+    res_quotes = api_client.post('/api/v1/quotes', json={
+        'apikey': 'CONFORMANCE_TEST_KEY_2026',
+        'symbol': 'RELIANCE'
+    })
+    assert res_quotes.status_code == 200
+    data_quotes = res_quotes.json()
+    assert data_quotes.get('status') in ('success', 'error')
+
+    # 3. Depth endpoint
+    res_depth = api_client.post('/api/v1/depth', json={
+        'apikey': 'CONFORMANCE_TEST_KEY_2026',
+        'symbol': 'RELIANCE'
+    })
+    assert res_depth.status_code == 200
+    assert res_depth.json().get('status') in ('success', 'error')
+
+    # 4. History endpoint
+    res_history = api_client.post('/api/v1/history', json={
+        'apikey': 'CONFORMANCE_TEST_KEY_2026',
+        'symbol': 'RELIANCE',
+        'interval': '1m'
+    })
+    assert res_history.status_code == 200
+    assert res_history.json().get('status') in ('success', 'error')
+

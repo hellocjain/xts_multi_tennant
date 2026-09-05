@@ -166,3 +166,26 @@ def test_python_strategy_sandbox_isolation():
 
     # Cleanup
     assert pss.delete_strategy(strat_id, tenant_id) is True
+
+
+def test_header_spoofing_and_tampered_cookie_rejection(tmp_path, monkeypatch):
+    test_db = str(tmp_path / 'sec_audit_test.db')
+    monkeypatch.setattr(portal_db, 'get_db_path', lambda: test_db)
+    if hasattr(portal_main, 'database'):
+        monkeypatch.setattr(portal_main.database, 'get_db_path', lambda: test_db)
+    portal_db.init_portal_db()
+
+    client = TestClient(portal_main.app)
+
+    # 1. Bogus session token should be rejected with redirect or 401
+    client.cookies.set('client_session', 'BOGUS_FORGED_SESSION_TOKEN_12345')
+    res_dash = client.get('/client/dashboard', follow_redirects=False)
+    assert res_dash.status_code in (303, 307, 401)
+    assert '/client/login' in res_dash.headers.get('location', '')
+
+    # 2. Bogus admin session token
+    client.cookies.set('admin_session', 'BOGUS_ADMIN_TOKEN_99999')
+    res_admin = client.get('/admin/dashboard', follow_redirects=False)
+    assert res_admin.status_code in (303, 307, 401)
+    assert '/admin/login' in res_admin.headers.get('location', '')
+
