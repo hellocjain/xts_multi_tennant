@@ -82,16 +82,16 @@ def set_current_trading_mode(mode: str) -> str:
 
 def _verify_auth(data: dict, request: Request) -> bool:
     """Verifies that the request carries a valid API key or internal gateway token."""
-    expected_secret = str(getattr(config, "WEBHOOK_SECRET", "") or getattr(config, "API_KEY", "")).strip()
-    internal_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
-
     # 1. Internal gateway header
+    internal_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
     req_internal = request.headers.get("X-Internal-Token", "").strip()
     if internal_token and req_internal and hmac.compare_digest(req_internal, internal_token):
         return True
 
-    # 2. Body apikey or secret
+    # 2. Extract supplied key from data, query params, or headers
     supplied_key = str(data.get("apikey") or data.get("secret") or data.get("api_key") or "").strip()
+    if not supplied_key:
+        supplied_key = request.query_params.get("apikey") or request.query_params.get("secret") or request.query_params.get("api_key") or ""
     if not supplied_key:
         # 3. Header check (x-api-key or Authorization)
         supplied_key = request.headers.get("x-api-key", "").strip()
@@ -100,10 +100,16 @@ def _verify_auth(data: dict, request: Request) -> bool:
             if auth_header.lower().startswith("bearer "):
                 supplied_key = auth_header[7:].strip()
 
-    if not expected_secret:
-        return True # If not set in test environment, allow
+    valid_keys = set()
+    for attr in ("API_KEY", "WEBHOOK_SECRET", "MD_API_KEY"):
+        val = str(getattr(config, attr, "") or "").strip()
+        if val:
+            valid_keys.add(val)
 
-    return hmac.compare_digest(supplied_key, expected_secret)
+    if not valid_keys:
+        return True
+
+    return any(hmac.compare_digest(supplied_key, vk) for vk in valid_keys)
 
 async def _extract_json(request: Request) -> dict:
     try:
