@@ -69,6 +69,15 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 INTERNAL_AUTH_TOKEN = os.environ.get("INTERNAL_AUTH_TOKEN", "")
 
+# 10. Market Hours & Stale Candle Restrictions
+ENFORCE_MARKET_HOURS = os.environ.get("ENFORCE_MARKET_HOURS", "True").lower() in ("true", "1", "yes")
+ENFORCE_STALE_CANDLE_GUARD = os.environ.get("ENFORCE_STALE_CANDLE_GUARD", "True").lower() in ("true", "1", "yes")
+MCX_MARKET_OPEN_TIME = os.environ.get("MCX_MARKET_OPEN_TIME", "09:00:00")
+MCX_MARKET_CLOSE_TIME = os.environ.get("MCX_MARKET_CLOSE_TIME", "23:55:00")
+NSE_MARKET_OPEN_TIME = os.environ.get("NSE_MARKET_OPEN_TIME", "09:15:00")
+NSE_MARKET_CLOSE_TIME = os.environ.get("NSE_MARKET_CLOSE_TIME", "15:30:00")
+MAX_CANDLE_AGE_SECONDS = int(os.environ.get("MAX_CANDLE_AGE_SECONDS", "180"))
+
 # Load mounted config overrides if present
 _mounted_config = os.path.join(DATA_DIR, "config.json")
 if os.path.exists(_mounted_config):

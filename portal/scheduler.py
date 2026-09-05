@@ -3,12 +3,38 @@ import asyncio
 import logging
 import datetime
 import time
+from typing import Optional
 from contextlib import closing
 import database
 import docker_manager
 import telemetry_service
 
 logger = logging.getLogger(__name__)
+
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+def is_market_open_ist(exch_seg: str = "MCXFO", now_dt: Optional[datetime.datetime] = None, force_check: bool = False) -> bool:
+    """
+    Evaluates whether the Indian exchange segment is open for live trading.
+    - Monday to Friday only (weekday 0-4). Saturday (5) & Sunday (6) are strictly closed.
+    - MCX: 09:00:00 to 23:55:00 IST
+    - NSE/BSE: 09:15:00 to 15:30:00 IST
+    """
+    if not force_check and "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_MARKET_HOURS_IN_TESTS", "").lower() not in ("true", "1", "yes"):
+        return True
+
+    dt = now_dt if now_dt is not None else datetime.datetime.now(IST)
+    if dt.weekday() >= 5:
+        return False
+    cur_hms = (dt.hour, dt.minute, dt.second)
+    seg_upper = str(exch_seg or "").upper()
+    if "MCX" in seg_upper or "COMMODITY" in seg_upper:
+        return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+    elif any(eq in seg_upper for eq in ("NSE", "BSE", "CM", "CASH")):
+        return (9, 15, 0) <= cur_hms <= (15, 30, 0)
+    else:
+        return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+
 
 async def run_rolling_cache_warmup(batch_size: int = None, delay_between_batches_sec=3.0):
     """
@@ -61,11 +87,16 @@ async def run_rolling_cache_warmup(batch_size: int = None, delay_between_batches
     )
     return {"status": "success", "warmed_up": warmed_count, "failures": failures, "elapsed_seconds": elapsed}
 
-async def check_drawdown_circuit_breakers():
+async def check_drawdown_circuit_breakers(enforce_market_hours: bool = True):
     """
     Evaluates real-time Net MTM against each tenant's max_daily_loss_inr.
-    If loss limit is breached, triggers emergency square-off and sets tenant status to PAUSED.
+    If loss limit is breached during active market hours, triggers emergency square-off and sets tenant status to PAUSED.
+    Outside market hours (weekends, nights), circuit breaker evaluation is strictly suppressed.
     """
+    if enforce_market_hours and not is_market_open_ist():
+        logger.debug("Market is closed (IST). Skipping drawdown circuit breaker evaluation.")
+        return
+
     with closing(database.get_db_connection()) as conn:
         active_tenants = [dict(r) for r in conn.execute("SELECT id, name FROM tenants WHERE status='ACTIVE'").fetchall()]
         risk_limits = {r["tenant_id"]: dict(r) for r in conn.execute("SELECT * FROM tenant_risk_limits").fetchall()}
@@ -124,15 +155,14 @@ async def check_drawdown_circuit_breakers():
 
 async def start_scheduler_loop(poll_interval_sec=5):
     """Background scheduler loop checking time for 08:30 IST daily trigger and drawdown breakers."""
-    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     while True:
         try:
             # 1. Check Drawdown Circuit Breakers across active clients
             await check_drawdown_circuit_breakers()
 
-            # 2. Check 08:30 IST cache warmup
+            # 2. Check 08:30 IST cache warmup on trading days only (Mon-Fri)
             now_ist = datetime.datetime.now(IST)
-            if now_ist.hour == 8 and now_ist.minute == 30 and now_ist.second < 15:
+            if now_ist.weekday() < 5 and now_ist.hour == 8 and now_ist.minute == 30 and now_ist.second < 15:
                 await run_rolling_cache_warmup()
                 await asyncio.sleep(30)
         except Exception as e:

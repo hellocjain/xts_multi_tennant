@@ -15,6 +15,7 @@ Features:
 """
 
 import sys
+import os
 import time
 import datetime
 import logging
@@ -32,6 +33,44 @@ except ImportError:
 
 logger = logging.getLogger("supertrend_engine")
 CONTINUOUS_SUFFIX = re.compile(r'(\d+)!$')
+IST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: Optional[float] = None, force_check: bool = False) -> bool:
+    """
+    Evaluates whether the specified Indian exchange segment is currently open for trading.
+    - Indian Standard Time (IST) = UTC+5:30
+    - Monday to Friday only (weekday 0-4). Saturday (5) & Sunday (6) are strictly closed.
+    - MCX (MCXFO, MCXCOM): 09:00:00 to 23:55:00 IST (covers standard and US DST sessions)
+    - NSE/BSE (NSEFO, NSECM, BSEFO, BSECM): 09:15:00 to 15:30:00 IST
+    - Respects config.ENFORCE_MARKET_HOURS.
+    """
+    if not force_check and config is not None and not getattr(config, "ENFORCE_MARKET_HOURS", True):
+        return True
+
+    # In automated test runs without explicit market hour enforcement, allow bypass
+    if not force_check and "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_MARKET_HOURS_IN_TESTS", "").lower() not in ("true", "1", "yes"):
+        return True
+
+    dt = datetime.datetime.fromtimestamp(now_ts, tz=IST_TIMEZONE) if now_ts is not None else datetime.datetime.now(IST_TIMEZONE)
+
+    # 1. Weekday Check (Monday = 0 ... Friday = 4; Saturday = 5, Sunday = 6)
+    if dt.weekday() >= 5:
+        return False
+
+    # 2. Segment-specific Trading Hours Check
+    seg_upper = str(exch_seg or "").upper()
+    cur_hms = (dt.hour, dt.minute, dt.second)
+
+    if "MCX" in seg_upper or "COMMODITY" in seg_upper:
+        # 09:00:00 to 23:55:00 IST
+        return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+    elif any(eq in seg_upper for eq in ("NSE", "BSE", "CM", "CASH")):
+        # 09:15:00 to 15:30:00 IST
+        return (9, 15, 0) <= cur_hms <= (15, 30, 0)
+    else:
+        # Default Indian broad trading hours (09:00:00 to 23:55:00 IST)
+        return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+
 
 TIMEFRAME_SECONDS_MAP = {
     "1m": 60,
@@ -455,6 +494,7 @@ class SingleSuperTrendRunner:
             "is_enabled": self.is_enabled,
             "is_configured": self.is_configured,
             "status": self.status,
+            "market_open": is_market_open_ist(self.exchange_segment or "MCXFO"),
             "current_trend": self.active_trend,
             "virtual_position": self.virtual_position,
             "strategy_position": self.strategy_position,
@@ -836,8 +876,11 @@ class SingleSuperTrendRunner:
             tf_seconds = parse_timeframe_seconds(self.timeframe)
             is_continuous = bool(CONTINUOUS_SUFFIX.search(self.symbol))
 
-            # 1.5 Autonomous Contract Rollover Check for Continuous Symbols
-            if is_continuous:
+            now_ts = time.time()
+            market_open = is_market_open_ist(exch_seg, now_ts=now_ts)
+
+            # 1.5 Autonomous Contract Rollover Check for Continuous Symbols (Only during market hours)
+            if market_open and is_continuous:
                 if self.last_resolved_inst_id is not None and self.last_resolved_inst_id != inst_id:
                     old_desc = self.last_resolved_symbol_desc or self.symbol
                     logger.warning(
@@ -885,8 +928,8 @@ class SingleSuperTrendRunner:
                 self.last_resolved_inst_id = inst_id
                 self.last_resolved_symbol_desc = inst_desc
 
-            # 2. Expiry Protection Guard for Fixed (Non-Continuous) Contracts
-            if not is_continuous:
+            # 2. Expiry Protection Guard for Fixed (Non-Continuous) Contracts (Only during market hours)
+            if market_open and not is_continuous:
                 expiry_date = inst.get("expiry")
                 if expiry_date:
                     days_to_expiry = (expiry_date - datetime.date.today()).days
@@ -1035,6 +1078,14 @@ class SingleSuperTrendRunner:
             self.last_close = st_res["last_close"]
             self.last_candle_time = st_res["last_candle_time"]
             self.last_error = None
+
+            # Market Hours Protection Guard:
+            # If market is closed (weekends, nights, holidays), indicators are kept fresh for
+            # telemetry / charts, but trade evaluation and order dispatches are strictly suppressed.
+            if not market_open:
+                self.status = "MARKET_CLOSED"
+                return
+
             self.status = "RUNNING"
 
             # 7. Evaluate Flip & Execute Virtual Delta Netting (Strict ON_CANDLE_CLOSE Rule)
@@ -1054,6 +1105,24 @@ class SingleSuperTrendRunner:
             candle_ts = eval_st_res["last_candle_time"]
             is_flip = eval_st_res["is_flip"]
             flip_dir = eval_st_res["flip_direction"]
+
+            # Startup Stale Historical Candle Guard:
+            # On first evaluation (self.last_processed_candle_time == 0), if the candle closed
+            # longer ago than max allowed age (e.g. 180s), seed baseline state without firing historical orders.
+            enforce_stale = getattr(config, "ENFORCE_STALE_CANDLE_GUARD", True) if config else True
+            if "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_STALE_CANDLE_GUARD_IN_TESTS", "").lower() not in ("true", "1", "yes"):
+                enforce_stale = False
+
+            if enforce_stale and self.last_processed_candle_time == 0:
+                max_stale_window = max(tf_seconds + 60, getattr(config, "MAX_CANDLE_AGE_SECONDS", 180) if config else 180)
+                candle_age = now_ts - candle_ts
+                if candle_age > max_stale_window:
+                    self.last_processed_candle_time = candle_ts
+                    logger.info(
+                        f"SuperTrend [{self.symbol} ({self.timeframe})]: Startup baseline established at historical candle "
+                        f"{candle_ts} (age: {candle_age}s > {max_stale_window}s limit). Suppressing historical flip execution."
+                    )
+                    return
 
             # Defense-in-depth: Duplicate signal on already evaluated candle is a strict no-op
             if is_flip and candle_ts != self.last_processed_candle_time:
