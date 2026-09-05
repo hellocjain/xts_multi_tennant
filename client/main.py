@@ -455,6 +455,7 @@ app = FastAPI(title="XTS Client Execution Gateway", lifespan=lifespan)
 
 import openalgo_router
 app.include_router(openalgo_router.router)
+app.include_router(openalgo_router.watchlist_router)
 
 from ws_manager import default_ws_manager
 

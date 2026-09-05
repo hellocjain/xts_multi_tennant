@@ -97,6 +97,16 @@ async def gateway_dispatch(request: Request, path: str):
 
     tenant_id = resolve_tenant_id(api_key)
     if not tenant_id:
+        client_session = request.cookies.get("client_session")
+        if client_session:
+            import security
+            ip = request.client.host if request.client else "127.0.0.1"
+            ua = request.headers.get("user-agent", "")
+            u = security.validate_client_session(client_session, ip, ua)
+            if u and "tenant_id" in u:
+                tenant_id = u["tenant_id"]
+
+    if not tenant_id:
         logger.warning(f"API Gateway: Request to /api/v1/{path} rejected - invalid or missing API key '{api_key[:6]}***'")
         return JSONResponse(
             status_code=401,

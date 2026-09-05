@@ -5,7 +5,7 @@
 {% block content %}
 <div class="flex flex-col h-[calc(100vh-5rem)] -m-4 md:-m-6 bg-[#0B0E14] text-slate-200 overflow-hidden font-sans select-none">
 
-    <!-- 1. Top Navigation Bar (Matching Screenshot) -->
+    <!-- 1. Top Navigation Bar (Matching OpenAlgo Terminal) -->
     <header class="h-12 border-b border-bordercolor bg-[#121722] px-4 flex items-center justify-between z-20 flex-shrink-0">
         <div class="flex items-center gap-4">
             <!-- Brand / Broker Info -->
@@ -62,7 +62,7 @@
         </div>
     </header>
 
-    <!-- 2. Chart Top Toolbar (Matching Screenshot) -->
+    <!-- 2. Chart Top Toolbar (Matching OpenAlgo Terminal) -->
     <div class="h-11 border-b border-bordercolor bg-[#151A24] px-3 flex items-center justify-between text-xs font-mono z-10 flex-shrink-0">
         <div class="flex items-center gap-2 overflow-x-auto py-1">
             <!-- Symbol Search Pill with Dropdown -->
@@ -87,11 +87,98 @@
             <!-- Timeframe Selector -->
             <div class="flex items-center bg-slate-900/80 border border-bordercolor rounded-lg p-0.5">
                 <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="1m">1m</button>
+                <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="3m">3m</button>
                 <button class="timeframe-btn px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 font-bold transition" data-interval="5m">5m</button>
                 <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="15m">15m</button>
                 <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="30m">30m</button>
                 <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="1h">1h</button>
                 <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="D">1D</button>
+                <button class="timeframe-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-100 transition" data-interval="W">1W</button>
+            </div>
+
+            <!-- Chart Type Selector Dropdown -->
+            <div class="relative">
+                <button id="btn-chart-type" class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/80 hover:bg-slate-800 border border-bordercolor rounded-lg text-slate-300 transition" title="Chart Type">
+                    <i data-lucide="bar-chart-2" class="w-3.5 h-3.5 text-brand-400"></i>
+                    <span id="current-chart-type-display">Candles</span>
+                    <i data-lucide="chevron-down" class="w-3 h-3 text-slate-500"></i>
+                </button>
+                <div id="chart-type-dropdown" class="hidden absolute left-0 top-full mt-1 w-44 bg-slate-950 border border-bordercolor rounded-xl shadow-2xl z-50 py-1 divide-y divide-slate-800/60">
+                    <button class="chart-type-option w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2" data-type="candlestick">
+                        <i data-lucide="candlestick-chart" class="w-3.5 h-3.5 text-emerald-400"></i> Candlestick
+                    </button>
+                    <button class="chart-type-option w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2" data-type="hollow">
+                        <i data-lucide="square" class="w-3.5 h-3.5 text-slate-400"></i> Hollow Candles
+                    </button>
+                    <button class="chart-type-option w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2" data-type="heikin-ashi">
+                        <i data-lucide="activity" class="w-3.5 h-3.5 text-brand-400"></i> Heikin Ashi
+                    </button>
+                    <button class="chart-type-option w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2" data-type="bar">
+                        <i data-lucide="align-justify" class="w-3.5 h-3.5 text-amber-400"></i> Bars
+                    </button>
+                    <button class="chart-type-option w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2" data-type="line">
+                        <i data-lucide="trending-up" class="w-3.5 h-3.5 text-cyan-400"></i> Line
+                    </button>
+                    <button class="chart-type-option w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2" data-type="area">
+                        <i data-lucide="mountain" class="w-3.5 h-3.5 text-indigo-400"></i> Area
+                    </button>
+                    <button class="chart-type-option w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2" data-type="baseline">
+                        <i data-lucide="git-commit" class="w-3.5 h-3.5 text-purple-400"></i> Baseline
+                    </button>
+                </div>
+            </div>
+
+            <!-- Grid Layout Selector Dropdown -->
+            <div class="relative">
+                <button id="btn-layout-dropdown" class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/80 hover:bg-slate-800 border border-bordercolor rounded-lg text-slate-300 transition" title="Select Chart Grid Layout">
+                    <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-brand-400"></i>
+                    <span id="current-layout-display">1x1</span>
+                    <i data-lucide="chevron-down" class="w-3 h-3 text-slate-500"></i>
+                </button>
+                <div id="layout-dropdown-menu" class="hidden absolute left-0 top-full mt-1 w-44 bg-slate-950 border border-bordercolor rounded-xl shadow-2xl z-50 p-1.5 space-y-1">
+                    <button class="layout-preset-option w-full text-left px-2.5 py-1.5 text-xs rounded-lg text-slate-200 hover:bg-slate-800 flex items-center justify-between" data-layout="single">
+                        <span>Single (1×1)</span>
+                        <span class="w-4 h-4 border border-slate-600 rounded-sm bg-slate-800/80"></span>
+                    </button>
+                    <button class="layout-preset-option w-full text-left px-2.5 py-1.5 text-xs rounded-lg text-slate-200 hover:bg-slate-800 flex items-center justify-between" data-layout="cols2">
+                        <span>2 Columns (1×2)</span>
+                        <span class="w-4 h-4 grid grid-cols-2 gap-0.5 border border-slate-600 rounded-sm p-0.5"><span class="bg-slate-400 rounded-[1px]"></span><span class="bg-slate-400 rounded-[1px]"></span></span>
+                    </button>
+                    <button class="layout-preset-option w-full text-left px-2.5 py-1.5 text-xs rounded-lg text-slate-200 hover:bg-slate-800 flex items-center justify-between" data-layout="rows2">
+                        <span>2 Rows (2×1)</span>
+                        <span class="w-4 h-4 grid grid-rows-2 gap-0.5 border border-slate-600 rounded-sm p-0.5"><span class="bg-slate-400 rounded-[1px]"></span><span class="bg-slate-400 rounded-[1px]"></span></span>
+                    </button>
+                    <button class="layout-preset-option w-full text-left px-2.5 py-1.5 text-xs rounded-lg text-slate-200 hover:bg-slate-800 flex items-center justify-between" data-layout="oneTwo">
+                        <span>1 + 2 Split</span>
+                        <span class="w-4 h-4 grid grid-cols-2 gap-0.5 border border-slate-600 rounded-sm p-0.5"><span class="bg-slate-400 rounded-[1px] row-span-2"></span><span class="grid grid-rows-2 gap-0.5"><span class="bg-slate-400 rounded-[1px]"></span><span class="bg-slate-400 rounded-[1px]"></span></span></span>
+                    </button>
+                    <button class="layout-preset-option w-full text-left px-2.5 py-1.5 text-xs rounded-lg text-slate-200 hover:bg-slate-800 flex items-center justify-between" data-layout="grid4">
+                        <span>4 Grid (2×2)</span>
+                        <span class="w-4 h-4 grid grid-cols-2 grid-rows-2 gap-0.5 border border-slate-600 rounded-sm p-0.5"><span class="bg-slate-400 rounded-[1px]"></span><span class="bg-slate-400 rounded-[1px]"></span><span class="bg-slate-400 rounded-[1px]"></span><span class="bg-slate-400 rounded-[1px]"></span></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sync Linking Dropdown -->
+            <div class="relative">
+                <button id="btn-sync-dropdown" class="flex items-center gap-1.5 px-2 py-1 bg-slate-900/80 hover:bg-slate-800 border border-bordercolor rounded-lg text-slate-300 transition" title="Sync Panes">
+                    <i data-lucide="link-2" class="w-3.5 h-3.5 text-brand-400"></i>
+                    <span class="hidden xl:inline">Sync</span>
+                </button>
+                <div id="sync-dropdown-menu" class="hidden absolute left-0 top-full mt-1 w-48 bg-slate-950 border border-bordercolor rounded-xl shadow-2xl z-50 p-2 space-y-2 text-xs">
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white">
+                        <input id="sync-crosshair-chk" type="checkbox" checked class="rounded border-slate-700 bg-slate-900 text-brand-500 focus:ring-0">
+                        <span>Sync Crosshair</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white">
+                        <input id="sync-time-chk" type="checkbox" checked class="rounded border-slate-700 bg-slate-900 text-brand-500 focus:ring-0">
+                        <span>Sync Time / Scroll</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white">
+                        <input id="sync-symbol-chk" type="checkbox" class="rounded border-slate-700 bg-slate-900 text-brand-500 focus:ring-0">
+                        <span>Sync Symbol</span>
+                    </label>
+                </div>
             </div>
 
             <!-- Product Type Pill -->
@@ -126,10 +213,10 @@
         </div>
     </div>
 
-    <!-- 3. Main Chart Canvas Area + Left Drawing Rail -->
+    <!-- 3. Main Chart Canvas Area + Left Drawing Rail + Right Panels -->
     <div class="flex flex-1 relative overflow-hidden">
 
-        <!-- Left Drawing Rail (Matching Screenshot) -->
+        <!-- Left Drawing Rail (Obsidian, mirroring OpenAlgo) -->
         <aside class="w-11 border-r border-bordercolor bg-[#121722] flex flex-col items-center py-2 gap-1.5 z-10 flex-shrink-0">
             <button class="draw-tool-btn p-2 rounded-lg text-brand-400 bg-brand-500/20 hover:bg-brand-500/30 transition" data-tool="crosshair" title="Crosshair">
                 <i data-lucide="crosshair" class="w-4 h-4"></i>
@@ -166,44 +253,199 @@
             </button>
         </aside>
 
-        <!-- Canvas Chart Viewport -->
-        <main class="flex-1 relative bg-[#0B0E14] overflow-hidden">
+        <!-- Dynamic Multi-Pane Chart Canvas Grid -->
+        <main id="chart-viewport" class="flex-1 relative bg-[#0B0E14] overflow-hidden">
             <!-- Loading Spinner -->
             <div id="chart-loading-spinner" class="absolute inset-0 bg-[#0B0E14]/80 backdrop-blur-sm z-30 flex items-center justify-center flex-col gap-3">
                 <div class="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
                 <span class="text-xs font-mono text-slate-400">Loading Candle History...</span>
             </div>
 
-            <!-- Floating OHLCV Legend in Top-Left (Matching Screenshot) -->
-            <div id="chart-legend" class="absolute top-2.5 left-4 z-20 pointer-events-none">
-                <div class="text-xs font-mono text-slate-300">Initializing chart feed...</div>
-            </div>
-
-            <!-- On-Chart Interactive Trading Pills ([SELL] [1L] [BUY]) -->
-            <div id="chart-quick-trade-bar" class="absolute top-12 left-4 z-20 flex items-center gap-1 shadow-2xl bg-slate-950/80 p-1 rounded-xl border border-bordercolor/60 backdrop-blur-md">
-                <!-- SELL Pill -->
-                <button id="pill-sell-btn" class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-rose-600/30">
-                    <span id="pill-sell-price" class="text-[11px] leading-tight">2359.00</span>
-                    <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">SELL</span>
-                </button>
-
-                <!-- Lot Badge -->
-                <div id="pill-lot-badge" class="px-2 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono font-bold border border-slate-700">
-                    1L
+            <!-- Dynamic Chart Grid Container -->
+            <div id="chart-container" class="w-full h-full">
+                <div id="chart-grid-container" class="w-full h-full grid grid-cols-1 grid-rows-1 gap-1 p-0.5 bg-[#0B0E14]">
+                <!-- Pane 0 (Default Primary Pane) -->
+                <div id="pane-p0" class="chart-pane relative border border-transparent hover:border-slate-800 rounded-lg overflow-hidden bg-[#0B0E14] focus:outline-none" tabindex="0" data-pane="p0">
+                    <div id="chart-legend-p0" class="chart-legend absolute top-2.5 left-4 z-20 pointer-events-none text-xs font-mono text-slate-300">
+                        Initializing chart feed...
+                    </div>
+                    <div id="chart-quick-trade-bar-p0" class="quick-trade-bar absolute top-12 left-4 z-20 flex items-center gap-1 shadow-2xl bg-slate-950/80 p-1 rounded-xl border border-bordercolor/60 backdrop-blur-md">
+                        <button class="pill-sell-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-rose-600/30">
+                            <span class="pill-sell-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">SELL</span>
+                        </button>
+                        <div class="pill-lot-badge px-2 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono font-bold border border-slate-700">1L</div>
+                        <button class="pill-buy-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-emerald-600/30">
+                            <span class="pill-buy-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">BUY</span>
+                        </button>
+                    </div>
+                    <div id="canvas-container-p0" class="w-full h-full"></div>
                 </div>
 
-                <!-- BUY Pill -->
-                <button id="pill-buy-btn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-emerald-600/30">
-                    <span id="pill-buy-price" class="text-[11px] leading-tight">2359.00</span>
-                    <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">BUY</span>
-                </button>
-            </div>
+                <!-- Pane 1 (Secondary Pane) -->
+                <div id="pane-p1" class="chart-pane hidden relative border border-transparent hover:border-slate-800 rounded-lg overflow-hidden bg-[#0B0E14] focus:outline-none" tabindex="0" data-pane="p1">
+                    <div id="chart-legend-p1" class="chart-legend absolute top-2.5 left-4 z-20 pointer-events-none text-xs font-mono text-slate-300">
+                        Pane 2
+                    </div>
+                    <div id="chart-quick-trade-bar-p1" class="quick-trade-bar absolute top-12 left-4 z-20 flex items-center gap-1 shadow-2xl bg-slate-950/80 p-1 rounded-xl border border-bordercolor/60 backdrop-blur-md">
+                        <button class="pill-sell-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-rose-600/30">
+                            <span class="pill-sell-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">SELL</span>
+                        </button>
+                        <div class="pill-lot-badge px-2 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono font-bold border border-slate-700">1L</div>
+                        <button class="pill-buy-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-emerald-600/30">
+                            <span class="pill-buy-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">BUY</span>
+                        </button>
+                    </div>
+                    <div id="canvas-container-p1" class="w-full h-full"></div>
+                </div>
 
-            <!-- Canvas Mounting Element -->
-            <div id="chart-container" class="w-full h-full"></div>
+                <!-- Pane 2 (Tertiary Pane) -->
+                <div id="pane-p2" class="chart-pane hidden relative border border-transparent hover:border-slate-800 rounded-lg overflow-hidden bg-[#0B0E14] focus:outline-none" tabindex="0" data-pane="p2">
+                    <div id="chart-legend-p2" class="chart-legend absolute top-2.5 left-4 z-20 pointer-events-none text-xs font-mono text-slate-300">
+                        Pane 3
+                    </div>
+                    <div id="chart-quick-trade-bar-p2" class="quick-trade-bar absolute top-12 left-4 z-20 flex items-center gap-1 shadow-2xl bg-slate-950/80 p-1 rounded-xl border border-bordercolor/60 backdrop-blur-md">
+                        <button class="pill-sell-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-rose-600/30">
+                            <span class="pill-sell-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">SELL</span>
+                        </button>
+                        <div class="pill-lot-badge px-2 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono font-bold border border-slate-700">1L</div>
+                        <button class="pill-buy-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-emerald-600/30">
+                            <span class="pill-buy-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">BUY</span>
+                        </button>
+                    </div>
+                    <div id="canvas-container-p2" class="w-full h-full"></div>
+                </div>
+
+                <!-- Pane 3 (Quaternary Pane) -->
+                <div id="pane-p3" class="chart-pane hidden relative border border-transparent hover:border-slate-800 rounded-lg overflow-hidden bg-[#0B0E14] focus:outline-none" tabindex="0" data-pane="p3">
+                    <div id="chart-legend-p3" class="chart-legend absolute top-2.5 left-4 z-20 pointer-events-none text-xs font-mono text-slate-300">
+                        Pane 4
+                    </div>
+                    <div id="chart-quick-trade-bar-p3" class="quick-trade-bar absolute top-12 left-4 z-20 flex items-center gap-1 shadow-2xl bg-slate-950/80 p-1 rounded-xl border border-bordercolor/60 backdrop-blur-md">
+                        <button class="pill-sell-btn px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-rose-600/30">
+                            <span class="pill-sell-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">SELL</span>
+                        </button>
+                        <div class="pill-lot-badge px-2 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono font-bold border border-slate-700">1L</div>
+                        <button class="pill-buy-btn px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-mono font-bold flex flex-col items-center transition shadow-md shadow-emerald-600/30">
+                            <span class="pill-buy-price text-[11px] leading-tight">--</span>
+                            <span class="text-[9px] uppercase tracking-wider font-extrabold opacity-90">BUY</span>
+                        </button>
+                    </div>
+                    <div id="canvas-container-p3" class="w-full h-full"></div>
+                </div>
+            </div>
+            </div>
         </main>
 
-        <!-- In-Terminal Multi-Tab Side Drawer (DOM / Orders / Positions / Trades) -->
+        <!-- Right Rail Slide-Out Panels (Watchlist & Option Chain) -->
+
+        <!-- Panel A: Watchlist Panel (Exact OpenAlgo layout) -->
+        <aside id="oa-panel-watchlist" class="hidden w-80 lg:w-96 border-l border-bordercolor bg-[#121722] flex flex-col z-20 flex-shrink-0 transition-all duration-300">
+            <!-- Watchlist Header -->
+            <div class="border-b border-bordercolor bg-[#151A24] px-3 py-2 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="list" class="w-4 h-4 text-brand-400"></i>
+                    <select id="watchlist-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-bold text-slate-100 focus:outline-none focus:border-brand-500">
+                        <option value="1">Watchlist</option>
+                    </select>
+                    <button id="btn-new-watchlist" class="p-1 text-slate-400 hover:text-brand-400 hover:bg-slate-800 rounded transition" title="Create New List">
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <button id="btn-refresh-watchlist" class="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition" title="Refresh Quotes">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    </button>
+                    <button id="btn-close-watchlist-panel" class="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition" title="Close Panel (Esc)">
+                        <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Search & Add Instrument -->
+            <div class="p-2 border-b border-bordercolor bg-slate-950/40 relative">
+                <div class="flex items-center gap-2">
+                    <input id="watchlist-add-input" type="text" placeholder="Add symbol (e.g. INFY, NIFTY)..." class="flex-1 bg-slate-900 border border-bordercolor rounded-lg px-2.5 py-1 text-xs text-slate-100 font-mono focus:border-brand-500 focus:outline-none uppercase">
+                    <button id="btn-add-watchlist-symbol" class="px-2.5 py-1 bg-brand-500/20 hover:bg-brand-500/30 text-brand-400 border border-brand-500/40 rounded-lg text-xs font-bold transition">
+                        Add
+                    </button>
+                </div>
+                <div id="watchlist-search-results" class="hidden absolute left-2 right-2 top-full mt-1 bg-slate-950 border border-bordercolor rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto divide-y divide-slate-800/60 font-mono text-xs">
+                </div>
+            </div>
+
+            <!-- Watchlist Items Table -->
+            <div class="flex-1 overflow-y-auto divide-y divide-bordercolor/60 font-mono text-xs" id="watchlist-items-list">
+                <div class="p-4 text-center text-slate-500">Loading Watchlist...</div>
+            </div>
+        </aside>
+
+        <!-- Panel B: Option Chain Panel (Exact OpenAlgo layout) -->
+        <aside id="oa-panel-options" class="hidden w-80 lg:w-[420px] border-l border-bordercolor bg-[#121722] flex flex-col z-20 flex-shrink-0 transition-all duration-300">
+            <!-- Option Chain Header -->
+            <div class="border-b border-bordercolor bg-[#151A24] px-3 py-2 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="table-2" class="w-4 h-4 text-brand-400"></i>
+                    <select id="optionchain-underlying-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-bold text-slate-100 focus:outline-none focus:border-brand-500">
+                        <option value="NIFTY">NIFTY</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                        <option value="FINNIFTY">FINNIFTY</option>
+                        <option value="SENSEX">SENSEX</option>
+                    </select>
+                    <select id="optionchain-expiry-select" class="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none focus:border-brand-500">
+                        <option value="">Loading...</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <button id="btn-refresh-optionchain" class="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition" title="Refresh Option Chain">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    </button>
+                    <button id="btn-close-options-panel" class="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition" title="Close Panel (Esc)">
+                        <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Metric Switcher Pills -->
+            <div class="px-2 py-1.5 border-b border-bordercolor bg-slate-950/40 flex items-center justify-between gap-1 text-[10px] font-mono overflow-x-auto">
+                <span class="text-slate-400 uppercase font-bold text-[9px]">Metric:</span>
+                <div class="flex items-center gap-1">
+                    <button class="oc-metric-btn px-2 py-0.5 rounded bg-brand-500/20 text-brand-400 font-bold border border-brand-500/40" data-metric="ltp">LTP</button>
+                    <button class="oc-metric-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-200" data-metric="oi">OI</button>
+                    <button class="oc-metric-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-200" data-metric="iv">IV</button>
+                    <button class="oc-metric-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-200" data-metric="delta">Δ</button>
+                    <button class="oc-metric-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-200" data-metric="gamma">Γ</button>
+                    <button class="oc-metric-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-200" data-metric="theta">Θ</button>
+                    <button class="oc-metric-btn px-2 py-0.5 rounded text-slate-400 hover:text-slate-200" data-metric="vega">V</button>
+                </div>
+            </div>
+
+            <!-- Option Chain Strikes Table -->
+            <div class="flex-1 overflow-y-auto font-mono text-xs">
+                <table class="w-full text-center border-collapse">
+                    <thead class="sticky top-0 bg-slate-900 border-b border-bordercolor text-[10px] text-slate-400 uppercase tracking-wider z-10">
+                        <tr>
+                            <th class="py-1.5 px-2 text-emerald-400">Calls (<span id="oc-col-call-metric">LTP</span>)</th>
+                            <th class="py-1.5 px-2 text-slate-200 bg-slate-950">Strike</th>
+                            <th class="py-1.5 px-2 text-rose-400">Puts (<span id="oc-col-put-metric">LTP</span>)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="optionchain-strikes-body" class="divide-y divide-slate-800/40 text-[11px]">
+                        <tr>
+                            <td colspan="3" class="py-8 text-slate-500 text-center">Loading Strikes...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </aside>
+
+        <!-- Panel C: In-Terminal Multi-Tab Side Drawer (DOM / Orders / Positions / Trades) -->
         <aside id="terminal-side-drawer" class="hidden w-80 lg:w-96 border-l border-bordercolor bg-[#121722] flex flex-col z-20 flex-shrink-0 transition-all duration-300">
             <!-- Drawer Header & Tabs -->
             <div class="border-b border-bordercolor bg-[#151A24] px-2 py-1.5 flex items-center justify-between">
@@ -248,57 +490,76 @@
                                     <th class="py-1 px-1.5 text-rose-400 text-right">Orders</th>
                                 </tr>
                             </thead>
-                            <tbody id="dom-table-body" class="divide-y divide-slate-800/40">
-                                <tr><td colspan="6" class="p-4 text-center text-slate-500">Loading Market Depth...</td></tr>
+                            <tbody id="dom-table-body" data-alias="dom-ladder-body" class="divide-y divide-slate-800/40">
+                                <!-- Dynamic 5 rows -->
                             </tbody>
-                            <tfoot class="bg-slate-900/60 text-[10px] font-bold">
+                            <tfoot class="bg-slate-900/60 text-[10px] text-slate-400">
                                 <tr>
-                                    <td colspan="3" class="py-1 px-2 text-emerald-400">Total Buy: <span id="dom-total-buy-qty">0</span></td>
-                                    <td colspan="3" class="py-1 px-2 text-rose-400 text-right">Total Sell: <span id="dom-total-sell-qty">0</span></td>
+                                    <td colspan="3" class="py-1 px-1.5 text-emerald-400 font-bold">Total Buy: <span id="dom-total-buy">0</span></td>
+                                    <td colspan="3" class="py-1 px-1.5 text-rose-400 font-bold text-right">Total Sell: <span id="dom-total-sell">0</span></td>
                                 </tr>
                             </tfoot>
                         </table>
                     </div>
-
-                    <div class="text-[10px] text-slate-500 text-center">
-                        Tip: Click any Bid to Buy or Ask to Sell directly at that price level.
-                    </div>
+                    <div class="text-[10px] text-slate-500 italic text-center">Click any price row to place quick Limit order</div>
                 </div>
 
                 <!-- Tab 2: Orders -->
                 <div id="drawer-panel-orders" class="drawer-panel hidden space-y-2">
                     <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
-                        <span class="font-bold text-slate-200">Order Book</span>
-                        <button id="btn-refresh-orders" class="text-[10px] text-brand-400 hover:underline">Refresh</button>
+                        <span>Working Orders</span>
+                        <button id="btn-refresh-orders" class="text-slate-400 hover:text-slate-200"><i data-lucide="refresh-cw" class="w-3 h-3"></i></button>
                     </div>
                     <div id="drawer-orders-list" class="space-y-1.5">
-                        <div class="p-4 text-center text-slate-500">No orders found.</div>
+                        <div class="text-center py-6 text-slate-500 text-xs">No active orders</div>
                     </div>
                 </div>
 
                 <!-- Tab 3: Positions -->
                 <div id="drawer-panel-positions" class="drawer-panel hidden space-y-2">
                     <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
-                        <span class="font-bold text-slate-200">Net Positions</span>
-                        <span id="drawer-net-pnl" class="font-bold text-emerald-400">₹0.00</span>
+                        <span>Open Positions</span>
+                        <button id="btn-refresh-positions" class="text-slate-400 hover:text-slate-200"><i data-lucide="refresh-cw" class="w-3 h-3"></i></button>
                     </div>
                     <div id="drawer-positions-list" class="space-y-1.5">
-                        <div class="p-4 text-center text-slate-500">No open positions.</div>
+                        <div class="text-center py-6 text-slate-500 text-xs">No open positions</div>
                     </div>
                 </div>
 
                 <!-- Tab 4: Trades -->
                 <div id="drawer-panel-trades" class="drawer-panel hidden space-y-2">
                     <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
-                        <span class="font-bold text-slate-200">Trade Book</span>
-                        <button id="btn-refresh-trades" class="text-[10px] text-brand-400 hover:underline">Refresh</button>
+                        <span>Trade Book</span>
+                        <button id="btn-refresh-trades" class="text-slate-400 hover:text-slate-200"><i data-lucide="refresh-cw" class="w-3 h-3"></i></button>
                     </div>
                     <div id="drawer-trades-list" class="space-y-1.5">
-                        <div class="p-4 text-center text-slate-500">No trades executed.</div>
+                        <div class="text-center py-6 text-slate-500 text-xs">No executed trades</div>
                     </div>
                 </div>
             </div>
         </aside>
+
+        <!-- Right Vertical Rail (Obsidian, mirroring OpenAlgo) -->
+        <aside id="terminal-right-rail" class="w-10 border-l border-bordercolor bg-[#121722] flex flex-col items-center py-2 gap-2 z-20 flex-shrink-0">
+            <!-- Watchlist Toggle -->
+            <button id="btn-rail-watchlist" class="rail-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition relative group" title="Watchlist (Esc)">
+                <i data-lucide="list" class="w-4 h-4"></i>
+                <span class="hidden group-hover:block absolute right-full mr-2 top-1.5 px-2 py-0.5 bg-slate-950 text-[10px] text-slate-200 border border-slate-800 rounded shadow-lg whitespace-nowrap z-50">Watchlist (Esc)</span>
+            </button>
+
+            <!-- Option Chain Toggle -->
+            <button id="btn-rail-options" class="rail-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition relative group" title="Option Chain (Esc)">
+                <i data-lucide="table-2" class="w-4 h-4"></i>
+                <span class="hidden group-hover:block absolute right-full mr-2 top-1.5 px-2 py-0.5 bg-slate-950 text-[10px] text-slate-200 border border-slate-800 rounded shadow-lg whitespace-nowrap z-50">Option Chain (Esc)</span>
+            </button>
+
+            <!-- Depth / Drawer Toggle -->
+            <button id="btn-rail-drawer" class="rail-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition relative group" title="DOM & Orders (Esc)">
+                <i data-lucide="sliders" class="w-4 h-4"></i>
+                <span class="hidden group-hover:block absolute right-full mr-2 top-1.5 px-2 py-0.5 bg-slate-950 text-[10px] text-slate-200 border border-slate-800 rounded shadow-lg whitespace-nowrap z-50">DOM & Orders (Esc)</span>
+            </button>
+        </aside>
+
     </div>
 
     <!-- 4. Technical Indicators Modal -->
@@ -340,6 +601,36 @@
                         <div class="text-[10px] text-slate-400">Exponential Moving Average (20)</div>
                     </div>
                     <button class="indicator-toggle-btn px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-bold transition hover:bg-slate-700" data-indicator="EMA 20">
+                        Add
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-bordercolor">
+                    <div>
+                        <div class="font-bold text-slate-100">SMA 50</div>
+                        <div class="text-[10px] text-slate-400">Simple Moving Average (50)</div>
+                    </div>
+                    <button class="indicator-toggle-btn px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-bold transition hover:bg-slate-700" data-indicator="SMA 50">
+                        Add
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-bordercolor">
+                    <div>
+                        <div class="font-bold text-slate-100">RSI (14)</div>
+                        <div class="text-[10px] text-slate-400">Relative Strength Index</div>
+                    </div>
+                    <button class="indicator-toggle-btn px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-bold transition hover:bg-slate-700" data-indicator="RSI">
+                        Add
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-bordercolor">
+                    <div>
+                        <div class="font-bold text-slate-100">Bollinger Bands</div>
+                        <div class="text-[10px] text-slate-400">Period 20, StdDev 2</div>
+                    </div>
+                    <button class="indicator-toggle-btn px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-bold transition hover:bg-slate-700" data-indicator="Bollinger Bands">
                         Add
                     </button>
                 </div>

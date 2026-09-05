@@ -291,6 +291,68 @@ async def portal_websocket_proxy(websocket: WebSocket):
         except Exception as ex:
             logger.debug(f"Portal websocket handler completed: {ex}")
 
+@app.api_route("/watchlist/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def portal_watchlist_proxy(request: Request, path: str):
+    token = request.cookies.get("client_session")
+    tenant_id = None
+    if token:
+        ip = request.client.host if request.client else "127.0.0.1"
+        ua = request.headers.get("user-agent", "")
+        u = security.validate_client_session(token, ip, ua)
+        if u:
+            tenant_id = u.get("tenant_id")
+
+    query_key = request.query_params.get("apikey") or request.query_params.get("api_key")
+    if not tenant_id and query_key:
+        tenant_id = api_gateway.resolve_tenant_id(query_key)
+
+    if not tenant_id:
+        tenant_id = "default"
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    caddy_base = os.environ.get("CADDY_PROXY_BASE", "http://caddy/internal-client-proxy")
+    url_local = f"http://127.0.0.1:{port}/watchlist/api/{path}"
+    url_docker = f"http://xts_client_{tenant_id}:8000/watchlist/api/{path}"
+    url_caddy = f"{caddy_base}/{tenant_id}/watchlist/api/{path}"
+
+    body_bytes = await request.body()
+    headers = dict(request.headers)
+    headers.pop("host", None)
+    headers.pop("content-length", None)
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for dest_url in [url_local, url_docker, url_caddy]:
+            try:
+                resp = await client.request(
+                    method=request.method,
+                    url=dest_url,
+                    headers=headers,
+                    params=request.query_params,
+                    content=body_bytes
+                )
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    media_type=resp.headers.get("content-type", "application/json")
+                )
+            except Exception:
+                continue
+
+    try:
+        import sys
+        sys.path.insert(0, os.path.join(PORTAL_DIR, "..", "client"))
+        import watchlist_service
+        if request.method == "GET" and path == "lists":
+            lists = watchlist_service.get_watchlists(tenant_id)
+            return JSONResponse(status_code=200, content={"status": "success", "data": lists})
+    except Exception:
+        pass
+
+    return JSONResponse(status_code=502, content={"status": "error", "message": "Tenant watchlist service unreachable"})
+
 @app.post("/client/place-manual-order")
 async def client_manual_order(
     request: Request,

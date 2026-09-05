@@ -19,6 +19,7 @@ import order_services
 import options_engine
 import token_db
 import candle_service
+import watchlist_service
 
 logger = logging.getLogger(__name__)
 
@@ -543,9 +544,14 @@ async def quotes(request: Request):
     }
 
 @router.post("/optionchain")
+@router.get("/optionchain")
 async def option_chain(request: Request):
     """Calculates Option Chain with real-time Black-Scholes Greeks."""
-    data = await _extract_json(request)
+    if request.method == "POST":
+        data = await _extract_json(request)
+    else:
+        data = dict(request.query_params)
+
     if not _verify_auth(data, request):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
 
@@ -561,35 +567,77 @@ async def option_chain(request: Request):
             spot_price = 24500.0 # fallback
 
     # Generate strikes around spot (10 strikes above and below)
-    step = 50.0 if "NIFTY" in underlying else (100.0 if "BANK" in underlying else 50.0)
+    step = 50.0 if "NIFTY" in underlying and "BANK" not in underlying else (100.0 if "BANK" in underlying else 50.0)
     atm_strike = round(spot_price / step) * step
     strikes = [atm_strike + i * step for i in range(-10, 11)]
 
-    chain = []
-    expiry_days = 4.0 # default weekly
+    # Dynamic expiry discovery
+    expiry_str = str(data.get("expiry") or "").strip()
+    available_expiries = []
+    try:
+        available_expiries = token_db.get_available_expiries(underlying)
+    except Exception:
+        pass
+    if not available_expiries:
+        today = datetime.date.today()
+        exp_dates = []
+        for d in range(1, 35):
+            day = today + datetime.timedelta(days=d)
+            if day.weekday() == 3: # Thursday
+                exp_dates.append(day.strftime("%d-%b-%Y").upper())
+        available_expiries = exp_dates[:4]
 
+    if not expiry_str or expiry_str not in available_expiries:
+        expiry_str = available_expiries[0] if available_expiries else "28-NOV-2024"
+
+    try:
+        exp_dt = datetime.datetime.strptime(expiry_str, "%d-%b-%Y")
+        days_to_expiry = max(round((exp_dt - datetime.datetime.now()).total_seconds() / 86400.0, 2), 0.05)
+    except Exception:
+        days_to_expiry = 4.0
+
+    chain = []
     for k in strikes:
-        call_greeks = options_engine.calculate_greeks(spot_price, k, expiry_days, volatility=0.14, option_type="CE")
-        put_greeks = options_engine.calculate_greeks(spot_price, k, expiry_days, volatility=0.14, option_type="PE")
+        call_greeks = options_engine.calculate_greeks(spot_price, k, days_to_expiry, volatility=0.14, option_type="CE")
+        put_greeks = options_engine.calculate_greeks(spot_price, k, days_to_expiry, volatility=0.14, option_type="PE")
+
+        call_sym = f"{underlying}{expiry_str.replace('-', '')}{int(k)}CE"
+        put_sym = f"{underlying}{expiry_str.replace('-', '')}{int(k)}PE"
+
+        if k < atm_strike:
+            call_moneyness = "ITM"
+            put_moneyness = "OTM"
+        elif k == atm_strike:
+            call_moneyness = "ATM"
+            put_moneyness = "ATM"
+        else:
+            call_moneyness = "OTM"
+            put_moneyness = "ITM"
 
         chain.append({
             "strike": k,
             "is_atm": (k == atm_strike),
             "call": {
+                "symbol": call_sym,
                 "ltp": call_greeks["price"],
                 "delta": call_greeks["delta"],
                 "theta": call_greeks["theta"],
                 "gamma": call_greeks["gamma"],
                 "vega": call_greeks["vega"],
-                "iv": call_greeks["iv"]
+                "iv": call_greeks["iv"],
+                "oi": int(call_greeks.get("oi", 50000)),
+                "moneyness": call_moneyness
             },
             "put": {
+                "symbol": put_sym,
                 "ltp": put_greeks["price"],
                 "delta": put_greeks["delta"],
                 "theta": put_greeks["theta"],
                 "gamma": put_greeks["gamma"],
                 "vega": put_greeks["vega"],
-                "iv": put_greeks["iv"]
+                "iv": put_greeks["iv"],
+                "oi": int(put_greeks.get("oi", 45000)),
+                "moneyness": put_moneyness
             }
         })
 
@@ -598,6 +646,8 @@ async def option_chain(request: Request):
         "underlying": underlying,
         "spot": spot_price,
         "atm_strike": atm_strike,
+        "expiries": available_expiries,
+        "expiry": expiry_str,
         "strikes": chain
     }
 
@@ -1014,4 +1064,84 @@ async def option_greeks(request: Request):
             "rho": round(greeks.get("rho", 0.0), 6)
         }
     }
+
+
+# -----------------------------------------------------------------------------
+# 16. Watchlist REST API (/api/v1/watchlist)
+# -----------------------------------------------------------------------------
+@router.get("/watchlist")
+async def get_watchlist_api(request: Request):
+    lists = watchlist_service.get_watchlists()
+    return {"status": "success", "data": lists}
+
+@router.post("/watchlist")
+async def create_watchlist_api(request: Request):
+    data = await _extract_json(request)
+    name = data.get("name", "New Watchlist")
+    items = data.get("items", [])
+    wl = watchlist_service.create_watchlist(name, items)
+    return {"status": "success", "data": wl}
+
+@router.delete("/watchlist")
+async def delete_watchlist_api(request: Request):
+    data = await _extract_json(request)
+    wl_id = data.get("id") or data.get("watchlist_id")
+    if wl_id is not None:
+        watchlist_service.delete_watchlist(int(wl_id))
+    return {"status": "success", "message": "Watchlist deleted"}
+
+@router.post("/watchlist/item")
+async def add_watchlist_item_api(request: Request):
+    data = await _extract_json(request)
+    wl_id = int(data.get("watchlist_id", 1))
+    symbol = str(data.get("symbol", "")).strip().upper()
+    exchange = str(data.get("exchange", "NSE")).strip().upper()
+    item = watchlist_service.add_item(wl_id, symbol, exchange)
+    return {"status": "success", "data": item}
+
+@router.delete("/watchlist/item")
+async def remove_watchlist_item_api(request: Request):
+    data = await _extract_json(request)
+    wl_id = int(data.get("watchlist_id", 1))
+    item_id = int(data.get("item_id", 0))
+    watchlist_service.remove_item(wl_id, item_id)
+    return {"status": "success", "message": "Item removed"}
+
+
+# -----------------------------------------------------------------------------
+# 17. Frontend Watchlist API Router (/watchlist/api/...)
+# -----------------------------------------------------------------------------
+watchlist_router = APIRouter(prefix="/watchlist/api", tags=["Watchlist API"])
+
+@watchlist_router.get("/lists")
+async def get_watchlist_lists():
+    lists = watchlist_service.get_watchlists()
+    return {"status": "success", "data": lists}
+
+@watchlist_router.post("/lists", status_code=201)
+async def create_watchlist_list(request: Request):
+    data = await _extract_json(request)
+    name = data.get("name", "New Watchlist")
+    items = data.get("items", [])
+    wl = watchlist_service.create_watchlist(name, items)
+    return {"status": "success", "data": wl}
+
+@watchlist_router.delete("/lists/{watchlist_id}")
+async def delete_watchlist_list(watchlist_id: int):
+    success = watchlist_service.delete_watchlist(watchlist_id)
+    return {"status": "success" if success else "error"}
+
+@watchlist_router.post("/lists/{watchlist_id}/items", status_code=201)
+async def add_watchlist_item(watchlist_id: int, request: Request):
+    data = await _extract_json(request)
+    symbol = data.get("symbol", "")
+    exchange = data.get("exchange", "NSE")
+    item = watchlist_service.add_item(watchlist_id, symbol, exchange)
+    return {"status": "success", "data": item}
+
+@watchlist_router.delete("/lists/{watchlist_id}/items/{item_id}")
+async def remove_watchlist_item(watchlist_id: int, item_id: int):
+    success = watchlist_service.remove_item(watchlist_id, item_id)
+    return {"status": "success" if success else "error"}
+
 
