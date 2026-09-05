@@ -27,6 +27,7 @@ import notification_service
 import options_order_service
 import gtt_service
 import action_center_service
+import analytics_service
 
 logger = logging.getLogger(__name__)
 
@@ -1066,6 +1067,133 @@ async def multi_option_greeks_endpoint(request: Request):
         "greeks": greeks_list,
         "summary": {"total": len(symbols_list), "success": len(results), "failed": 0}
     }
+
+
+# -----------------------------------------------------------------------------
+# Quantitative Analytics & Option Tools (Max Pain, GEX, Straddle, Arbitrage)
+# -----------------------------------------------------------------------------
+@router.post("/maxpain")
+@router.post("/oitracker/api/maxpain")
+async def max_pain_endpoint(request: Request):
+    """
+    OpenAlgo-compatible Max Pain calculation endpoint.
+    Computes total pain across strikes and returns strike with minimum financial loss to writers.
+    """
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    underlying = str(data.get("underlying") or data.get("symbol") or "NIFTY").strip().upper()
+    exchange = str(data.get("exchange") or "NFO").strip().upper()
+    expiry_date = data.get("expiry_date") or data.get("expiry")
+    custom_chain = data.get("chain")
+
+    res = analytics_service.default_analytics_service.calculate_max_pain(
+        underlying=underlying,
+        exchange=exchange,
+        expiry_date=expiry_date,
+        custom_chain=custom_chain
+    )
+    return res
+
+
+@router.post("/oitracker/api/oi-data")
+async def oi_data_endpoint(request: Request):
+    """
+    OpenAlgo-compatible OI chain and summary endpoint.
+    """
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    underlying = str(data.get("underlying") or data.get("symbol") or "NIFTY").strip().upper()
+    exchange = str(data.get("exchange") or "NFO").strip().upper()
+    expiry_date = data.get("expiry_date") or data.get("expiry")
+
+    res = analytics_service.default_analytics_service.calculate_max_pain(
+        underlying=underlying,
+        exchange=exchange,
+        expiry_date=expiry_date
+    )
+    chain_items = []
+    for item in res.get("pain_data", []):
+        chain_items.append({
+            "strike": item["strike"],
+            "ce_oi": int(item.get("ce_pain", 0) / 100),
+            "pe_oi": int(item.get("pe_pain", 0) / 100)
+        })
+    return {
+        "status": "success",
+        "underlying": underlying,
+        "spot_price": res["spot_price"],
+        "futures_price": res["futures_price"],
+        "lot_size": res["lot_size"],
+        "pcr_oi": res["pcr_oi"],
+        "total_ce_oi": res["total_ce_oi"],
+        "total_pe_oi": res["total_pe_oi"],
+        "atm_strike": res["atm_strike"],
+        "expiry_date": res["expiry_date"],
+        "chain": chain_items
+    }
+
+
+@router.post("/gex")
+@router.post("/gex/api/data")
+async def gex_endpoint(request: Request):
+    """
+    OpenAlgo-compatible Gamma Exposure (GEX) endpoint.
+    Computes Net GEX, Call/Put Walls, and Gamma Flip Level.
+    """
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    underlying = str(data.get("underlying") or data.get("symbol") or "NIFTY").strip().upper()
+    exchange = str(data.get("exchange") or "NFO").strip().upper()
+    expiry_date = data.get("expiry_date") or data.get("expiry")
+
+    res = analytics_service.default_analytics_service.calculate_gex(
+        underlying=underlying,
+        exchange=exchange,
+        expiry_date=expiry_date
+    )
+    return res
+
+
+@router.post("/straddle")
+@router.post("/straddle/api/data")
+async def straddle_endpoint(request: Request):
+    """
+    OpenAlgo-compatible Dynamic ATM Straddle & Synthetic Futures endpoint.
+    """
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    underlying = str(data.get("underlying") or data.get("symbol") or "NIFTY").strip().upper()
+    expiry_date = data.get("expiry_date") or data.get("expiry")
+
+    res = analytics_service.default_analytics_service.calculate_straddle_series(
+        underlying=underlying,
+        expiry_date=expiry_date
+    )
+    return res
+
+
+@router.post("/arbitrage")
+@router.post("/arbitrage/api/data")
+async def arbitrage_endpoint(request: Request):
+    """
+    OpenAlgo-compatible Futures Calendar Spread Arbitrage scanner endpoint.
+    """
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    symbols = data.get("symbols")
+    res = analytics_service.default_analytics_service.get_arbitrage_universe(symbols=symbols)
+    return res
+
 
 @router.post("/cancelorder")
 async def cancel_order(request: Request):

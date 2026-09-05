@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+
+{% block title %}ATM Straddle & Synthetic Future - OpenAlgo XTS{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6 pb-16">
+    <!-- Top Header Banner -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-bordercolor">
+        <div>
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center text-teal-400 shadow-sm shadow-teal-500/10">
+                    <i data-lucide="git-merge" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                        ATM Straddle & Synthetic Futures
+                        <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30">DECAY ENGINE</span>
+                    </h1>
+                    <p class="text-xs text-slate-400 mt-0.5">Dynamic ATM combined premium decay tracking, Put-Call Parity synthetic futures, and breakeven boundaries.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls: Symbol Selector & Refresh -->
+        <div class="flex items-center space-x-3">
+            <select id="underlying-select" onchange="loadStraddleData()" class="bg-cardbg border border-bordercolor text-xs text-white rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-teal-500 transition">
+                <option value="NIFTY" selected>NIFTY 50</option>
+                <option value="BANKNIFTY">BANK NIFTY</option>
+                <option value="FINNIFTY">FIN NIFTY</option>
+                <option value="SENSEX">BSE SENSEX</option>
+            </select>
+            <button onclick="loadStraddleData()" class="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-cardbg border border-bordercolor text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition">
+                <i data-lucide="refresh-cw" id="refresh-icon" class="w-3.5 h-3.5"></i>
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 4 Key Telemetry Metric Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Card 1: Straddle Premium -->
+        <div class="bg-cardbg border border-teal-500/30 p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">ATM Straddle Premium</span>
+                <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-teal-500/20 text-teal-300 border border-teal-500/30">CE + PE</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-premium" class="text-3xl font-black font-mono text-teal-400">₹--</span>
+                <span id="stat-atm" class="text-xs text-slate-500 font-mono">Strike: --</span>
+            </div>
+        </div>
+
+        <!-- Card 2: Synthetic Future -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Synthetic Future</span>
+                <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-slate-300">PARITY</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-syn-fut" class="text-3xl font-black font-mono text-cyan-400">₹--</span>
+                <span id="stat-basis" class="text-xs text-slate-500 font-mono">Basis: --</span>
+            </div>
+        </div>
+
+        <!-- Card 3: Upper Breakeven -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Upper Breakeven</span>
+                <i data-lucide="arrow-up-right" class="w-4 h-4 text-rose-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-upper-be" class="text-3xl font-black font-mono text-rose-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">Max Call Risk</span>
+            </div>
+        </div>
+
+        <!-- Card 4: Lower Breakeven -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Lower Breakeven</span>
+                <i data-lucide="arrow-down-right" class="w-4 h-4 text-emerald-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-lower-be" class="text-3xl font-black font-mono text-emerald-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">Max Put Risk</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Visual Chart & Distribution Table -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Chart Panel (2 cols) -->
+        <div class="lg:col-span-2 bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="trending-down" class="w-4 h-4 text-teal-400"></i>
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Intraday Straddle Premium Decay</h3>
+                </div>
+                <div class="flex items-center space-x-4 text-xs font-mono">
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-teal-400"></span> Straddle Premium</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Call Component</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-purple-500"></span> Put Component</span>
+                </div>
+            </div>
+
+            <!-- Canvas Chart Container -->
+            <div class="h-[340px] w-full relative">
+                <canvas id="straddleChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Strategy Quick Stats Panel (1 col) -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm flex flex-col justify-between">
+            <div>
+                <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="sliders" class="w-4 h-4 text-teal-400"></i>
+                        <h3 class="text-sm font-bold text-white uppercase tracking-wider">Straddle Legs & IV</h3>
+                    </div>
+                    <span id="stat-iv" class="text-xs font-mono text-teal-300 font-bold">IV: --%</span>
+                </div>
+
+                <div class="mt-4 space-y-3 font-mono text-xs">
+                    <div class="p-3 rounded-xl bg-slate-900/60 border border-bordercolor flex items-center justify-between">
+                        <div>
+                            <span class="text-slate-400">Call Leg (CE)</span>
+                            <div id="stat-ce-sym" class="text-white font-bold">--</div>
+                        </div>
+                        <span id="stat-ce-ltp" class="text-sm font-bold text-emerald-400">₹--</span>
+                    </div>
+
+                    <div class="p-3 rounded-xl bg-slate-900/60 border border-bordercolor flex items-center justify-between">
+                        <div>
+                            <span class="text-slate-400">Put Leg (PE)</span>
+                            <div id="stat-pe-sym" class="text-white font-bold">--</div>
+                        </div>
+                        <span id="stat-pe-ltp" class="text-sm font-bold text-rose-400">₹--</span>
+                    </div>
+
+                    <div class="p-3 rounded-xl bg-slate-900/60 border border-bordercolor flex items-center justify-between">
+                        <span class="text-slate-400">Max Profit / Lot</span>
+                        <span id="stat-max-profit" class="text-sm font-bold text-teal-400">₹--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 pt-4 border-t border-bordercolor">
+                <a href="/client/trading" class="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-teal-600/20 transition">
+                    <i data-lucide="external-link" class="w-4 h-4"></i>
+                    <span>Execute in Terminal</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let straddleChartInstance = null;
+
+async function loadStraddleData() {
+    const underlying = document.getElementById('underlying-select').value;
+    const refreshIcon = document.getElementById('refresh-icon');
+    if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+    try {
+        const response = await fetch('/client/api/straddle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ underlying: underlying })
+        });
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            renderStraddle(data);
+        }
+    } catch (e) {
+        console.error('Failed to load straddle:', e);
+    } finally {
+        if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+    }
+}
+
+function renderStraddle(data) {
+    document.getElementById('stat-premium').textContent = '₹' + data.straddle_premium.toFixed(2);
+    document.getElementById('stat-atm').textContent = 'Strike: ' + data.atm_strike.toLocaleString();
+    document.getElementById('stat-syn-fut').textContent = '₹' + data.synthetic_future.toFixed(2);
+
+    const basis = data.synthetic_future - data.spot_price;
+    document.getElementById('stat-basis').textContent = `Basis: ${basis >= 0 ? '+' : ''}${basis.toFixed(1)} pts`;
+
+    document.getElementById('stat-upper-be').textContent = data.upper_breakeven.toFixed(0);
+    document.getElementById('stat-lower-be').textContent = data.lower_breakeven.toFixed(0);
+    document.getElementById('stat-iv').textContent = `IV: ${data.iv}%`;
+
+    document.getElementById('stat-ce-sym').textContent = data.ce_symbol;
+    document.getElementById('stat-ce-ltp').textContent = '₹' + data.ce_ltp.toFixed(2);
+    document.getElementById('stat-pe-sym').textContent = data.pe_symbol;
+    document.getElementById('stat-pe-ltp').textContent = '₹' + data.pe_ltp.toFixed(2);
+
+    const lotSize = data.underlying.includes('BANK') ? 30 : 75;
+    const maxProfit = data.straddle_premium * lotSize;
+    document.getElementById('stat-max-profit').textContent = '₹' + maxProfit.toLocaleString('en-IN', {maximumFractionDigits: 0});
+
+    // Chart
+    const ctx = document.getElementById('straddleChart').getContext('2d');
+    if (straddleChartInstance) straddleChartInstance.destroy();
+
+    const labels = data.series.map(d => d.time);
+    const premiums = data.series.map(d => d.straddle);
+    const cePrices = data.series.map(d => d.ce_price);
+    const pePrices = data.series.map(d => d.pe_price);
+
+    straddleChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Straddle Premium',
+                    data: premiums,
+                    borderColor: '#2dd4bf',
+                    backgroundColor: 'rgba(45, 212, 191, 0.1)',
+                    borderWidth: 2.5,
+                    fill: true,
+                    tension: 0.3
+                },
+                {
+                    label: 'Call Price',
+                    data: cePrices,
+                    borderColor: '#3b82f6',
+                    borderWidth: 1.5,
+                    borderDash: [3, 3],
+                    pointRadius: 0,
+                    tension: 0.2
+                },
+                {
+                    label: 'Put Price',
+                    data: pePrices,
+                    borderColor: '#a855f7',
+                    borderWidth: 1.5,
+                    borderDash: [3, 3],
+                    pointRadius: 0,
+                    tension: 0.2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: false } },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+                }
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadStraddleData();
+    lucide.createIcons();
+});
+</script>
+{% endblock %}

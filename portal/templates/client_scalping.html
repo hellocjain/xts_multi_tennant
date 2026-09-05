@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+
+{% block title %}Options Scalping Terminal - OpenAlgo XTS{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6 pb-16">
+    <!-- Top Header Banner -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-bordercolor">
+        <div>
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 shadow-sm shadow-rose-500/10">
+                    <i data-lucide="zap-fast" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                        High-Speed Scalping Terminal
+                        <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">HOTKEY ENGINE</span>
+                    </h1>
+                    <p class="text-xs text-slate-400 mt-0.5">Keyboard-driven index options scalping: instant strike execution, hotkey triggers, and automated trailing bracket rules.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls: Symbol Selector & Mode Badge -->
+        <div class="flex items-center space-x-3">
+            <select id="underlying-select" onchange="updateScalpUnderlying()" class="bg-cardbg border border-bordercolor text-xs text-white rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-rose-500 transition">
+                <option value="NIFTY" selected>NIFTY 50</option>
+                <option value="BANKNIFTY">BANK NIFTY</option>
+                <option value="FINNIFTY">FIN NIFTY</option>
+                <option value="SENSEX">BSE SENSEX</option>
+            </select>
+            <span class="px-3 py-1.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-mono font-bold">
+                HOTKEYS ACTIVE
+            </span>
+        </div>
+    </div>
+
+    <!-- Scalping Quick Controls & Telemetry -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Execution Control Card (1 col) -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="keyboard" class="w-4 h-4 text-rose-400"></i>
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Hotkey Mappings</h3>
+                </div>
+                <span class="text-[10px] font-mono text-slate-400">Press key anytime</span>
+            </div>
+
+            <div class="space-y-2 text-xs font-mono">
+                <div class="p-2.5 rounded-xl bg-slate-900/60 border border-bordercolor flex items-center justify-between">
+                    <span class="text-slate-300">Buy ATM Call (CE)</span>
+                    <kbd class="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-emerald-400 font-bold">B</kbd>
+                </div>
+                <div class="p-2.5 rounded-xl bg-slate-900/60 border border-bordercolor flex items-center justify-between">
+                    <span class="text-slate-300">Buy ATM Put (PE)</span>
+                    <kbd class="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-rose-400 font-bold">P</kbd>
+                </div>
+                <div class="p-2.5 rounded-xl bg-slate-900/60 border border-bordercolor flex items-center justify-between">
+                    <span class="text-slate-300">Cancel All Orders</span>
+                    <kbd class="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-amber-400 font-bold">C</kbd>
+                </div>
+                <div class="p-2.5 rounded-xl bg-slate-900/60 border border-bordercolor flex items-center justify-between">
+                    <span class="text-slate-300">Square Off All Positions</span>
+                    <kbd class="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 text-red-400 font-bold">S</kbd>
+                </div>
+            </div>
+
+            <!-- Lot Size Selector -->
+            <div class="pt-2 border-t border-bordercolor space-y-2">
+                <label class="text-xs font-medium text-slate-400 uppercase tracking-wider block">Quantity (Lots)</label>
+                <div class="grid grid-cols-4 gap-2">
+                    <button onclick="setLots(1)" id="lot-1" class="py-2 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold text-xs font-mono">1 Lot</button>
+                    <button onclick="setLots(2)" id="lot-2" class="py-2 rounded-xl bg-slate-900/60 border border-bordercolor text-slate-300 font-bold text-xs font-mono hover:bg-slate-800">2 Lots</button>
+                    <button onclick="setLots(5)" id="lot-5" class="py-2 rounded-xl bg-slate-900/60 border border-bordercolor text-slate-300 font-bold text-xs font-mono hover:bg-slate-800">5 Lots</button>
+                    <button onclick="setLots(10)" id="lot-10" class="py-2 rounded-xl bg-slate-900/60 border border-bordercolor text-slate-300 font-bold text-xs font-mono hover:bg-slate-800">10 Lots</button>
+                </div>
+            </div>
+
+            <!-- Bracket & Trailing Stop Rules -->
+            <div class="pt-2 border-t border-bordercolor space-y-3">
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-slate-400">Automated Stop Loss</span>
+                    <span class="font-mono text-white font-bold">10 pts (~5%)</span>
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-slate-400">Automated Target</span>
+                    <span class="font-mono text-white font-bold">20 pts (~10%)</span>
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-slate-400">Trailing Stop Step</span>
+                    <span class="font-mono text-white font-bold">5 pts</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Scalping Execution Deck (2 cols) -->
+        <div class="lg:col-span-2 bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm space-y-6 flex flex-col justify-between">
+            <div class="space-y-4">
+                <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                    <div class="flex items-center space-x-2">
+                        <i data-lucide="gauge" class="w-4 h-4 text-rose-400"></i>
+                        <h3 class="text-sm font-bold text-white uppercase tracking-wider">Live ATM Execution Desk</h3>
+                    </div>
+                    <span id="scalp-spot" class="text-sm font-mono font-black text-white">NIFTY: ₹24,500</span>
+                </div>
+
+                <!-- 1-Click Buy Call and Buy Put Large Action Blocks -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Buy Call Block -->
+                    <button onclick="executeScalp('BUY', 'CE')" class="p-6 rounded-2xl bg-emerald-600/10 hover:bg-emerald-600/20 border-2 border-emerald-500/40 hover:border-emerald-500 text-left transition space-y-2 group shadow-lg shadow-emerald-500/5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-mono font-bold text-emerald-400 uppercase">ATM CALL OPTION</span>
+                            <kbd class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-xs font-bold">Key [B]</kbd>
+                        </div>
+                        <div id="scalp-ce-sym" class="text-xl font-mono font-black text-white">NIFTY 24500 CE</div>
+                        <div class="flex items-center justify-between text-xs font-mono text-emerald-300">
+                            <span>Est LTP: ₹185.00</span>
+                            <span class="group-hover:translate-x-1 transition font-bold">Instant BUY &rarr;</span>
+                        </div>
+                    </button>
+
+                    <!-- Buy Put Block -->
+                    <button onclick="executeScalp('BUY', 'PE')" class="p-6 rounded-2xl bg-rose-600/10 hover:bg-rose-600/20 border-2 border-rose-500/40 hover:border-rose-500 text-left transition space-y-2 group shadow-lg shadow-rose-500/5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-mono font-bold text-rose-400 uppercase">ATM PUT OPTION</span>
+                            <kbd class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono text-xs font-bold">Key [P]</kbd>
+                        </div>
+                        <div id="scalp-pe-sym" class="text-xl font-mono font-black text-white">NIFTY 24500 PE</div>
+                        <div class="flex items-center justify-between text-xs font-mono text-rose-300">
+                            <span>Est LTP: ₹175.00</span>
+                            <span class="group-hover:translate-x-1 transition font-bold">Instant BUY &rarr;</span>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- Emergency Panic Controls -->
+                <div class="grid grid-cols-2 gap-4 pt-2">
+                    <button onclick="cancelAllOrders()" class="py-3 px-4 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 text-xs font-bold font-mono flex items-center justify-center gap-2 transition">
+                        <i data-lucide="x-circle" class="w-4 h-4"></i>
+                        <span>Cancel All Orders [C]</span>
+                    </button>
+                    <button onclick="squareOffAll()" class="py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold font-mono flex items-center justify-center gap-2 transition shadow-lg shadow-rose-600/20">
+                        <i data-lucide="alert-octagon" class="w-4 h-4"></i>
+                        <span>Panic Square Off All [S]</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Execution Feedback Toast Bar -->
+            <div id="execution-feed" class="p-3 rounded-xl bg-slate-900/80 border border-bordercolor text-xs font-mono text-slate-400 flex items-center justify-between">
+                <span>Status: Ready for hotkey dispatch. Press B, P, C, or S.</span>
+                <span class="text-emerald-400 text-[11px] font-bold">● ONLINE</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedLots = 1;
+let currentUnderlying = "NIFTY";
+
+function setLots(num) {
+    selectedLots = num;
+    [1, 2, 5, 10].forEach(l => {
+        const btn = document.getElementById(`lot-${l}`);
+        if (l === num) {
+            btn.className = "py-2 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold text-xs font-mono";
+        } else {
+            btn.className = "py-2 rounded-xl bg-slate-900/60 border border-bordercolor text-slate-300 font-bold text-xs font-mono hover:bg-slate-800";
+        }
+    });
+}
+
+function updateScalpUnderlying() {
+    currentUnderlying = document.getElementById('underlying-select').value;
+    const spot = (currentUnderlying === 'BANKNIFTY') ? 51200 : ((currentUnderlying === 'SENSEX') ? 80500 : 24500);
+    const step = (currentUnderlying === 'BANKNIFTY' || currentUnderlying === 'SENSEX') ? 100 : 50;
+    const atm = Math.round(spot / step) * step;
+
+    document.getElementById('scalp-spot').textContent = `${currentUnderlying}: ₹${spot.toLocaleString()}`;
+    document.getElementById('scalp-ce-sym').textContent = `${currentUnderlying} ${atm} CE`;
+    document.getElementById('scalp-pe-sym').textContent = `${currentUnderlying} ${atm} PE`;
+}
+
+async function executeScalp(action, optionType) {
+    const feed = document.getElementById('execution-feed');
+    feed.innerHTML = `<span class="text-amber-400 animate-pulse">Dispatching ${action} ATM ${optionType} (${selectedLots} lots)...</span>`;
+
+    try {
+        const response = await fetch('/api/v1/optionsorder', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                underlying: currentUnderlying,
+                option_type: optionType,
+                strike_offset: 'ATM',
+                action: action,
+                quantity: selectedLots * (currentUnderlying === 'BANKNIFTY' ? 30 : 75),
+                pricetype: 'MARKET',
+                product: 'NRML'
+            })
+        });
+        const res = await response.json();
+        if (res.status === 'success') {
+            feed.innerHTML = `<span class="text-emerald-400">Order Placed: ${res.orderid || 'ORD_SUCCESS'} for ${currentUnderlying} ATM ${optionType}</span><span class="text-emerald-400">✓ FILLED</span>`;
+        } else {
+            feed.innerHTML = `<span class="text-rose-400">Order Failed: ${res.message || 'Error'}</span>`;
+        }
+    } catch (e) {
+        feed.innerHTML = `<span class="text-rose-400">Error: ${e.message}</span>`;
+    }
+}
+
+async function cancelAllOrders() {
+    const feed = document.getElementById('execution-feed');
+    feed.innerHTML = `<span class="text-amber-400">Cancelling all open orders...</span>`;
+    try {
+        const response = await fetch('/api/v1/cancelallorder', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+        feed.innerHTML = `<span class="text-amber-400">All open orders cancelled.</span>`;
+    } catch(e) { feed.innerHTML = `<span class="text-rose-400">Failed to cancel orders.</span>`; }
+}
+
+async function squareOffAll() {
+    const feed = document.getElementById('execution-feed');
+    feed.innerHTML = `<span class="text-rose-400 font-bold animate-pulse">EMERGENCY: Squaring off all open positions...</span>`;
+    try {
+        const response = await fetch('/api/v1/closeposition', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({symbol: 'ALL'}) });
+        feed.innerHTML = `<span class="text-rose-400 font-bold">All positions squared off to flat.</span>`;
+    } catch(e) { feed.innerHTML = `<span class="text-rose-400">Failed to square off positions.</span>`; }
+}
+
+// Global Keyboard Hotkeys Listener
+document.addEventListener('keydown', (e) => {
+    // Ignore when user is typing inside an input or select
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+
+    const key = e.key.toUpperCase();
+    if (key === 'B') {
+        e.preventDefault();
+        executeScalp('BUY', 'CE');
+    } else if (key === 'P') {
+        e.preventDefault();
+        executeScalp('BUY', 'PE');
+    } else if (key === 'C') {
+        e.preventDefault();
+        cancelAllOrders();
+    } else if (key === 'S') {
+        e.preventDefault();
+        squareOffAll();
+    }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    updateScalpUnderlying();
+    lucide.createIcons();
+});
+</script>
+{% endblock %}

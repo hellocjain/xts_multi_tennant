@@ -423,6 +423,161 @@ async def client_action_center_page(request: Request, client_user: dict = Depend
         "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
+# -----------------------------------------------------------------------------
+# Quantitative Analytics & Option Tools (Max Pain, GEX, Straddle, Arbitrage, Scalping)
+# -----------------------------------------------------------------------------
+@app.get("/client/maxpain", response_class=HTMLResponse)
+async def client_maxpain_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    return templates.TemplateResponse(request=request, name="client_maxpain.html", context={
+        "client": {},
+        "client_user": client_user,
+        "current_user": client_user,
+        "active_page": "maxpain",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/client/gex", response_class=HTMLResponse)
+async def client_gex_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    return templates.TemplateResponse(request=request, name="client_gex.html", context={
+        "client": {},
+        "client_user": client_user,
+        "current_user": client_user,
+        "active_page": "gex",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/client/straddle", response_class=HTMLResponse)
+async def client_straddle_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    return templates.TemplateResponse(request=request, name="client_straddle.html", context={
+        "client": {},
+        "client_user": client_user,
+        "current_user": client_user,
+        "active_page": "straddle",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/client/arbitrage", response_class=HTMLResponse)
+async def client_arbitrage_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    return templates.TemplateResponse(request=request, name="client_arbitrage.html", context={
+        "client": {},
+        "client_user": client_user,
+        "current_user": client_user,
+        "active_page": "arbitrage",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/client/scalping", response_class=HTMLResponse)
+async def client_scalping_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    return templates.TemplateResponse(request=request, name="client_scalping.html", context={
+        "client": {},
+        "client_user": client_user,
+        "current_user": client_user,
+        "active_page": "scalping",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.post("/client/api/maxpain")
+async def client_api_maxpain(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/maxpain", f"http://xts_client_{tenant_id}:8000/api/v1/maxpain"]:
+            try:
+                resp = await http_client.post(target, json=body)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                continue
+    try:
+        from client import analytics_service
+        return analytics_service.default_analytics_service.calculate_max_pain(
+            underlying=body.get("underlying", "NIFTY")
+        )
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/client/api/gex")
+async def client_api_gex(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/gex", f"http://xts_client_{tenant_id}:8000/api/v1/gex"]:
+            try:
+                resp = await http_client.post(target, json=body)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                continue
+    try:
+        from client import analytics_service
+        return analytics_service.default_analytics_service.calculate_gex(
+            underlying=body.get("underlying", "NIFTY")
+        )
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/client/api/straddle")
+async def client_api_straddle(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/straddle", f"http://xts_client_{tenant_id}:8000/api/v1/straddle"]:
+            try:
+                resp = await http_client.post(target, json=body)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                continue
+    try:
+        from client import analytics_service
+        return analytics_service.default_analytics_service.calculate_straddle_series(
+            underlying=body.get("underlying", "NIFTY")
+        )
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/client/api/arbitrage")
+async def client_api_arbitrage(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/arbitrage", f"http://xts_client_{tenant_id}:8000/api/v1/arbitrage"]:
+            try:
+                resp = await http_client.post(target, json=body)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                continue
+    try:
+        from client import analytics_service
+        return analytics_service.default_analytics_service.get_arbitrage_universe(
+            symbols=body.get("symbols")
+        )
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.get("/client/action-center/count")
 async def client_action_center_count(request: Request, client_user: dict = Depends(require_client_auth)):
     tenant_id = client_user["tenant_id"]

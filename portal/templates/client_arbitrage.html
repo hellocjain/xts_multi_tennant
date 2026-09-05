@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+
+{% block title %}Calendar Spread Arbitrage - OpenAlgo XTS{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6 pb-16">
+    <!-- Top Header Banner -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-bordercolor">
+        <div>
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-sm shadow-emerald-500/10">
+                    <i data-lucide="scale" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                        Futures Calendar Arbitrage Scanner
+                        <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">NFO / MCX</span>
+                    </h1>
+                    <p class="text-xs text-slate-400 mt-0.5">Real-time calendar spread scanner ranked by annualized yield % with two-leg order execution.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls: Refresh -->
+        <div class="flex items-center space-x-3">
+            <button onclick="loadArbitrageData()" class="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-cardbg border border-bordercolor text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition">
+                <i data-lucide="refresh-cw" id="refresh-icon" class="w-3.5 h-3.5"></i>
+                <span>Scan Now</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 4 Key Telemetry Metric Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Card 1: Top Annualized Yield -->
+        <div class="bg-cardbg border border-emerald-500/30 p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Top Annualized Yield</span>
+                <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">MAX ROI</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-max-yield" class="text-3xl font-black font-mono text-emerald-400">--%</span>
+                <span id="stat-best-sym" class="text-xs text-slate-400 font-mono">--</span>
+            </div>
+        </div>
+
+        <!-- Card 2: Executable Spreads -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Executable Opportunities</span>
+                <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-executable-count" class="text-3xl font-black font-mono text-white">--</span>
+                <span class="text-xs text-slate-500 font-mono">>6.5% threshold</span>
+            </div>
+        </div>
+
+        <!-- Card 3: Market Regime -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Dominant Structure</span>
+                <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-slate-300">BASIS</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-regime" class="text-3xl font-black font-mono text-blue-400">CONTANGO</span>
+                <span class="text-xs text-slate-500 font-mono">Cost of carry</span>
+            </div>
+        </div>
+
+        <!-- Card 4: Universe Scanned -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Universe Pairs</span>
+                <i data-lucide="layers" class="w-4 h-4 text-purple-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-total-scanned" class="text-3xl font-black font-mono text-purple-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">contracts active</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scanner Table Card -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm space-y-4">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center space-x-2">
+                <i data-lucide="table" class="w-4 h-4 text-emerald-400"></i>
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider">Real-Time Calendar Pairs Ranking</h3>
+            </div>
+            <div class="flex items-center space-x-2 text-xs text-slate-400 font-mono">
+                <span>Auto-refresh: 10s</span>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+                <thead class="text-[11px] text-slate-400 uppercase bg-slate-900/60 border-b border-bordercolor">
+                    <tr>
+                        <th class="px-4 py-3">Underlying</th>
+                        <th class="px-4 py-3">Spot Price</th>
+                        <th class="px-4 py-3">Near Month (F1)</th>
+                        <th class="px-4 py-3">Next Month (F2)</th>
+                        <th class="px-4 py-3">Spread (₹)</th>
+                        <th class="px-4 py-3">Spread %</th>
+                        <th class="px-4 py-3">Annualized %</th>
+                        <th class="px-4 py-3">Regime</th>
+                        <th class="px-4 py-3 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="arbitrage-tbody" class="divide-y divide-bordercolor">
+                    <tr>
+                        <td colspan="9" class="px-4 py-12 text-center text-slate-500">Scanning calendar futures pairs...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+async function loadArbitrageData() {
+    const refreshIcon = document.getElementById('refresh-icon');
+    if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+    try {
+        const response = await fetch('/client/api/arbitrage', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            renderArbitrage(data);
+        }
+    } catch (e) {
+        console.error('Failed to load arbitrage:', e);
+    } finally {
+        if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+    }
+}
+
+function renderArbitrage(res) {
+    const pairs = res.data;
+    if (!pairs || pairs.length === 0) return;
+
+    document.getElementById('stat-total-scanned').textContent = pairs.length;
+    document.getElementById('stat-max-yield').textContent = pairs[0].annualized_pct + '%';
+    document.getElementById('stat-best-sym').textContent = pairs[0].underlying;
+
+    const execCount = pairs.filter(p => p.is_executable).length;
+    document.getElementById('stat-executable-count').textContent = execCount;
+
+    const tbody = document.getElementById('arbitrage-tbody');
+    tbody.innerHTML = '';
+
+    pairs.forEach(p => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-800/40 transition';
+
+        const isGood = p.annualized_pct >= 6.5;
+
+        tr.innerHTML = `
+            <td class="px-4 py-3 font-bold text-white flex items-center gap-1.5">
+                ${p.underlying}
+                <span class="text-[10px] text-slate-500">(${p.lot_size})</span>
+            </td>
+            <td class="px-4 py-3 text-slate-300">₹${p.spot_price.toLocaleString()}</td>
+            <td class="px-4 py-3">
+                <span class="text-slate-200 font-bold">₹${p.near_price.toLocaleString()}</span>
+                <span class="text-[10px] text-slate-500 block">${p.near_days}d to exp</span>
+            </td>
+            <td class="px-4 py-3">
+                <span class="text-slate-200 font-bold">₹${p.next_price.toLocaleString()}</span>
+                <span class="text-[10px] text-slate-500 block">${p.next_days}d to exp</span>
+            </td>
+            <td class="px-4 py-3 font-bold ${p.spread >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                ${p.spread >= 0 ? '+' : ''}${p.spread.toFixed(2)}
+            </td>
+            <td class="px-4 py-3 text-slate-300">${p.spread_pct.toFixed(2)}%</td>
+            <td class="px-4 py-3">
+                <span class="px-2 py-0.5 rounded text-xs font-bold ${isGood ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}">
+                    ${p.annualized_pct}%
+                </span>
+            </td>
+            <td class="px-4 py-3 text-[11px] text-slate-400">${p.market_regime}</td>
+            <td class="px-4 py-3 text-right">
+                <a href="/client/trading" class="px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow-sm">
+                    Trade Pair
+                </a>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadArbitrageData();
+    lucide.createIcons();
+    setInterval(loadArbitrageData, 10000);
+});
+</script>
+{% endblock %}

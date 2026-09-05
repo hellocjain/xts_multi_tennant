@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block title %}Gamma Exposure (GEX) - OpenAlgo XTS{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6 pb-16">
+    <!-- Top Header Banner -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-bordercolor">
+        <div>
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 shadow-sm shadow-purple-500/10">
+                    <i data-lucide="zap" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                        Gamma Exposure (GEX)
+                        <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">DEALER HEDGING</span>
+                    </h1>
+                    <p class="text-xs text-slate-400 mt-0.5">Dealer gamma profiling, Net GEX per strike, Call & Put OI Walls, and the Volatility Flip Trigger.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls: Symbol Selector & Refresh -->
+        <div class="flex items-center space-x-3">
+            <select id="underlying-select" onchange="loadGEXData()" class="bg-cardbg border border-bordercolor text-xs text-white rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-purple-500 transition">
+                <option value="NIFTY" selected>NIFTY 50</option>
+                <option value="BANKNIFTY">BANK NIFTY</option>
+                <option value="FINNIFTY">FIN NIFTY</option>
+                <option value="SENSEX">BSE SENSEX</option>
+            </select>
+            <button onclick="loadGEXData()" class="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-cardbg border border-bordercolor text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition">
+                <i data-lucide="refresh-cw" id="refresh-icon" class="w-3.5 h-3.5"></i>
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 4 Key Telemetry Metric Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Card 1: Gamma Flip Level -->
+        <div class="bg-cardbg border border-purple-500/30 p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Gamma Flip Level</span>
+                <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">TRIGGER</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-flip" class="text-3xl font-black font-mono text-purple-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">vol threshold</span>
+            </div>
+        </div>
+
+        <!-- Card 2: Call Wall (Major Resistance) -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Call Wall (Resistance)</span>
+                <i data-lucide="shield" class="w-4 h-4 text-rose-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-call-wall" class="text-3xl font-black font-mono text-rose-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">max call OI</span>
+            </div>
+        </div>
+
+        <!-- Card 3: Put Wall (Major Support) -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Put Wall (Support)</span>
+                <i data-lucide="anchor" class="w-4 h-4 text-emerald-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-put-wall" class="text-3xl font-black font-mono text-emerald-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">max put OI</span>
+            </div>
+        </div>
+
+        <!-- Card 4: Net Gamma Exposure -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Net GEX Regime</span>
+                <span id="regime-badge" class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-slate-300">CALCULATING</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-total-gex" class="text-3xl font-black font-mono text-white">--</span>
+                <span class="text-xs text-slate-500 font-mono">₹ Cr</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Visual Chart & Distribution Table -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Chart Panel (2 cols) -->
+        <div class="lg:col-span-2 bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="bar-chart-3" class="w-4 h-4 text-purple-400"></i>
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Net Gamma Exposure per Strike (₹ Crores)</h3>
+                </div>
+                <div class="flex items-center space-x-4 text-xs font-mono">
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Positive GEX (Stabilizing)</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Negative GEX (Volatile)</span>
+                </div>
+            </div>
+
+            <!-- Canvas Chart Container -->
+            <div class="h-[340px] w-full relative">
+                <canvas id="gexChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Top Gamma Strikes Matrix Panel (1 col) -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm flex flex-col">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="layers" class="w-4 h-4 text-slate-400"></i>
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Top Gamma Concentration</h3>
+                </div>
+                <span class="text-[11px] font-mono text-slate-400">₹ Cr Net</span>
+            </div>
+
+            <div class="mt-3 flex-1 overflow-y-auto max-h-[340px] pr-1 space-y-2" id="gex-matrix-container">
+                <div class="text-center py-12 text-slate-500 text-xs">Loading GEX data...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let gexChartInstance = null;
+
+async function loadGEXData() {
+    const underlying = document.getElementById('underlying-select').value;
+    const refreshIcon = document.getElementById('refresh-icon');
+    if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+    try {
+        const response = await fetch('/client/api/gex', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ underlying: underlying })
+        });
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            renderGEX(data);
+        }
+    } catch (e) {
+        console.error('Failed to load GEX:', e);
+    } finally {
+        if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+    }
+}
+
+function renderGEX(data) {
+    document.getElementById('stat-flip').textContent = data.gamma_flip.toLocaleString();
+    document.getElementById('stat-call-wall').textContent = data.call_wall.toLocaleString();
+    document.getElementById('stat-put-wall').textContent = data.put_wall.toLocaleString();
+    document.getElementById('stat-total-gex').textContent = (data.total_net_gex_cr >= 0 ? '+' : '') + data.total_net_gex_cr.toLocaleString();
+
+    const regimeBadge = document.getElementById('regime-badge');
+    if (data.total_net_gex_cr > 0) {
+        regimeBadge.textContent = 'LONG GAMMA (STABLE)';
+        regimeBadge.className = 'px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+    } else {
+        regimeBadge.textContent = 'SHORT GAMMA (VOLATILE)';
+        regimeBadge.className = 'px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-rose-500/20 text-rose-300 border border-rose-500/30';
+    }
+
+    // Matrix list
+    const matrixContainer = document.getElementById('gex-matrix-container');
+    matrixContainer.innerHTML = '';
+
+    const sortedByAbs = [...data.chain].sort((a, b) => Math.abs(b.net_gex_cr) - Math.abs(a.net_gex_cr)).slice(0, 8);
+    sortedByAbs.forEach(item => {
+        const isFlip = (item.strike === data.gamma_flip);
+        const isCallWall = (item.strike === data.call_wall);
+        const isPutWall = (item.strike === data.put_wall);
+
+        const row = document.createElement('div');
+        row.className = `p-2.5 rounded-xl border flex items-center justify-between text-xs font-mono transition ${
+            item.net_gex_cr >= 0 ? 'bg-emerald-500/5 border-emerald-500/20 text-slate-300' : 'bg-rose-500/5 border-rose-500/20 text-slate-300'
+        }`;
+
+        row.innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-sm">${item.strike}</span>
+                ${isFlip ? '<span class="px-1 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 border border-purple-500/30">FLIP</span>' : ''}
+                ${isCallWall ? '<span class="px-1 py-0.2 rounded text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/30">CALL WALL</span>' : ''}
+                ${isPutWall ? '<span class="px-1 py-0.2 rounded text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">PUT WALL</span>' : ''}
+            </div>
+            <div class="text-right">
+                <span class="font-bold ${item.net_gex_cr >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${item.net_gex_cr >= 0 ? '+' : ''}${item.net_gex_cr} Cr</span>
+                <div class="text-[10px] text-slate-500">CE: +${item.ce_gex_cr} | PE: -${item.pe_gex_cr}</div>
+            </div>
+        `;
+        matrixContainer.appendChild(row);
+    });
+
+    // Chart
+    const ctx = document.getElementById('gexChart').getContext('2d');
+    if (gexChartInstance) gexChartInstance.destroy();
+
+    const labels = data.chain.map(d => d.strike);
+    const netGex = data.chain.map(d => d.net_gex_cr);
+    const barColors = data.chain.map(d => d.net_gex_cr >= 0 ? 'rgba(16, 185, 129, 0.75)' : 'rgba(239, 68, 68, 0.75)');
+
+    gexChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Net GEX (₹ Cr)',
+                data: netGex,
+                backgroundColor: barColors,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+                }
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadGEXData();
+    lucide.createIcons();
+});
+</script>
+{% endblock %}

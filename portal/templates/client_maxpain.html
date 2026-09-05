@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}Max Pain Strike Analysis - OpenAlgo XTS{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6 pb-16">
+    <!-- Top Header Banner -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-bordercolor">
+        <div>
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm shadow-amber-500/10">
+                    <i data-lucide="crosshair" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                        Max Pain Strike Analyzer
+                        <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">EXPIRY PIN</span>
+                    </h1>
+                    <p class="text-xs text-slate-400 mt-0.5">Strike price where option writers (sellers) experience the minimum aggregate financial loss upon expiry.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls: Symbol Selector & Refresh -->
+        <div class="flex items-center space-x-3">
+            <select id="underlying-select" onchange="loadMaxPainData()" class="bg-cardbg border border-bordercolor text-xs text-white rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-amber-500 transition">
+                <option value="NIFTY" selected>NIFTY 50</option>
+                <option value="BANKNIFTY">BANK NIFTY</option>
+                <option value="FINNIFTY">FIN NIFTY</option>
+                <option value="SENSEX">BSE SENSEX</option>
+            </select>
+            <button onclick="loadMaxPainData()" class="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-cardbg border border-bordercolor text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition">
+                <i data-lucide="refresh-cw" id="refresh-icon" class="w-3.5 h-3.5"></i>
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 4 Key Telemetry Metric Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Card 1: Max Pain Strike -->
+        <div class="bg-cardbg border border-amber-500/30 p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Max Pain Strike</span>
+                <span class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">TARGET</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-max-pain" class="text-3xl font-black font-mono text-amber-400">--</span>
+                <span id="stat-pain-diff" class="text-xs text-slate-400 font-mono">0 pts from spot</span>
+            </div>
+        </div>
+
+        <!-- Card 2: Underlying Spot -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Underlying Spot</span>
+                <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-spot" class="text-3xl font-black font-mono text-white">--</span>
+                <span id="stat-atm" class="text-xs text-slate-500 font-mono">ATM: --</span>
+            </div>
+        </div>
+
+        <!-- Card 3: PCR (Put-Call Ratio) -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">PCR (OI)</span>
+                <span id="pcr-badge" class="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-slate-300">NEUTRAL</span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-pcr" class="text-3xl font-black font-mono text-cyan-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">Total PE / CE</span>
+            </div>
+        </div>
+
+        <!-- Card 4: Total Open Interest -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Total OI Volume</span>
+                <i data-lucide="bar-chart-2" class="w-4 h-4 text-blue-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-total-oi" class="text-3xl font-black font-mono text-purple-400">--</span>
+                <span class="text-xs text-slate-500 font-mono">contracts</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Visual Chart & Distribution Table -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Chart Panel (2 cols) -->
+        <div class="lg:col-span-2 bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm space-y-4">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="activity" class="w-4 h-4 text-amber-400"></i>
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Total Cumulative Writer Loss (₹ Crores)</h3>
+                </div>
+                <div class="flex items-center space-x-4 text-xs font-mono">
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> Call Pain</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Put Pain</span>
+                    <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Total Pain</span>
+                </div>
+            </div>
+
+            <!-- Canvas Chart Container -->
+            <div class="h-[340px] w-full relative">
+                <canvas id="maxPainChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Strike Ladder Breakdown Panel (1 col) -->
+        <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-sm flex flex-col">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="list-ordered" class="w-4 h-4 text-slate-400"></i>
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Strike Pain Matrix</h3>
+                </div>
+                <span class="text-[11px] font-mono text-slate-400">₹ Cr</span>
+            </div>
+
+            <div class="mt-3 flex-1 overflow-y-auto max-h-[340px] pr-1 space-y-2" id="pain-matrix-container">
+                <div class="text-center py-12 text-slate-500 text-xs">Loading strike data...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let painChartInstance = null;
+
+async function loadMaxPainData() {
+    const underlying = document.getElementById('underlying-select').value;
+    const refreshIcon = document.getElementById('refresh-icon');
+    if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+    try {
+        const response = await fetch('/client/api/maxpain', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ underlying: underlying })
+        });
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            renderMaxPain(data);
+        }
+    } catch (e) {
+        console.error('Failed to load max pain:', e);
+    } finally {
+        if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+    }
+}
+
+function renderMaxPain(data) {
+    document.getElementById('stat-max-pain').textContent = data.max_pain_strike.toLocaleString();
+    document.getElementById('stat-spot').textContent = '₹' + data.spot_price.toLocaleString();
+    document.getElementById('stat-atm').textContent = 'ATM: ' + data.atm_strike.toLocaleString();
+    document.getElementById('stat-pcr').textContent = data.pcr_oi.toFixed(2);
+
+    const diff = data.max_pain_strike - data.spot_price;
+    const diffSign = diff >= 0 ? '+' : '';
+    document.getElementById('stat-pain-diff').textContent = `${diffSign}${diff.toFixed(0)} pts from spot`;
+
+    const totalOI = (data.total_ce_oi + data.total_pe_oi).toLocaleString();
+    document.getElementById('stat-total-oi').textContent = totalOI;
+
+    const pcrBadge = document.getElementById('pcr-badge');
+    if (data.pcr_oi > 1.2) {
+        pcrBadge.textContent = 'BULLISH';
+        pcrBadge.className = 'px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+    } else if (data.pcr_oi < 0.8) {
+        pcrBadge.textContent = 'BEARISH';
+        pcrBadge.className = 'px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-rose-500/20 text-rose-300 border border-rose-500/30';
+    } else {
+        pcrBadge.textContent = 'NEUTRAL';
+        pcrBadge.className = 'px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-slate-300';
+    }
+
+    // Render Matrix List
+    const matrixContainer = document.getElementById('pain-matrix-container');
+    matrixContainer.innerHTML = '';
+
+    data.pain_data.forEach(item => {
+        const isMaxPain = (item.strike === data.max_pain_strike);
+        const isATM = (item.strike === data.atm_strike);
+
+        const row = document.createElement('div');
+        row.className = `p-2.5 rounded-xl border flex items-center justify-between text-xs font-mono transition ${
+            isMaxPain ? 'bg-amber-500/10 border-amber-500/40 text-amber-300' : (isATM ? 'bg-blue-500/10 border-blue-500/30 text-blue-300' : 'bg-slate-900/40 border-bordercolor text-slate-300')
+        }`;
+
+        row.innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-sm">${item.strike}</span>
+                ${isMaxPain ? '<span class="px-1 py-0.2 rounded text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30">MAX PAIN</span>' : ''}
+                ${isATM ? '<span class="px-1 py-0.2 rounded text-[9px] bg-blue-500/20 text-blue-300 border border-blue-500/30">ATM</span>' : ''}
+            </div>
+            <div class="text-right">
+                <span class="font-bold">₹${item.total_pain_cr.toLocaleString()} Cr</span>
+                <div class="text-[10px] text-slate-500">CE: ₹${(item.ce_pain/1e7).toFixed(1)}Cr | PE: ₹${(item.pe_pain/1e7).toFixed(1)}Cr</div>
+            </div>
+        `;
+        matrixContainer.appendChild(row);
+    });
+
+    // Render Chart
+    const ctx = document.getElementById('maxPainChart').getContext('2d');
+    if (painChartInstance) painChartInstance.destroy();
+
+    const labels = data.pain_data.map(d => d.strike);
+    const totalPains = data.pain_data.map(d => d.total_pain_cr);
+    const cePains = data.pain_data.map(d => d.ce_pain / 10000000.0);
+    const pePains = data.pain_data.map(d => d.pe_pain / 10000000.0);
+
+    painChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Total Pain (₹ Cr)',
+                    data: totalPains,
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                    borderWidth: 2.5,
+                    fill: true,
+                    tension: 0.3
+                },
+                {
+                    label: 'Call Pain (₹ Cr)',
+                    data: cePains,
+                    borderColor: '#ef4444',
+                    borderWidth: 1.5,
+                    borderDash: [4, 4],
+                    pointRadius: 0,
+                    tension: 0.2
+                },
+                {
+                    label: 'Put Pain (₹ Cr)',
+                    data: pePains,
+                    borderColor: '#10b981',
+                    borderWidth: 1.5,
+                    borderDash: [4, 4],
+                    pointRadius: 0,
+                    tension: 0.2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#94a3b8', font: { family: 'monospace', size: 10 } }
+                }
+            }
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadMaxPainData();
+    lucide.createIcons();
+});
+</script>
+{% endblock %}
