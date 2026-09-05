@@ -75,6 +75,8 @@ def write_client_config(tenant_id: str):
             "CANCEL_LINGERING_PARTIAL_FILLS": bool(risk_dict.get("cancel_lingering_partial_fills", True)),
             "PARTIAL_FILL_TIMEOUT_SECONDS": float(risk_dict.get("partial_fill_timeout_seconds", 2.0) or 2.0),
             "PAPER_TRADE_MODE": bool(risk_dict.get("paper_trade_mode", True)),
+            "TRADING_MODE": str(risk_dict.get("trading_mode") or ("PAPER" if risk_dict.get("paper_trade_mode") else "LIVE")).upper(),
+            "ANALYZER_MODE": bool(str(risk_dict.get("trading_mode", "")).upper() == "ANALYZER"),
             "TELEGRAM_BOT_TOKEN": str(risk_dict.get("telegram_bot_token") or "").strip(),
             "TELEGRAM_CHAT_ID": str(risk_dict.get("telegram_chat_id") or "").strip(),
             "DISCORD_WEBHOOK_URL": str(risk_dict.get("discord_webhook_url") or "").strip(),

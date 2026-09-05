@@ -173,6 +173,15 @@ async def client_logout(request: Request):
     resp.delete_cookie(key="client_session")
     return resp
 
+def get_tenant_trading_mode(tenant_id: str) -> str:
+    with closing(database.get_db_connection()) as conn:
+        row = conn.execute("SELECT trading_mode, paper_trade_mode FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if row:
+            if row["trading_mode"]:
+                return str(row["trading_mode"]).upper()
+            return "PAPER" if row["paper_trade_mode"] else "LIVE"
+    return "LIVE"
+
 @app.get("/client/dashboard", response_class=HTMLResponse)
 async def client_dashboard_page(request: Request, client_user: dict = Depends(require_client_auth)):
     tenant_id = client_user["tenant_id"]
@@ -195,7 +204,8 @@ async def client_dashboard_page(request: Request, client_user: dict = Depends(re
         "client_user": client_user,
         "current_user": client_user,
         "api_key": api_key,
-        "active_page": "dashboard"
+        "active_page": "dashboard",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
 @app.get("/client/trading", response_class=HTMLResponse)
@@ -221,7 +231,8 @@ async def client_trading_page(request: Request, client_user: dict = Depends(requ
         "current_user": client_user,
         "api_key": api_key,
         "active_tab": "trading",
-        "active_page": "trading"
+        "active_page": "trading",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
 @app.get("/client/orders", response_class=HTMLResponse)
@@ -246,7 +257,8 @@ async def client_orders_page(request: Request, client_user: dict = Depends(requi
         "client_user": client_user,
         "current_user": client_user,
         "api_key": api_key,
-        "active_page": "orders"
+        "active_page": "orders",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
 @app.get("/client/positions", response_class=HTMLResponse)
@@ -271,7 +283,8 @@ async def client_positions_page(request: Request, client_user: dict = Depends(re
         "client_user": client_user,
         "current_user": client_user,
         "api_key": api_key,
-        "active_page": "positions"
+        "active_page": "positions",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
 @app.get("/client/options", response_class=HTMLResponse)
@@ -296,7 +309,8 @@ async def client_options_page(request: Request, client_user: dict = Depends(requ
         "client_user": client_user,
         "current_user": client_user,
         "api_key": api_key,
-        "active_page": "options"
+        "active_page": "options",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
 @app.get("/client/strategies", response_class=HTMLResponse)
@@ -321,7 +335,8 @@ async def client_strategies_page(request: Request, client_user: dict = Depends(r
         "client_user": client_user,
         "current_user": client_user,
         "api_key": api_key,
-        "active_page": "strategies"
+        "active_page": "strategies",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
 @app.get("/client/logs", response_class=HTMLResponse)
@@ -346,7 +361,8 @@ async def client_logs_page(request: Request, client_user: dict = Depends(require
         "client_user": client_user,
         "current_user": client_user,
         "api_key": api_key,
-        "active_page": "logs"
+        "active_page": "logs",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
 @app.get("/client/developer", response_class=HTMLResponse)
@@ -357,6 +373,9 @@ async def client_developer_page(request: Request, client_user: dict = Depends(re
         if not tenant_row:
             raise HTTPException(status_code=404, detail="Tenant profile not found")
         tenant_dict = dict(tenant_row)
+
+        risk_row = conn.execute("SELECT telegram_bot_token, telegram_chat_id, discord_webhook_url FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
+    risk_dict = dict(risk_row) if risk_row else {}
 
     async with httpx.AsyncClient(timeout=10.0) as http_client:
         client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
@@ -371,7 +390,11 @@ async def client_developer_page(request: Request, client_user: dict = Depends(re
         "client_user": client_user,
         "current_user": client_user,
         "api_key": api_key,
-        "active_page": "developer"
+        "active_page": "developer",
+        "trading_mode": get_tenant_trading_mode(tenant_id),
+        "telegram_bot_token": risk_dict.get("telegram_bot_token", ""),
+        "telegram_chat_id": risk_dict.get("telegram_chat_id", ""),
+        "discord_webhook_url": risk_dict.get("discord_webhook_url", "")
     })
 
 @app.post("/client/cancel-order")
@@ -425,6 +448,146 @@ async def client_square_off_position(
 
     referer = request.headers.get("referer", "/client/positions")
     return RedirectResponse(url=referer, status_code=303)
+
+@app.post("/client/set-trading-mode")
+async def client_set_trading_mode(
+    request: Request,
+    client_user: dict = Depends(require_client_auth)
+):
+    try:
+        body = await request.json()
+        mode = str(body.get("mode") or "").strip().upper()
+    except Exception:
+        form = await request.form()
+        mode = str(form.get("mode") or "").strip().upper()
+
+    if mode not in ("LIVE", "PAPER", "ANALYZER"):
+        return JSONResponse(status_code=400, content={"status": "error", "message": f"Invalid mode '{mode}'"})
+
+    tenant_id = client_user["tenant_id"]
+    paper_int = 1 if mode == "PAPER" else 0
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE tenant_risk_limits SET trading_mode=?, paper_trade_mode=?, updated_at=? WHERE tenant_id=?",
+                (mode, paper_int, time.time(), tenant_id)
+            )
+
+    docker_manager.write_client_config(tenant_id)
+    port = docker_manager.get_tenant_port(tenant_id)
+
+    # Notify running container
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=3.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/mode", f"http://xts_client_{tenant_id}:8000/api/v1/mode"]:
+            try:
+                await http_client.post(target, json={"mode": mode}, headers=headers)
+                break
+            except Exception:
+                pass
+
+    return {"status": "success", "mode": mode, "message": f"Trading mode switched to {mode}"}
+
+@app.post("/client/notification-settings")
+async def client_save_notification_settings(
+    request: Request,
+    client_user: dict = Depends(require_client_auth),
+    telegram_bot_token: str = Form(""),
+    telegram_chat_id: str = Form(""),
+    discord_webhook_url: str = Form("")
+):
+    tenant_id = client_user["tenant_id"]
+    clean_token = telegram_bot_token.strip()
+    clean_chat = telegram_chat_id.strip()
+    clean_discord = discord_webhook_url.strip()
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("""
+                UPDATE tenant_risk_limits
+                SET telegram_bot_token=?, telegram_chat_id=?, discord_webhook_url=?, updated_at=?
+                WHERE tenant_id=?
+            """, (clean_token, clean_chat, clean_discord, time.time(), tenant_id))
+
+    docker_manager.write_client_config(tenant_id)
+    return RedirectResponse(url="/client/developer?msg=Notification+settings+saved+successfully!", status_code=303)
+
+@app.post("/client/test-notification")
+async def client_send_test_notification(
+    request: Request,
+    client_user: dict = Depends(require_client_auth)
+):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    tenant_id = client_user["tenant_id"]
+    bot_token = body.get("telegram_bot_token")
+    chat_id = body.get("telegram_chat_id")
+
+    if not bot_token or not chat_id:
+        with closing(database.get_db_connection()) as conn:
+            row = conn.execute("SELECT telegram_bot_token, telegram_chat_id FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
+            if row:
+                bot_token = bot_token or row["telegram_bot_token"]
+                chat_id = chat_id or row["telegram_chat_id"]
+
+    if not bot_token or not chat_id:
+        return JSONResponse(status_code=400, content={
+            "status": "error",
+            "message": "Please configure both Telegram Bot Token and Chat ID first."
+        })
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/notifications/test", f"http://xts_client_{tenant_id}:8000/api/v1/notifications/test"]:
+            try:
+                resp = await http_client.post(target, json={"bot_token": bot_token, "chat_id": chat_id}, headers=headers)
+                return resp.json()
+            except Exception:
+                pass
+
+    return {"status": "success", "message": "Notification test ping dispatched to Telegram API."}
+
+@app.get("/client/search")
+async def client_symbol_search(
+    request: Request,
+    query: str = "",
+    exchange: Optional[str] = None,
+    limit: int = 20,
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    params = {"query": query, "limit": limit}
+    if exchange:
+        params["exchange"] = exchange
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        for url in [f"http://127.0.0.1:{port}/api/v1/search", f"http://xts_client_{tenant_id}:8000/api/v1/search"]:
+            try:
+                resp = await http_client.get(url, params=params, headers=headers)
+                return resp.json()
+            except Exception:
+                continue
+
+    return {"status": "success", "data": [], "count": 0}
 
 @app.websocket("/ws")
 @app.websocket("/client/ws")

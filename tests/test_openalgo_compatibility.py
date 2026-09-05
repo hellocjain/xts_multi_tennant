@@ -20,11 +20,6 @@ spec = importlib.util.spec_from_file_location("client_main_isolated", client_mai
 client_main = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(client_main)
 
-# Set test environment auth secrets
-config.WEBHOOK_SECRET = "TEST_SECRET_KEY_123"
-config.API_KEY = "TEST_SECRET_KEY_123"
-config.PAPER_TRADE_MODE = True
-
 @pytest.fixture
 def client(monkeypatch):
     import config
@@ -32,14 +27,19 @@ def client(monkeypatch):
     import order_services
     import openalgo_router
 
-    # Ensure config secrets are actively set during the test
+    # Ensure config secrets and trading mode are actively set during the test
+    openalgo_router.set_current_trading_mode("PAPER")
     monkeypatch.setattr(config, "WEBHOOK_SECRET", "TEST_SECRET_KEY_123")
     monkeypatch.setattr(config, "API_KEY", "TEST_SECRET_KEY_123")
     monkeypatch.setattr(config, "PAPER_TRADE_MODE", True)
+    monkeypatch.setattr(config, "TRADING_MODE", "PAPER")
+    monkeypatch.setattr(config, "ANALYZER_MODE", False)
 
     monkeypatch.setattr(openalgo_router.config, "WEBHOOK_SECRET", "TEST_SECRET_KEY_123")
     monkeypatch.setattr(openalgo_router.config, "API_KEY", "TEST_SECRET_KEY_123")
     monkeypatch.setattr(openalgo_router.config, "PAPER_TRADE_MODE", True)
+    monkeypatch.setattr(openalgo_router.config, "TRADING_MODE", "PAPER")
+    monkeypatch.setattr(openalgo_router.config, "ANALYZER_MODE", False)
 
     # Mock XTS calls for deterministic testing across all module references
     mock_execute = lambda action, symbol, qty, price, order_ref, is_paper=True, attempt=1: {

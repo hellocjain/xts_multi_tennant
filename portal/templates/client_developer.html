@@ -88,6 +88,62 @@
         </div>
     </div>
 
+    <!-- Telegram & Multi-Channel Notification Settings Card -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-4 font-mono">
+        <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+            <div class="flex items-center gap-2">
+                <i data-lucide="send" class="w-4 h-4 text-brand-400"></i>
+                <h3 class="text-sm font-bold text-slate-100">Telegram &amp; Multi-Channel Push Notifications</h3>
+            </div>
+            <span class="text-[11px] text-slate-400">Instant trade fill &amp; strategy alerts</span>
+        </div>
+
+        <form action="/client/notification-settings" method="POST" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="space-y-1.5">
+                    <label class="block text-[11px] text-slate-400 uppercase tracking-wider">Telegram Bot Token</label>
+                    <input type="text" name="telegram_bot_token" id="telegram-bot-token-input"
+                           value="{{ telegram_bot_token }}"
+                           placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+                           class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
+                    <p class="text-[10px] text-slate-500">Obtained from <a href="https://t.me/BotFather" target="_blank" class="text-brand-400 underline">@BotFather</a> via <code class="text-slate-400">/newbot</code></p>
+                </div>
+
+                <div class="space-y-1.5">
+                    <label class="block text-[11px] text-slate-400 uppercase tracking-wider">Telegram Chat ID</label>
+                    <input type="text" name="telegram_chat_id" id="telegram-chat-id-input"
+                           value="{{ telegram_chat_id }}"
+                           placeholder="e.g. 987654321 or -100123456789"
+                           class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
+                    <p class="text-[10px] text-slate-500">Get your ID by messaging <a href="https://t.me/userinfobot" target="_blank" class="text-brand-400 underline">@userinfobot</a></p>
+                </div>
+
+                <div class="space-y-1.5">
+                    <label class="block text-[11px] text-slate-400 uppercase tracking-wider">Discord / Slack Webhook URL</label>
+                    <input type="text" name="discord_webhook_url" id="discord-webhook-input"
+                           value="{{ discord_webhook_url }}"
+                           placeholder="https://discord.com/api/webhooks/..."
+                           class="w-full bg-slate-900 border border-bordercolor rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono">
+                    <p class="text-[10px] text-slate-500">Optional: Secondary channel for automated order alerts</p>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <div id="test-notification-status" class="text-xs font-mono"></div>
+                <div class="flex items-center gap-3">
+                    <button type="button" id="send-test-btn" onclick="sendTestNotification()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                        <i data-lucide="bell" class="w-3.5 h-3.5 text-amber-400"></i>
+                        <span>Send Test Notification</span>
+                    </button>
+                    <button type="submit" class="px-5 py-2 bg-brand-500 hover:bg-brand-600 text-obsidian rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm shadow-brand-500/20">
+                        <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                        <span>Save Notification Settings</span>
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+
     <!-- Live Code Generator Tabs -->
     <div class="bg-cardbg border border-bordercolor rounded-2xl shadow-xl overflow-hidden font-mono text-xs">
         <div class="p-4 border-b border-bordercolor flex items-center justify-between">
@@ -296,10 +352,63 @@ if (LastValue(BuySignal)) {
                         <td class="py-2.5 px-3 text-slate-300">Full option chain with Black-Scholes Greeks &amp; OI</td>
                         <td class="py-2.5 px-3 text-slate-400">symbol, expiry</td>
                     </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">POST</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/margin</td>
+                        <td class="py-2.5 px-3 text-slate-300">Pre-trade regulatory margin &amp; multi-leg spread calculator</td>
+                        <td class="py-2.5 px-3 text-slate-400">symbol, action, quantity, price, product, orders (basket)</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 font-bold">POST/GET</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/analyzer</td>
+                        <td class="py-2.5 px-3 text-slate-300">Toggle or inspect Signal Analyzer mode (zero broker risk)</td>
+                        <td class="py-2.5 px-3 text-slate-400">analyzer (bool), mode ("analyzer")</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold">POST/GET</span></td>
+                        <td class="py-2.5 px-3 text-slate-100 font-bold">/api/v1/mode</td>
+                        <td class="py-2.5 px-3 text-slate-300">Query or switch runtime execution mode (LIVE / PAPER / ANALYZER)</td>
+                        <td class="py-2.5 px-3 text-slate-400">mode ("LIVE" | "PAPER" | "ANALYZER")</td>
+                    </tr>
                 </tbody>
             </table>
         </div>
     </div>
 
 </div>
+
+<script>
+async function sendTestNotification() {
+    const statusDiv = document.getElementById('test-notification-status');
+    const tokenInput = document.getElementById('telegram-bot-token-input');
+    const chatInput = document.getElementById('telegram-chat-id-input');
+    const token = tokenInput ? tokenInput.value.trim() : '';
+    const chat = chatInput ? chatInput.value.trim() : '';
+
+    if (!statusDiv) return;
+
+    if (!token || !chat) {
+        statusDiv.innerHTML = '<span class="text-amber-400 font-bold">⚠️ Please fill in both Telegram Bot Token and Chat ID.</span>';
+        return;
+    }
+
+    statusDiv.innerHTML = '<span class="text-amber-400 flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span> Dispatching test alert to Telegram API...</span>';
+
+    try {
+        const resp = await fetch('/client/test-notification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telegram_bot_token: token, telegram_chat_id: chat })
+        });
+        const data = await resp.json();
+        if (data.status === 'success') {
+            statusDiv.innerHTML = `<span class="text-emerald-400 font-bold">🟢 ${data.message || 'Test alert delivered successfully! Check your Telegram.'}</span>`;
+        } else {
+            statusDiv.innerHTML = `<span class="text-rose-400 font-bold">🔴 ${data.message || 'Failed to dispatch test notification'}</span>`;
+        }
+    } catch (err) {
+        statusDiv.innerHTML = `<span class="text-rose-400 font-bold">🔴 Network error: ${err.message}</span>`;
+    }
+}
+</script>
 {% endblock %}

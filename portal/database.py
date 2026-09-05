@@ -79,6 +79,8 @@ def init_portal_db():
                 conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN telegram_chat_id TEXT DEFAULT ''")
             if "discord_webhook_url" not in existing_cols:
                 conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN discord_webhook_url TEXT DEFAULT ''")
+            if "trading_mode" not in existing_cols:
+                conn.execute("ALTER TABLE tenant_risk_limits ADD COLUMN trading_mode TEXT DEFAULT 'LIVE'")
 
             # 4. Tenant SuperTrend Auto-Trading Strategy Configurations
             conn.execute("""

@@ -59,9 +59,13 @@ BACKGROUND_THREAD_POOL_SIZE = int(os.environ.get("BACKGROUND_THREAD_POOL_SIZE", 
 MAX_WEBHOOK_BODY_BYTES = int(os.environ.get("MAX_WEBHOOK_BODY_BYTES", "10000"))
 OPS_ALERT_WEBHOOK_URL = os.environ.get("OPS_ALERT_WEBHOOK_URL", "")
 
-# 8. Paper Trading Mode
+# 8. Paper & Tri-State Trading Mode (LIVE / PAPER / ANALYZER)
 PAPER_TRADE_MODE = os.environ.get("PAPER_TRADE_MODE", "True").lower() in ("true", "1", "yes")
 LOG_PAPER_TRADES_TO_FILE = os.environ.get("LOG_PAPER_TRADES_TO_FILE", "True").lower() in ("true", "1", "yes")
+TRADING_MODE = os.environ.get("TRADING_MODE", "PAPER" if PAPER_TRADE_MODE else "LIVE").upper()
+ANALYZER_MODE = os.environ.get("ANALYZER_MODE", "False").lower() in ("true", "1", "yes")
+if ANALYZER_MODE:
+    TRADING_MODE = "ANALYZER"
 
 # 9. Execution & Fill Push Notifications
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")

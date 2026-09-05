@@ -13,6 +13,8 @@ ENV/
 
 # Local runtime data & SQLite DBs
 local_data/
+data/
+portal/data/
 *.db
 *.db-wal
 *.db-shm

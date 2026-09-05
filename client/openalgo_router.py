@@ -22,12 +22,41 @@ import token_db
 import candle_service
 import watchlist_service
 import trading_agent_service
+import margin_service
+import notification_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["OpenAlgo API V1"])
 
 _ORDERS_REGISTRY: Dict[str, dict] = {}
+_ANALYZER_SIGNALS: List[dict] = []
+
+def get_current_trading_mode() -> str:
+    """Returns the current operational mode: 'LIVE', 'PAPER', or 'ANALYZER'."""
+    mode = str(getattr(config, "TRADING_MODE", "")).upper()
+    if mode in ("LIVE", "PAPER", "ANALYZER"):
+        return mode
+    if getattr(config, "ANALYZER_MODE", False):
+        return "ANALYZER"
+    return "PAPER" if getattr(config, "PAPER_TRADE_MODE", True) else "LIVE"
+
+def set_current_trading_mode(mode: str) -> str:
+    """Dynamically updates the operational mode across LIVE, PAPER, and ANALYZER."""
+    clean_mode = str(mode or "").strip().upper()
+    if clean_mode not in ("LIVE", "PAPER", "ANALYZER"):
+        clean_mode = "PAPER"
+    config.TRADING_MODE = clean_mode
+    if clean_mode == "ANALYZER":
+        config.ANALYZER_MODE = True
+        config.PAPER_TRADE_MODE = False
+    elif clean_mode == "PAPER":
+        config.ANALYZER_MODE = False
+        config.PAPER_TRADE_MODE = True
+    else:  # LIVE
+        config.ANALYZER_MODE = False
+        config.PAPER_TRADE_MODE = False
+    return clean_mode
 
 def _verify_auth(data: dict, request: Request) -> bool:
     """Verifies that the request carries a valid API key or internal gateway token."""
@@ -118,6 +147,9 @@ async def symbol_metadata_endpoint(request: Request):
 # -----------------------------------------------------------------------------
 # 2. Order Management
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 2. Order Management & Tri-State Execution Engine
+# -----------------------------------------------------------------------------
 @router.post("/placeorder")
 @router.post("/order")
 async def place_order(request: Request):
@@ -131,7 +163,6 @@ async def place_order(request: Request):
     quantity = int(data.get("quantity", 0))
     price = float(data.get("price", 0.0))
     order_ref = data.get("order_ref") or data.get("strategy") or f"OA_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
-    is_paper = bool(data.get("is_paper") or getattr(config, "PAPER_TRADE_MODE", False))
 
     if not symbol or quantity <= 0:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Symbol and positive quantity are required"})
@@ -146,6 +177,76 @@ async def place_order(request: Request):
 
     if sym_info and price > 0 and sym_info.tick_size > 0:
         price = round(round(price / sym_info.tick_size) * sym_info.tick_size, 4)
+
+    curr_mode = get_current_trading_mode()
+
+    # TRI-STATE 1: ANALYZER MODE (Signals only, zero broker risk)
+    if curr_mode == "ANALYZER":
+        sim_price = price if price > 0 else 2950.0
+        analyzer_order_id = f"ANALYZER_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+        signal_entry = {
+            "orderid": str(analyzer_order_id),
+            "symbol": symbol,
+            "exchange": exchange or "NSE",
+            "action": action,
+            "quantity": quantity,
+            "price": sim_price,
+            "pricetype": "LIMIT" if price > 0 else "MARKET",
+            "product": data.get("product", "NRML"),
+            "status": "complete",
+            "order_status": "complete",
+            "filled_quantity": quantity,
+            "pending_quantity": 0,
+            "average_price": sim_price,
+            "rejection_reason": "",
+            "mode": "ANALYZER",
+            "timestamp": time.time(),
+            "order_ref": order_ref
+        }
+        _ANALYZER_SIGNALS.append(signal_entry)
+        _ORDERS_REGISTRY[str(analyzer_order_id)] = signal_entry
+
+        try:
+            from ws_manager import default_ws_manager
+            asyncio.create_task(default_ws_manager.broadcast_order_update({
+                "order_id": str(analyzer_order_id),
+                "symbol": symbol,
+                "exchange": exchange or "NSE",
+                "action": action,
+                "quantity": quantity,
+                "price": sim_price,
+                "status": "complete",
+                "mode": "ANALYZER"
+            }))
+        except Exception:
+            pass
+
+        asyncio.create_task(notification_service.notify_order_execution(
+            tenant_id=getattr(config, "CLIENT_ID", "TENANT") or "TENANT",
+            order_data=signal_entry,
+            status="ANALYZED",
+            execution_price=sim_price,
+            app_order_id=analyzer_order_id
+        ))
+
+        return {
+            "status": "success",
+            "orderid": str(analyzer_order_id),
+            "mode": "ANALYZER",
+            "message": "Signal analyzed and logged (Zero Broker Risk)",
+            "result": {
+                "type": "success",
+                "status": "success",
+                "result": {
+                    "AppOrderID": analyzer_order_id,
+                    "IsAnalyzer": True,
+                    "SimulatedFillPrice": sim_price
+                }
+            }
+        }
+
+    # TRI-STATE 2 & 3: PAPER vs LIVE EXECUTION
+    is_paper = (curr_mode == "PAPER") or bool(data.get("is_paper"))
 
     res = await asyncio.to_thread(
         xts_api.execute_trade_with_retry,
@@ -192,6 +293,21 @@ async def place_order(request: Request):
             }))
         except Exception:
             pass
+
+    asyncio.create_task(notification_service.notify_order_execution(
+        tenant_id=getattr(config, "CLIENT_ID", "TENANT") or "TENANT",
+        order_data={
+            "symbol": symbol,
+            "action": action,
+            "quantity": quantity,
+            "price": price,
+            "order_ref": order_ref,
+            "rejection_reason": res.get("description") or res.get("message")
+        },
+        status="COMPLETE" if is_ok else "REJECTED",
+        execution_price=price,
+        app_order_id=str(order_id)
+    ))
 
     return {
         "status": "success" if is_ok else "error",
@@ -252,15 +368,66 @@ async def place_smart_order(request: Request):
     stoploss = float(data.get("stoploss", 0.0))
     trailing_sl = float(data.get("trailing_stoploss", 0.0))
     order_ref = data.get("order_ref") or f"SMART_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
-    is_paper = bool(data.get("is_paper") or getattr(config, "PAPER_TRADE_MODE", False))
 
     if not symbol or quantity <= 0:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Symbol and positive quantity are required"})
+
+    curr_mode = get_current_trading_mode()
+    if curr_mode == "ANALYZER":
+        analyzer_order_id = f"ANALYZER_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+        sim_price = price if price > 0 else 2950.0
+        signal_entry = {
+            "orderid": analyzer_order_id,
+            "symbol": symbol,
+            "action": action,
+            "quantity": quantity,
+            "price": sim_price,
+            "target": target,
+            "stoploss": stoploss,
+            "trailing_stoploss": trailing_sl,
+            "mode": "ANALYZER",
+            "status": "complete"
+        }
+        _ANALYZER_SIGNALS.append(signal_entry)
+        asyncio.create_task(notification_service.notify_order_execution(
+            tenant_id=getattr(config, "CLIENT_ID", "TENANT") or "TENANT",
+            order_data=signal_entry,
+            status="ANALYZED",
+            execution_price=sim_price,
+            app_order_id=analyzer_order_id
+        ))
+        return {
+            "status": "success",
+            "orderid": str(analyzer_order_id),
+            "mode": "ANALYZER",
+            "message": "Smart order signal recorded in Analyzer mode (Zero Broker Risk)",
+            "bracket": {
+                "target": target,
+                "stoploss": stoploss,
+                "trailing_stoploss": trailing_sl
+            }
+        }
+
+    is_paper = (curr_mode == "PAPER") or bool(data.get("is_paper"))
 
     # 1. Place the main entry order
     entry_res = await asyncio.to_thread(xts_api.execute_trade_with_retry, action, symbol, quantity, price, order_ref, is_paper=is_paper)
     is_ok = (entry_res.get("type") == "success" or entry_res.get("status") == "success")
     order_id = (entry_res.get("result") or {}).get("AppOrderID") or "N/A"
+
+    asyncio.create_task(notification_service.notify_order_execution(
+        tenant_id=getattr(config, "CLIENT_ID", "TENANT") or "TENANT",
+        order_data={
+            "symbol": symbol,
+            "action": action,
+            "quantity": quantity,
+            "price": price,
+            "order_ref": order_ref
+        },
+        status="COMPLETE" if is_ok else "REJECTED",
+        execution_price=price,
+        app_order_id=str(order_id)
+    ))
 
     return {
         "status": "success" if is_ok else "error",
@@ -287,7 +454,19 @@ async def split_order(request: Request):
     split_size = data.get("split_size")
     delay_seconds = float(data.get("delay", 0.25))
     order_ref = data.get("order_ref")
-    is_paper = bool(data.get("is_paper") or getattr(config, "PAPER_TRADE_MODE", False))
+
+    curr_mode = get_current_trading_mode()
+    if curr_mode == "ANALYZER":
+        return {
+            "status": "success",
+            "message": "Split order analyzed and recorded in Analyzer mode (Zero Broker Risk)",
+            "dispatched_quantity": quantity,
+            "total_quantity": quantity,
+            "successful_slices": [{"slice": 1, "quantity": quantity, "order_ref": order_ref}],
+            "mode": "ANALYZER"
+        }
+
+    is_paper = (curr_mode == "PAPER") or bool(data.get("is_paper"))
 
     res = await order_services.execute_split_order(
         action=action, symbol=symbol, quantity=quantity, price=price,
@@ -303,9 +482,184 @@ async def basket_order(request: Request):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
 
     orders = data.get("orders") or []
-    is_paper = bool(data.get("is_paper") or getattr(config, "PAPER_TRADE_MODE", False))
+    curr_mode = get_current_trading_mode()
+
+    if curr_mode == "ANALYZER":
+        analyzer_basket_id = f"ANALYZER_BASKET_{int(time.time()*1000)}"
+        results = []
+        for idx, ord_item in enumerate(orders, 1):
+            sub_id = f"{analyzer_basket_id}_{idx}"
+            sig = {
+                "orderid": sub_id,
+                "symbol": ord_item.get("symbol"),
+                "action": ord_item.get("action"),
+                "quantity": ord_item.get("quantity"),
+                "price": ord_item.get("price"),
+                "mode": "ANALYZER",
+                "status": "complete"
+            }
+            _ANALYZER_SIGNALS.append(sig)
+            results.append({"index": idx, "orderid": sub_id, "status": "success"})
+        return {
+            "status": "success",
+            "mode": "ANALYZER",
+            "message": f"Analyzed {len(orders)} basket legs with zero broker risk",
+            "orderid": analyzer_basket_id,
+            "results": results
+        }
+
+    is_paper = (curr_mode == "PAPER") or bool(data.get("is_paper"))
 
     res = await order_services.execute_basket_order(orders=orders, is_paper=is_paper)
+    return res
+
+# -----------------------------------------------------------------------------
+# 2B. Pre-Trade Regulatory Margin Calculator
+# -----------------------------------------------------------------------------
+@router.post("/margin")
+@router.post("/margincalculator")
+async def calculate_margin_endpoint(request: Request):
+    """
+    OpenAlgo Pre-Trade Regulatory Margin Calculator.
+    Accepts single order payload or multi-leg basket and returns SEBI-compliant margin requirements.
+    """
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    basket = data.get("basket") or data.get("orders") or data.get("items")
+    available_funds = data.get("available_funds") or data.get("funds") or data.get("capital")
+    if available_funds is not None:
+        try:
+            available_funds = float(available_funds)
+        except (ValueError, TypeError):
+            available_funds = None
+
+    if basket and isinstance(basket, list):
+        res = margin_service.calculate_basket_margin(items=basket, available_funds=available_funds)
+        return {
+            "status": "success",
+            "data": res,
+            "total_margin_required": res["total_margin_required"],
+            "initial_margin": res["initial_margin"],
+            "hedged_benefit": res["hedged_benefit"],
+            "available_funds": res["available_funds"],
+            "margin_shortfall": res["margin_shortfall"],
+            "can_place": res["can_place"]
+        }
+
+    # Single order calculation
+    symbol = str(data.get("symbol", "")).strip()
+    if not symbol:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "symbol is required for margin calculation"})
+
+    action = str(data.get("action", "BUY")).upper()
+    quantity = int(data.get("quantity", 1))
+    price = float(data.get("price", 0.0))
+    product = str(data.get("product", "NRML")).upper()
+    order_type = str(data.get("order_type", "LIMIT")).upper()
+    exchange = str(data.get("exchange", "NSE")).upper()
+
+    order_margin = margin_service.calculate_order_margin(
+        symbol=symbol,
+        action=action,
+        quantity=quantity,
+        price=price,
+        product=product,
+        order_type=order_type,
+        exchange=exchange
+    )
+
+    funds = available_funds if available_funds is not None else float(getattr(config, "INITIAL_CAPITAL", 10000000.0))
+    margin_req = order_margin["margin_required"]
+    shortfall = max(0.0, round(margin_req - funds, 2))
+
+    return {
+        "status": "success",
+        "data": order_margin,
+        "margin_required": margin_req,
+        "available_margin": round(funds, 2),
+        "available_funds": round(funds, 2),
+        "margin_shortfall": shortfall,
+        "can_place": shortfall == 0.0
+    }
+
+# -----------------------------------------------------------------------------
+# 2C. Tri-State Trading Mode & Signal Analyzer
+# -----------------------------------------------------------------------------
+@router.get("/analyzer")
+async def get_analyzer_status(request: Request):
+    """Returns current signal analyzer status and logged signals count."""
+    curr_mode = get_current_trading_mode()
+    return {
+        "status": "success",
+        "analyzer": (curr_mode == "ANALYZER"),
+        "mode": curr_mode,
+        "signals_count": len(_ANALYZER_SIGNALS),
+        "signals": _ANALYZER_SIGNALS[-100:]
+    }
+
+@router.post("/analyzer")
+async def set_analyzer_status(request: Request):
+    """Enables or disables signal analyzer mode without placing broker orders."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    is_enabled = data.get("analyzer") if "analyzer" in data else data.get("enabled")
+    if is_enabled is not None:
+        if is_enabled:
+            new_mode = set_current_trading_mode("ANALYZER")
+        else:
+            new_mode = set_current_trading_mode("PAPER")
+    elif data.get("mode"):
+        new_mode = set_current_trading_mode(data.get("mode"))
+    else:
+        new_mode = set_current_trading_mode("ANALYZER")
+
+    return {
+        "status": "success",
+        "analyzer": (new_mode == "ANALYZER"),
+        "mode": new_mode,
+        "message": f"Operational mode updated to {new_mode}"
+    }
+
+@router.get("/mode")
+async def get_mode_endpoint(request: Request):
+    """Returns current operational trading mode: LIVE, PAPER, or ANALYZER."""
+    curr_mode = get_current_trading_mode()
+    return {
+        "status": "success",
+        "mode": curr_mode,
+        "paper_trade": bool(getattr(config, "PAPER_TRADE_MODE", True)),
+        "analyzer": (curr_mode == "ANALYZER")
+    }
+
+@router.post("/mode")
+async def set_mode_endpoint(request: Request):
+    """Sets operational trading mode: 'LIVE', 'PAPER', or 'ANALYZER'."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    req_mode = str(data.get("mode") or "").strip().upper()
+    if req_mode not in ("LIVE", "PAPER", "ANALYZER"):
+        return JSONResponse(status_code=400, content={"status": "error", "message": f"Invalid mode '{req_mode}'. Must be LIVE, PAPER, or ANALYZER."})
+
+    new_mode = set_current_trading_mode(req_mode)
+    return {
+        "status": "success",
+        "mode": new_mode,
+        "message": f"Execution mode switched to {new_mode}"
+    }
+
+@router.post("/notifications/test")
+async def send_notification_test_endpoint(request: Request):
+    """Triggers an instantaneous test notification ping to configured Telegram/Discord channels."""
+    data = await _extract_json(request)
+    bot_token = data.get("bot_token")
+    chat_id = data.get("chat_id")
+    res = await notification_service.send_test_alert(bot_token, chat_id)
     return res
 
 @router.post("/cancelorder")
@@ -1366,9 +1720,50 @@ async def agent_approve_order(request: Request):
     if not passed:
         return JSONResponse(status_code=400, content={"status": "error", "message": reason})
 
-    # Route order execution
+    # Route order execution with Tri-State awareness
+    curr_mode = get_current_trading_mode()
+    if curr_mode == "ANALYZER":
+        analyzer_order_id = f"ANALYZER_AGENT_{int(time.time()*1000)}"
+        sim_price = price if price > 0 else live_ltp
+        agent_entry = {
+            "orderid": str(analyzer_order_id),
+            "symbol": symbol,
+            "exchange": exchange or "NSE",
+            "action": action,
+            "quantity": quantity,
+            "price": sim_price,
+            "pricetype": order_type,
+            "product": product,
+            "status": "complete",
+            "order_status": "complete",
+            "filled_quantity": quantity,
+            "pending_quantity": 0,
+            "average_price": sim_price,
+            "rejection_reason": "",
+            "mode": "ANALYZER"
+        }
+        _ORDERS_REGISTRY[str(analyzer_order_id)] = agent_entry
+        _ANALYZER_SIGNALS.append(agent_entry)
+        asyncio.create_task(notification_service.notify_order_execution(
+            tenant_id=tenant_id,
+            order_data=agent_entry,
+            status="ANALYZED",
+            execution_price=sim_price,
+            app_order_id=analyzer_order_id
+        ))
+        return {
+            "status": "success",
+            "orderid": str(analyzer_order_id),
+            "symbol": symbol,
+            "action": action,
+            "quantity": quantity,
+            "price": sim_price,
+            "mode": "ANALYZER",
+            "message": f"Order {analyzer_order_id} recorded in Analyzer mode (Zero Broker Risk)"
+        }
+
     order_ref = f"agent_{int(time.time() * 1000)}"
-    is_paper = bool(getattr(config, "PAPER_TRADE_MODE", True))
+    is_paper = (curr_mode == "PAPER") or bool(getattr(config, "PAPER_TRADE_MODE", True))
 
     res = await asyncio.to_thread(
         xts_api.execute_trade_with_retry,
@@ -1401,6 +1796,20 @@ async def agent_approve_order(request: Request):
             "average_price": price if price > 0 else live_ltp,
             "rejection_reason": ""
         }
+
+    asyncio.create_task(notification_service.notify_order_execution(
+        tenant_id=tenant_id,
+        order_data={
+            "symbol": symbol,
+            "action": action,
+            "quantity": quantity,
+            "price": price,
+            "order_ref": order_ref
+        },
+        status="COMPLETE" if is_ok else "REJECTED",
+        execution_price=price if price > 0 else live_ltp,
+        app_order_id=str(order_id)
+    ))
 
     return {
         "status": "success",
