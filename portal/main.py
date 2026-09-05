@@ -339,6 +339,11 @@ async def client_strategies_page(request: Request, client_user: dict = Depends(r
         "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
+@app.get("/strategy", response_class=HTMLResponse)
+@app.get("/strategies", response_class=HTMLResponse)
+async def strategies_redirect_page(request: Request):
+    return RedirectResponse(url="/client/strategies", status_code=307)
+
 @app.get("/client/logs", response_class=HTMLResponse)
 async def client_logs_page(request: Request, client_user: dict = Depends(require_client_auth)):
     tenant_id = client_user["tenant_id"]
@@ -364,6 +369,10 @@ async def client_logs_page(request: Request, client_user: dict = Depends(require
         "active_page": "logs",
         "trading_mode": get_tenant_trading_mode(tenant_id)
     })
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_redirect_page(request: Request):
+    return RedirectResponse(url="/client/logs", status_code=307)
 
 @app.get("/client/tools", response_class=HTMLResponse)
 async def client_tools_page(request: Request, client_user: dict = Depends(require_client_auth)):

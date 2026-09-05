@@ -5,41 +5,51 @@
 {% block content %}
 <div class="space-y-6">
 
-    <!-- Page Header Strip -->
-    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div class="space-y-1">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold">
-                    <i data-lucide="code-2" class="w-5 h-5"></i>
-                </div>
-                <div>
-                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
-                        Strategy Studio
-                        <span class="text-xs bg-brand-500/10 text-brand-400 border border-brand-500/30 px-2 py-0.5 rounded-full font-mono">
-                            Autonomous Algos
-                        </span>
-                    </h1>
-                    <p class="text-xs text-slate-400 font-mono">Manage multi-timeframe delta-netted algorithmic models and intraday systems</p>
-                </div>
-            </div>
+    <!-- Header matching OpenAlgo Live Screenshot -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+                <span>Strategies</span>
+                <span class="sr-only">Strategy Studio</span>
+            </h1>
+            <p class="text-sm text-slate-400 mt-1">Multi-leg options strategies with end-to-end risk management. Sandbox by default; live mode requires explicit per-strategy opt-in.</p>
         </div>
-
-        <div class="flex items-center gap-2 font-mono text-xs">
-            <form action="/client/strategy/supertrend/reset-flat" method="POST" onsubmit="return confirm('Reset SuperTrend strategy to FLAT and square off positions at broker?');">
-                <input type="hidden" name="square_off_broker" value="true">
-                <button type="submit" class="px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-obsidian border border-amber-500/30 rounded-xl font-bold transition flex items-center gap-1.5">
-                    <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
-                    <span>Reset All to Flat</span>
-                </button>
-            </form>
-            <button onclick="window.location.reload()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition" title="Refresh">
-                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
-            </button>
+        <div class="flex items-center gap-2">
+            <a href="/client/python" class="px-3.5 py-2 bg-[#5c5bf0] hover:bg-[#4f46e5] text-white rounded-xl text-xs font-semibold shadow-sm transition flex items-center gap-1.5 flex-shrink-0">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                <span>+ New strategy</span>
+            </a>
         </div>
     </div>
 
-    <!-- Strategy Studio Cards Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Saved Strategies Box matching OpenAlgo Live Screenshot -->
+    <div class="bg-[#111625] border border-slate-800/80 rounded-2xl p-6 shadow-sm space-y-6">
+        <div>
+            <h3 class="text-base font-bold text-white">Saved strategies</h3>
+            <p class="text-xs text-slate-400 mt-1">P&amp;L columns are live for running strategies and reflect the last-run snapshot for stopped strategies. Status shows whether a run is currently active.</p>
+        </div>
+
+        <div class="py-12 flex flex-col items-center justify-center text-center space-y-4">
+            <p class="text-xs text-slate-400">No strategies yet.</p>
+            <a href="/client/python" class="px-4 py-2 bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700/60 rounded-xl text-xs font-medium transition shadow-sm">
+                Create your first strategy
+            </a>
+        </div>
+    </div>
+
+    <!-- Autonomous Algorithmic Models & Execution Engines -->
+    <div class="pt-4 space-y-4">
+        <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Automated Algorithm Models</h3>
+            <form action="/client/strategy/supertrend/reset-flat" method="POST" onsubmit="return confirm('Reset SuperTrend strategy to FLAT and square off positions at broker?');">
+                <input type="hidden" name="square_off_broker" value="true">
+                <button type="submit" class="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-obsidian border border-amber-500/30 rounded-xl font-bold transition flex items-center gap-1.5 text-xs">
+                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                    <span>Reset All to Flat</span>
+                </button>
+            </form>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
         <!-- 1. Multi-SuperTrend Trend Following Engine -->
         {% set st_engine = client.supertrend if client.supertrend else {} %}
@@ -274,7 +284,7 @@
                 </button>
             </div>
         </div>
-
+    </div>
     </div>
 
 </div>

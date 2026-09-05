@@ -250,3 +250,20 @@ def test_client_trading_terminal_pixel_perfect_parity(client_authenticated):
     assert '/client/orders' in html
     assert '/client/positions' in html
     assert '/client/tools' in html
+
+
+def test_client_strategy_and_logs_redirect_parity(client_authenticated):
+    # Verify /strategy and /strategies redirect to /client/strategies
+    res_strat = client_authenticated.get('/strategy', follow_redirects=False)
+    assert res_strat.status_code == 307
+    assert res_strat.headers['location'] == '/client/strategies'
+
+    res_strats = client_authenticated.get('/strategies', follow_redirects=False)
+    assert res_strats.status_code == 307
+    assert res_strats.headers['location'] == '/client/strategies'
+
+    # Verify /logs redirects to /client/logs
+    res_logs = client_authenticated.get('/logs', follow_redirects=False)
+    assert res_logs.status_code == 307
+    assert res_logs.headers['location'] == '/client/logs'
+

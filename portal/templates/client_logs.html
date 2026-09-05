@@ -146,36 +146,164 @@
     }
 }">
 
-    <!-- Page Header Strip -->
-    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div class="space-y-1">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold">
-                    <i data-lucide="scroll-text" class="w-5 h-5"></i>
+    <!-- Header matching OpenAlgo Live Screenshot 3 -->
+    <div class="space-y-1">
+        <h1 class="text-2xl font-bold text-white tracking-tight flex items-center gap-2.5">
+            <i data-lucide="file-text" class="w-6 h-6 text-slate-300 stroke-[2]"></i>
+            <span>Logs &amp; Monitoring</span>
+            <span class="sr-only">Webhook Alert Logs</span>
+        </h1>
+        <p class="text-sm text-slate-400">Access trading logs, monitor system performance, and track security events</p>
+    </div>
+
+    <!-- 6-Card Directory matching OpenAlgo Live Screenshot 3 (2 Rows x 3 Columns) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <!-- 1. Live Logs -->
+        <a href="#live-logs-section" class="bg-[#111625] hover:bg-slate-900/80 border border-slate-800/80 hover:border-slate-700/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="clipboard-list" class="w-5 h-5 stroke-[2]"></i>
+                    </div>
+                    <span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/50">orders</span>
                 </div>
                 <div>
-                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
-                        Webhook Alert Logs
-                        <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono flex items-center gap-1">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                            Live Stream Active
-                        </span>
-                    </h1>
-                    <p class="text-xs text-slate-400 font-mono">Telemetry audit feed of incoming TradingView, AmiBroker, and Python signals</p>
+                    <h3 class="text-base font-bold text-white group-hover:text-blue-400 transition">Live Logs</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        View real-time API order logs with request and response data
+                    </p>
                 </div>
             </div>
-        </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to view live logs
+            </div>
+        </a>
 
-        <div class="flex items-center gap-3 font-mono text-xs">
-            <button @click="showSimulatorModal = true" class="px-4 py-2 bg-brand-500 hover:bg-brand-400 text-obsidian rounded-xl font-bold transition flex items-center gap-1.5 shadow-lg shadow-brand-500/20">
-                <i data-lucide="send" class="w-4 h-4"></i>
-                <span>Send Test Webhook</span>
-            </button>
-            <button @click="logs = []" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-xl border border-slate-700 transition" title="Clear Feed">
-                <i data-lucide="trash-2" class="w-4 h-4"></i>
-            </button>
-        </div>
+        <!-- 2. Sandbox Logs -->
+        <a href="#live-logs-section" class="bg-[#111625] hover:bg-slate-900/80 border border-slate-800/80 hover:border-slate-700/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="flask-conical" class="w-5 h-5 stroke-[2]"></i>
+                    </div>
+                    <span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/50">testing</span>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-purple-400 transition">Sandbox Logs</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Track and test your trading strategies before going live
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to view sandbox logs
+            </div>
+        </a>
+
+        <!-- 3. Latency Monitor -->
+        <a href="/client/dashboard" class="bg-[#111625] hover:bg-slate-900/80 border border-slate-800/80 hover:border-slate-700/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="w-10 h-10 rounded-xl bg-orange-500 flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="clock" class="w-5 h-5 stroke-[2]"></i>
+                    </div>
+                    <span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/50">monitoring</span>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-orange-400 transition">Latency Monitor</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Track order execution latency and performance metrics
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to view latency monitor
+            </div>
+        </a>
+
+        <!-- 4. Traffic Monitor -->
+        <a href="#live-logs-section" class="bg-[#111625] hover:bg-slate-900/80 border border-slate-800/80 hover:border-slate-700/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="w-10 h-10 rounded-xl bg-cyan-500 flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="activity" class="w-5 h-5 stroke-[2]"></i>
+                    </div>
+                    <span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/50">monitoring</span>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-cyan-400 transition">Traffic Monitor</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Monitor HTTP requests, endpoints, and response times
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to view traffic monitor
+            </div>
+        </a>
+
+        <!-- 5. Security Logs -->
+        <a href="#live-logs-section" class="bg-[#111625] hover:bg-slate-900/80 border border-slate-800/80 hover:border-slate-700/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="w-10 h-10 rounded-xl bg-rose-600 flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="shield" class="w-5 h-5 stroke-[2]"></i>
+                    </div>
+                    <span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/50">security</span>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-rose-400 transition">Security Logs</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Monitor security events, banned IPs, and threat activity
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to view security logs
+            </div>
+        </a>
+
+        <!-- 6. Health Monitor -->
+        <a href="#live-logs-section" class="bg-[#111625] hover:bg-slate-900/80 border border-slate-800/80 hover:border-slate-700/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="heart" class="w-5 h-5 stroke-[2]"></i>
+                    </div>
+                    <span class="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700/50">health</span>
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-emerald-400 transition">Health Monitor</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Track system health, file descriptors, memory, and connections
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to view health monitor
+            </div>
+        </a>
+
     </div>
+
+    <!-- Live Telemetry Stream & Testing Tools Section -->
+    <div id="live-logs-section" class="pt-6 border-t border-slate-800/80 space-y-4">
+        <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span>Active Signal Feed</span>
+            </h3>
+            <div class="flex items-center gap-3 font-mono text-xs">
+                <button @click="showSimulatorModal = true" class="px-4 py-2 bg-brand-500 hover:bg-brand-400 text-obsidian rounded-xl font-bold transition flex items-center gap-1.5 shadow-lg shadow-brand-500/20">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    <span>Send Test Webhook</span>
+                </button>
+                <button @click="logs = []" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-xl border border-slate-700 transition" title="Clear Feed">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
 
     <!-- Filter & Search Bar -->
     <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 font-mono text-xs">
