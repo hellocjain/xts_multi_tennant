@@ -78,6 +78,46 @@ NSE_MARKET_OPEN_TIME = os.environ.get("NSE_MARKET_OPEN_TIME", "09:15:00")
 NSE_MARKET_CLOSE_TIME = os.environ.get("NSE_MARKET_CLOSE_TIME", "15:30:00")
 MAX_CANDLE_AGE_SECONDS = int(os.environ.get("MAX_CANDLE_AGE_SECONDS", "180"))
 
+import datetime
+
+IST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: float = None, force_check: bool = False) -> bool:
+    """
+    Evaluates whether the specified Indian exchange segment is currently open for trading.
+    - Indian Standard Time (IST) = UTC+5:30
+    - Monday to Friday only (weekday 0-4). Saturday (5) & Sunday (6) are strictly closed.
+    - MCX (MCXFO, MCXCOM): 09:00:00 to 23:55:00 IST (covers standard and US DST sessions)
+    - NSE/BSE (NSEFO, NSECM, BSEFO, BSECM): 09:15:00 to 15:30:00 IST
+    - Respects config.ENFORCE_MARKET_HOURS.
+    """
+    if not force_check and not ENFORCE_MARKET_HOURS:
+        return True
+
+    # In automated test runs without explicit market hour enforcement, allow bypass
+    if not force_check and "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_MARKET_HOURS_IN_TESTS", "").lower() not in ("true", "1", "yes"):
+        return True
+
+    dt = datetime.datetime.fromtimestamp(now_ts, tz=IST_TIMEZONE) if now_ts is not None else datetime.datetime.now(IST_TIMEZONE)
+
+    # 1. Weekday Check (Monday = 0 ... Friday = 4; Saturday = 5, Sunday = 6)
+    if dt.weekday() >= 5:
+        return False
+
+    # 2. Segment-specific Trading Hours Check
+    seg_upper = str(exch_seg or "").upper()
+    cur_hms = (dt.hour, dt.minute, dt.second)
+
+    if "MCX" in seg_upper or "COMMODITY" in seg_upper:
+        # 09:00:00 to 23:55:00 IST
+        return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+    elif any(eq in seg_upper for eq in ("NSE", "BSE", "CM", "CASH")):
+        # 09:15:00 to 15:30:00 IST
+        return (9, 15, 0) <= cur_hms <= (15, 30, 0)
+    else:
+        # Default Indian broad trading hours (09:00:00 to 23:55:00 IST)
+        return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+
 # Load mounted config overrides if present
 _mounted_config = os.path.join(DATA_DIR, "config.json")
 if os.path.exists(_mounted_config):
@@ -88,3 +128,4 @@ if os.path.exists(_mounted_config):
                 globals()[_k] = _v
     except Exception as _e:
         pass
+

@@ -392,6 +392,14 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
                     # Symphony XTS Market Data API returns timestamps encoded in IST-epoch (+19,800s / 5h30m ahead of POSIX UTC).
                     # Normalize to true POSIX UTC epoch at ingestion for all downstream engines and charts.
                     ts = raw_ts - 19800
+
+                    # Weekend / Non-trading day mock candle filter:
+                    # Discard any bars timestamped on Saturday or Sunday so broker test feeds never contaminate strategy engines
+                    if getattr(config, "ENFORCE_MARKET_HOURS", True):
+                        candle_dt = datetime.datetime.fromtimestamp(ts, tz=IST)
+                        if candle_dt.weekday() >= 5:
+                            continue
+
                     o = float(parts[1])
                     h = float(parts[2])
                     l = float(parts[3])
@@ -1256,6 +1264,13 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
         else:
             return {"status": "error", "message": f"Instrument resolution failed for {symbol}"}
 
+    # 0. Market Hours & Weekend Gateway Hard Gate (Defense-in-depth API wall)
+    if not is_paper and getattr(config, "ENFORCE_MARKET_HOURS", True):
+        is_open_fn = getattr(config, "is_market_open_ist", None)
+        if is_open_fn and not is_open_fn(exch_seg):
+            logger.error(f"MARKET CLOSED GUARD: Blocked order dispatch for {action} {symbol} ({exch_seg}) - market is closed.")
+            return {"status": "error", "message": f"Market closed for {exch_seg}"}
+
     cfg_prod = str(getattr(config, "DEFAULT_PRODUCT_TYPE", getattr(config, "PRODUCT_TYPE", ""))).strip().upper()
     if cfg_prod in ("NRML", "MIS", "CNC"):
         prod_type = cfg_prod
@@ -2043,6 +2058,18 @@ def panic_square_off_all():
                 resp = api_session.get(pos_url, headers=headers, timeout=5)
 
         positions = resp.json().get("result", {}).get("positionList", [])
+
+        # Position Square-off Market Hours Gate:
+        # Emergency order cancellation above has already completed safely.
+        # If market is closed, suppress sending market orders to close positions to prevent broker AMOs.
+        is_open_fn = getattr(config, "is_market_open_ist", None)
+        if getattr(config, "ENFORCE_MARKET_HOURS", True) and is_open_fn and not is_open_fn("MCXFO"):
+            logger.critical("PANIC: Market is currently closed. Pending orders cancelled, but position square-off orders suppressed.")
+            return {
+                "status": "partial_success",
+                "message": "Market closed: all open orders cancelled, position square-offs suppressed.",
+                "open_positions_count": len([p for p in positions if int(p.get("Quantity", 0)) != 0])
+            }
 
         for p in positions:
             qty = int(p.get("Quantity", 0))

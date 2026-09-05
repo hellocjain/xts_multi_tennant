@@ -270,3 +270,82 @@ async def test_circuit_breaker_suppressed_on_weekend(monkeypatch):
     with database.get_db_connection() as conn:
         row = conn.execute("SELECT status FROM tenants WHERE id='weekend_client'").fetchone()
         assert row["status"] == "ACTIVE"
+
+def test_place_order_blocked_when_market_closed(monkeypatch):
+    """
+    Verifies that place_order at the central API gateway layer immediately rejects
+    any order dispatch when is_market_open_ist() returns False.
+    """
+    import xts_api
+    import config
+
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(config, "ENFORCE_MARKET_HOURS", True)
+    monkeypatch.setattr(config, "is_market_open_ist", lambda exch_seg=None, **kw: False)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda: "mock_token")
+    monkeypatch.setattr(xts_api, "get_dynamic_contract_info", lambda sym: (574824, "MCXFO", "NRML", 0.05, 1, 1000, datetime.date.today()))
+
+    res = xts_api.place_order("BUY", "SILVER1001!", 1, 85000.0, "TEST_WEEKEND_ORDER", is_paper=False)
+    assert res.get("status") == "error"
+    assert "Market closed" in res.get("message", "")
+
+def test_panic_square_off_suppresses_position_orders_when_market_closed(monkeypatch):
+    """
+    Verifies that panic_square_off_all safely cancels all pending orders, but suppresses
+    sending market orders to square off open positions when the market is closed.
+    """
+    import xts_api
+    import config
+
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(config, "ENFORCE_MARKET_HOURS", True)
+    monkeypatch.setattr(config, "is_market_open_ist", lambda exch_seg=None, **kw: False)
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda *a, **kw: "mock_token")
+    monkeypatch.setattr(xts_api, "get_safe_base_url", lambda: "https://mock.xts")
+
+    # Mock cancel all response
+    class MockResp:
+        status_code = 200
+        def json(self):
+            return {"type": "success", "result": {"positionList": [{"Quantity": -14, "ExchangeInstrumentId": 574824}]}}
+
+    monkeypatch.setattr(xts_api.api_session, "post", lambda *a, **kw: MockResp())
+    monkeypatch.setattr(xts_api.api_session, "get", lambda *a, **kw: MockResp())
+
+    res = xts_api.panic_square_off_all()
+    assert res.get("status") == "partial_success"
+    assert "Market closed" in res.get("message", "")
+    assert res.get("open_positions_count") == 1
+
+def test_fetch_ohlc_candles_filters_weekend_bars(monkeypatch):
+    """
+    Verifies that fetch_ohlc_candles discards any mock/test candles timestamped
+    on Saturdays or Sundays from entering downstream calculation.
+    """
+    import xts_api
+    import config
+
+    monkeypatch.setattr(config, "ENFORCE_MARKET_HOURS", True)
+    monkeypatch.setattr(xts_api, "get_marketdata_token", lambda *a, **kw: ("mock_token", "https://mock.md"))
+
+    # Friday 2026-09-04 23:15:00 IST = 1788543900 UTC (+19800 = 1788563700 in raw XTS)
+    fri_raw = 1788543900 + 19800
+    # Saturday 2026-09-05 15:45:00 IST = 1788603300 UTC (+19800 = 1788623100 in raw XTS)
+    sat_raw = 1788603300 + 19800
+
+    # Broker response containing 1 Friday bar and 1 Saturday mock bar
+    data_response = f"{fri_raw}|100|105|98|103|1000|5000,{sat_raw}|104|108|102|107|500|4000"
+
+    class MockMDResp:
+        status_code = 200
+        def json(self):
+            return {"result": {"dataReponse": data_response}}
+
+    monkeypatch.setattr(xts_api.api_session, "get", lambda *a, **kw: MockMDResp())
+
+    candles = xts_api.fetch_ohlc_candles("MCXFO", 574824, 900, 10)
+
+    # Invariant: Only the Friday candle survived; the Saturday mock candle was discarded
+    assert len(candles) == 1
+    assert candles[0]["time"] == 1788543900
+
