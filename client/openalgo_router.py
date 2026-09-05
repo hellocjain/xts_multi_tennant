@@ -616,6 +616,7 @@ async def basket_order(request: Request):
 # 2B. Pre-Trade Regulatory Margin Calculator
 # -----------------------------------------------------------------------------
 @router.post("/margin")
+@router.post("/margins")
 @router.post("/margincalculator")
 async def calculate_margin_endpoint(request: Request):
     """
@@ -1305,7 +1306,10 @@ async def close_position(request: Request):
         return res
     else:
         # Panic square off all
-        res = await xts_api.panic_square_off_all() if hasattr(xts_api, "panic_square_off_all") else {"status": "error"}
+        if hasattr(xts_api, "panic_square_off_all"):
+            res = xts_api.panic_square_off_all()
+        else:
+            res = {"status": "error"}
         return res
 
 # -----------------------------------------------------------------------------

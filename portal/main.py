@@ -1471,6 +1471,58 @@ async def client_cancel_all(request: Request, client_user: dict = Depends(requir
 
     return RedirectResponse(url="/client/dashboard", status_code=303)
 
+@app.post("/client/strategy/supertrend/reset-flat")
+async def client_reset_supertrend_flat(
+    request: Request,
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    dest_urls = [
+        f"http://127.0.0.1:{port}/internal/supertrend/strategy/reset-flat",
+        f"http://xts_client_{tenant_id}:8000/internal/supertrend/strategy/reset-flat"
+    ]
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in dest_urls:
+            try:
+                await http_client.post(target, json={"square_off_broker": True}, headers=headers)
+                break
+            except Exception:
+                continue
+
+    return RedirectResponse(url="/client/strategies", status_code=303)
+
+@app.post("/client/strategy/supertrend/toggle")
+async def client_toggle_supertrend(
+    request: Request,
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    dest_urls = [
+        f"http://127.0.0.1:{port}/internal/supertrend/strategy/toggle",
+        f"http://xts_client_{tenant_id}:8000/internal/supertrend/strategy/toggle"
+    ]
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in dest_urls:
+            try:
+                await http_client.post(target, json={}, headers=headers)
+                break
+            except Exception:
+                continue
+
+    return RedirectResponse(url="/client/strategies", status_code=303)
+
 @app.post("/admin/clients/{tenant_id}/create-user")
 async def admin_create_client_user(
     request: Request,
