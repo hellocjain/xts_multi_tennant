@@ -142,6 +142,11 @@
                     <i data-lucide="list-ordered" class="w-3.5 h-3.5 text-slate-400"></i>
                     <span>Orders</span>
                 </a>
+                <a href="/client/action-center" class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg transition {% if active_page == 'action_center' %}text-amber-400 bg-amber-500/10 border border-amber-500/30 font-bold{% else %}text-slate-300 hover:text-white hover:bg-slate-800/80{% endif %}">
+                    <i data-lucide="shield-alert" class="w-3.5 h-3.5 text-amber-400"></i>
+                    <span>Action Center</span>
+                    <span id="global-action-center-badge" class="hidden px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">0</span>
+                </a>
                 <a href="/client/positions" class="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg transition {% if active_page == 'positions' %}text-brand-400 bg-brand-500/10 border border-brand-500/30 font-bold{% else %}text-slate-300 hover:text-white hover:bg-slate-800/80{% endif %}">
                     <i data-lucide="layers" class="w-3.5 h-3.5 text-slate-400"></i>
                     <span>Positions</span>
@@ -324,6 +329,10 @@
                 <a href="/client/orders" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl transition {% if active_page == 'orders' %}bg-brand-500/20 text-brand-400 font-bold{% else %}text-slate-200 hover:bg-slate-800/80{% endif %}">
                     <i data-lucide="list-ordered" class="w-4 h-4 text-slate-400"></i>
                     <span>Order Book</span>
+                </a>
+                <a href="/client/action-center" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl transition {% if active_page == 'action_center' %}bg-amber-500/20 text-amber-400 font-bold{% else %}text-slate-200 hover:bg-slate-800/80{% endif %}">
+                    <i data-lucide="shield-alert" class="w-4 h-4 text-amber-400"></i>
+                    <span>Action Center</span>
                 </a>
                 <a href="/client/positions" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl transition {% if active_page == 'positions' %}bg-brand-500/20 text-brand-400 font-bold{% else %}text-slate-200 hover:bg-slate-800/80{% endif %}">
                     <i data-lucide="layers" class="w-4 h-4 text-slate-400"></i>
@@ -823,5 +832,30 @@
             </div>
         </div>
     </div>
+
+    <!-- Global Action Center Badge Updater -->
+    <script>
+        (function pollActionCenterBadge() {
+            function updateBadge() {
+                var badge = document.getElementById('global-action-center-badge');
+                if (!badge) return;
+                fetch('/client/action-center/count')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data && data.count > 0) {
+                            badge.innerText = data.count;
+                            badge.classList.remove('hidden');
+                        } else {
+                            badge.classList.add('hidden');
+                        }
+                    })
+                    .catch(function(err) {});
+            }
+            document.addEventListener('DOMContentLoaded', function() {
+                updateBadge();
+                setInterval(updateBadge, 5000);
+            });
+        })();
+    </script>
 </body>
 </html>

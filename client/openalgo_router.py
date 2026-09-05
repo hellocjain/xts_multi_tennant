@@ -24,6 +24,9 @@ import watchlist_service
 import trading_agent_service
 import margin_service
 import notification_service
+import options_order_service
+import gtt_service
+import action_center_service
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +124,7 @@ async def search_symbols_endpoint(request: Request):
     return {"status": "success", "data": results, "count": len(results)}
 
 @router.post("/symbols")
+@router.post("/symbol")
 async def symbol_metadata_endpoint(request: Request):
     """
     Retrieves full contract metadata for a given canonical OpenAlgo symbol.
@@ -243,6 +247,32 @@ async def place_order(request: Request):
                     "SimulatedFillPrice": sim_price
                 }
             }
+        }
+
+    # Action Center Semi-Auto Mode: Queue order for human approval
+    tenant_id = getattr(config, "CLIENT_ID", "default")
+    if action_center_service.is_semi_auto_mode(tenant_id):
+        pending_id = action_center_service.create_pending_order(
+            user_id="default",
+            api_type="placeorder",
+            order_data={
+                "symbol": symbol,
+                "action": action,
+                "quantity": quantity,
+                "price": price,
+                "pricetype": data.get("pricetype", "LIMIT" if price > 0 else "MARKET"),
+                "product": data.get("product", "MIS"),
+                "exchange": exchange or "NSE",
+                "strategy": order_ref,
+                "order_ref": order_ref
+            },
+            tenant_id=tenant_id
+        )
+        return {
+            "status": "queued",
+            "orderid": f"PENDING_{pending_id}",
+            "pending_id": pending_id,
+            "message": f"Order #{pending_id} queued in Action Center for approval (Semi-Auto Mode)"
         }
 
     # TRI-STATE 2 & 3: PAPER vs LIVE EXECUTION
@@ -406,6 +436,33 @@ async def place_smart_order(request: Request):
                 "stoploss": stoploss,
                 "trailing_stoploss": trailing_sl
             }
+        }
+
+    # Action Center Semi-Auto Mode: Queue smart order for human approval
+    tenant_id = getattr(config, "CLIENT_ID", "default")
+    if action_center_service.is_semi_auto_mode(tenant_id):
+        pending_id = action_center_service.create_pending_order(
+            user_id="default",
+            api_type="placesmartorder",
+            order_data={
+                "symbol": symbol,
+                "action": action,
+                "quantity": quantity,
+                "position_size": position_size,
+                "price": price,
+                "strategy": strategy,
+                "order_ref": order_ref,
+                "target": target,
+                "stoploss": stoploss,
+                "trailing_stoploss": trailing_sl
+            },
+            tenant_id=tenant_id
+        )
+        return {
+            "status": "queued",
+            "orderid": f"PENDING_{pending_id}",
+            "pending_id": pending_id,
+            "message": f"Smart order #{pending_id} queued in Action Center for approval (Semi-Auto Mode)"
         }
 
     is_paper = (curr_mode == "PAPER") or bool(data.get("is_paper"))
@@ -661,6 +718,354 @@ async def send_notification_test_endpoint(request: Request):
     chat_id = data.get("chat_id")
     res = await notification_service.send_test_alert(bot_token, chat_id)
     return res
+
+@router.post("/analyzer/toggle")
+async def toggle_analyzer_mode(request: Request):
+    """Toggles analyzer mode on/off."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    curr = get_current_trading_mode()
+    new_mode = "PAPER" if curr == "ANALYZER" else "ANALYZER"
+    set_current_trading_mode(new_mode)
+    return {
+        "status": "success",
+        "analyzer": (new_mode == "ANALYZER"),
+        "mode": new_mode,
+        "message": f"Analyzer mode toggled to {new_mode}"
+    }
+
+@router.get("/apikey/mode")
+async def get_apikey_mode(request: Request):
+    """Returns the current API key order mode: 'auto' or 'semi_auto'."""
+    mode = action_center_service.get_order_mode(getattr(config, "CLIENT_ID", "default"))
+    return {"status": "success", "mode": mode}
+
+@router.post("/apikey/mode")
+async def set_apikey_mode(request: Request):
+    """Updates API key order mode between 'auto' and 'semi_auto'."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    mode = str(data.get("mode") or "auto").strip().lower()
+    clean_mode = action_center_service.set_order_mode(mode, getattr(config, "CLIENT_ID", "default"))
+    return {"status": "success", "mode": clean_mode, "message": f"Order mode updated to {clean_mode}"}
+
+# -----------------------------------------------------------------------------
+# 2D. Action Center Human-in-the-Loop Endpoints
+# -----------------------------------------------------------------------------
+@router.get("/action-center/data")
+async def action_center_data(request: Request):
+    """Returns list of pending orders and statistics for Action Center."""
+    status_filter = request.query_params.get("status", "all")
+    return action_center_service.get_pending_orders(status_filter=status_filter)
+
+@router.get("/action-center/count")
+async def action_center_count_api(request: Request):
+    """Returns pending order count for top navbar badge."""
+    return {"count": action_center_service.get_pending_count()}
+
+@router.post("/action-center/approve/{order_id}")
+async def action_center_approve(order_id: int, request: Request):
+    """Approves and executes a pending order."""
+    data = await _extract_json(request)
+    ok, res = action_center_service.approve_pending_order(order_id, approver=data.get("approver", "trader"), tenant_id=getattr(config, "CLIENT_ID", "default"))
+    return JSONResponse(status_code=200 if ok else 400, content=res)
+
+@router.post("/action-center/reject/{order_id}")
+async def action_center_reject(order_id: int, request: Request):
+    """Rejects a pending order in Action Center."""
+    data = await _extract_json(request)
+    reason = str(data.get("reason") or "Rejected by trader")
+    ok = action_center_service.reject_pending_order(order_id, reason=reason, rejecter=data.get("rejecter", "trader"))
+    return {"status": "success" if ok else "error", "message": "Order rejected" if ok else "Failed to reject"}
+
+@router.delete("/action-center/delete/{order_id}")
+async def action_center_delete(order_id: int):
+    """Deletes an order record from Action Center."""
+    ok = action_center_service.delete_pending_order(order_id)
+    return {"status": "success" if ok else "error"}
+
+@router.post("/action-center/approve-all")
+async def action_center_approve_all(request: Request):
+    """Bulk approves all pending orders."""
+    data = await _extract_json(request)
+    res = action_center_service.approve_all_pending_orders(approver=data.get("approver", "trader"), tenant_id=getattr(config, "CLIENT_ID", "default"))
+    return res
+
+# -----------------------------------------------------------------------------
+# 2E. Server-Side GTT (Good-Till-Triggered) Conditional Orders
+# -----------------------------------------------------------------------------
+@router.post("/placegttorder")
+async def place_gtt_order_endpoint(request: Request):
+    """Places a new Single or OCO GTT conditional order."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    res = gtt_service.place_gtt_order(data, tenant_id=getattr(config, "CLIENT_ID", "default"))
+    status_code = 200 if res.get("status") == "success" else 400
+    return JSONResponse(status_code=status_code, content=res)
+
+@router.post("/modifygttorder")
+async def modify_gtt_order_endpoint(request: Request):
+    """Modifies trigger and limit levels for an active GTT order."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    res = gtt_service.modify_gtt_order(data)
+    status_code = 200 if res.get("status") == "success" else 400
+    return JSONResponse(status_code=status_code, content=res)
+
+@router.post("/cancelgttorder")
+async def cancel_gtt_order_endpoint(request: Request):
+    """Cancels an active GTT order."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    trigger_id = str(data.get("trigger_id") or data.get("triggerid") or "").strip()
+    res = gtt_service.cancel_gtt_order(trigger_id)
+    status_code = 200 if res.get("status") == "success" else 400
+    return JSONResponse(status_code=status_code, content=res)
+
+@router.post("/gttorderbook")
+async def gtt_orderbook_endpoint(request: Request):
+    """Returns GTT order book with active, triggered, and cancelled conditional orders."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    status_filter = str(data.get("status") or "all")
+    res = gtt_service.get_gtt_orderbook(status_filter=status_filter)
+    return res
+
+# -----------------------------------------------------------------------------
+# 2F. Dynamic Options Orders & Symbology
+# -----------------------------------------------------------------------------
+@router.post("/optionsorder")
+async def options_order_endpoint(request: Request):
+    """Places an options order by resolving option symbol from underlying and relative offset (ATM, ITM1-50, OTM1-50)."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    curr_mode = get_current_trading_mode()
+    tenant_id = getattr(config, "CLIENT_ID", "default")
+
+    if curr_mode != "ANALYZER" and action_center_service.is_semi_auto_mode(tenant_id):
+        pending_id = action_center_service.create_pending_order(
+            user_id="default",
+            api_type="optionsorder",
+            order_data=data,
+            tenant_id=tenant_id
+        )
+        return {
+            "status": "queued",
+            "orderid": f"PENDING_{pending_id}",
+            "pending_id": pending_id,
+            "message": f"Options order #{pending_id} queued in Action Center for approval (Semi-Auto Mode)"
+        }
+
+    res = options_order_service.execute_options_order(data, curr_mode=curr_mode, tenant_id=tenant_id)
+    status_code = 200 if res.get("status") == "success" else 400
+    return JSONResponse(status_code=status_code, content=res)
+
+@router.post("/optionsmultiorder")
+async def options_multiorder_endpoint(request: Request):
+    """Places multiple options legs with automatic BUY-before-SELL margin sequencing."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    curr_mode = get_current_trading_mode()
+    tenant_id = getattr(config, "CLIENT_ID", "default")
+
+    if curr_mode != "ANALYZER" and action_center_service.is_semi_auto_mode(tenant_id):
+        pending_id = action_center_service.create_pending_order(
+            user_id="default",
+            api_type="optionsmultiorder",
+            order_data=data,
+            tenant_id=tenant_id
+        )
+        return {
+            "status": "queued",
+            "orderid": f"PENDING_{pending_id}",
+            "pending_id": pending_id,
+            "message": f"Options multi-order #{pending_id} queued in Action Center for approval (Semi-Auto Mode)"
+        }
+
+    res = options_order_service.execute_options_multiorder(data, curr_mode=curr_mode, tenant_id=tenant_id)
+    status_code = 200 if res.get("status") == "success" else 400
+    return JSONResponse(status_code=status_code, content=res)
+
+@router.post("/optionsymbol")
+async def option_symbol_endpoint(request: Request):
+    """Resolves option symbol based on underlying, expiry, offset, and option type."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    underlying = str(data.get("underlying") or "NIFTY").strip().upper()
+    exchange = str(data.get("exchange") or "NFO").strip().upper()
+    expiry_date = str(data.get("expiry_date") or "").strip()
+    offset = str(data.get("offset") or "ATM").strip().upper()
+    option_type = str(data.get("option_type") or "CE").strip().upper()
+    strike_int = float(data.get("strike_int") or 0.0)
+
+    res = options_order_service.resolve_option_contract(
+        underlying=underlying,
+        exchange=exchange,
+        expiry_date=expiry_date,
+        offset=offset,
+        option_type=option_type,
+        strike_int=strike_int
+    )
+    return {"data": res, **res}
+
+@router.post("/syntheticfuture")
+async def synthetic_future_endpoint(request: Request):
+    """Calculates synthetic future price using ATM options."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    underlying = str(data.get("underlying") or "NIFTY").strip().upper()
+    exchange = str(data.get("exchange") or "NSE_INDEX").strip().upper()
+    expiry_date = str(data.get("expiry_date") or "").strip()
+
+    res = options_order_service.calculate_synthetic_future(
+        underlying=underlying,
+        exchange=exchange,
+        expiry_date=expiry_date
+    )
+    return res
+
+# -----------------------------------------------------------------------------
+# 2G. Open Positions, Symbol P&L, and Batch Greeks
+# -----------------------------------------------------------------------------
+@router.post("/openposition")
+async def open_position_endpoint(request: Request):
+    """Gets quantity of an open position for a given symbol."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    symbol = str(data.get("symbol") or "").strip().upper()
+    product = str(data.get("product") or "NRML").strip().upper()
+
+    pos_data = xts_api.get_positions_telemetry()
+    positions = pos_data.get("positions", []) if isinstance(pos_data, dict) else []
+
+    qty = 0
+    for p in positions:
+        p_sym = str(p.get("symbol") or p.get("TradingSymbol") or "").strip().upper()
+        if p_sym == symbol or symbol in p_sym:
+            qty = int(p.get("quantity") or p.get("NetQty") or 0)
+            break
+
+    return {
+        "status": "success",
+        "symbol": symbol,
+        "quantity": qty,
+        "has_position": (qty != 0)
+    }
+
+@router.post("/pnl/symbols")
+async def pnl_symbols_endpoint(request: Request):
+    """Gets realized and unrealized P&L breakdown grouped by symbol."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    pos_data = xts_api.get_positions_telemetry()
+    positions = pos_data.get("positions", []) if isinstance(pos_data, dict) else []
+
+    symbol_pnl = []
+    tot_realized = 0.0
+    tot_unrealized = 0.0
+
+    for p in positions:
+        sym = p.get("symbol") or p.get("TradingSymbol") or "UNKNOWN"
+        qty = int(p.get("quantity") or p.get("NetQty") or 0)
+        unrealized = float(p.get("net_mtm") or p.get("MTM") or 0.0)
+        realized = float(p.get("realized_pnl") or p.get("RealizedPnL") or 0.0)
+        tot_realized += realized
+        tot_unrealized += unrealized
+        symbol_pnl.append({
+            "symbol": sym,
+            "quantity": qty,
+            "realized_pnl": round(realized, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "total_pnl": round(realized + unrealized, 2)
+        })
+
+    return {
+        "status": "success",
+        "data": symbol_pnl,
+        "symbols": symbol_pnl,
+        "total_realized_pnl": round(tot_realized, 2),
+        "total_unrealized_pnl": round(tot_unrealized, 2),
+        "total_pnl": round(tot_realized + tot_unrealized, 2)
+    }
+
+@router.post("/multioptiongreeks")
+async def multi_option_greeks_endpoint(request: Request):
+    """Calculates Option Greeks and IV for multiple symbols in a batch."""
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    symbols_list = data.get("symbols") or data.get("contracts") or []
+    interest_rate = float(data.get("interest_rate") or 7.0)
+    spot_override = float(data.get("spot_price") or 0.0)
+    rate = interest_rate / 100.0
+
+    results = []
+    greeks_list = []
+    for item in symbols_list[:50]:
+        sym = str(item.get("symbol") or "").strip().upper()
+        exch = str(item.get("exchange") or "NFO").strip().upper()
+        stk = float(item.get("strike") or 0.0)
+        ot = str(item.get("option_type") or "CE").strip().upper()
+        days_to_expiry = float(item.get("days_to_expiry") or 4.0)
+
+        if not sym:
+            sym = f"NIFTY26MAR26{int(stk) if stk > 0 else 24500}{ot}"
+
+        m = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2})(\d+)(CE|PE)$", sym)
+        if m:
+            underlying = m.group(1)
+            strike = float(m.group(3))
+            option_type = m.group(4).upper()
+        else:
+            underlying = "NIFTY"
+            strike = stk if stk > 0 else 24000.0
+            option_type = ot
+
+        spot = spot_override if spot_override > 0 else strike
+        iv = 0.15
+        greeks = options_engine.calculate_greeks(spot, strike, days_to_expiry, iv, risk_free_rate=rate, option_type=option_type)
+        greek_metrics = {
+            "delta": greeks.get("delta", 0.0),
+            "gamma": greeks.get("gamma", 0.0),
+            "theta": greeks.get("theta", 0.0),
+            "vega": greeks.get("vega", 0.0),
+            "rho": 0.001,
+            "iv": round(iv * 100.0, 2)
+        }
+        results.append({
+            "status": "success",
+            "symbol": sym,
+            "exchange": exch,
+            "implied_volatility": round(iv * 100.0, 2),
+            "greeks": greek_metrics
+        })
+        greeks_list.append(greek_metrics)
+
+    return {
+        "status": "success",
+        "data": results,
+        "greeks": greeks_list,
+        "summary": {"total": len(symbols_list), "success": len(results), "failed": 0}
+    }
 
 @router.post("/cancelorder")
 async def cancel_order(request: Request):

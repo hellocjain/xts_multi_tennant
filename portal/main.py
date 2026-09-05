@@ -397,6 +397,183 @@ async def client_developer_page(request: Request, client_user: dict = Depends(re
         "discord_webhook_url": risk_dict.get("discord_webhook_url", "")
     })
 
+@app.get("/client/action-center", response_class=HTMLResponse)
+async def client_action_center_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_action_center.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "action_center",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/client/action-center/count")
+async def client_action_center_count(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    headers = {"Accept": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient(timeout=3.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/action-center/count", f"http://xts_client_{tenant_id}:8000/api/v1/action-center/count"]:
+            try:
+                resp = await http_client.get(target, headers=headers)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                continue
+
+    # Fallback to direct client service if local/in-process
+    try:
+        from client import action_center_service
+        count = action_center_service.get_pending_count()
+        return {"status": "success", "count": count}
+    except Exception:
+        return {"status": "success", "count": 0}
+
+@app.get("/client/action-center/api/data")
+async def client_action_center_data(
+    request: Request,
+    status: Optional[str] = "all",
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    headers = {"Accept": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    params = {"status": status}
+    async with httpx.AsyncClient(timeout=5.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/action-center/data", f"http://xts_client_{tenant_id}:8000/api/v1/action-center/data"]:
+            try:
+                resp = await http_client.get(target, headers=headers, params=params)
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                continue
+
+    try:
+        from client import action_center_service
+        data = action_center_service.get_pending_orders(status_filter=status)
+        return data if isinstance(data, dict) and "data" in data else {"status": "success", "data": data}
+    except Exception as err:
+        return {"status": "error", "message": str(err), "data": []}
+
+@app.post("/client/action-center/approve/{order_id}")
+async def client_action_center_approve(
+    order_id: str,
+    request: Request,
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    payload = {"approver": client_user.get("email") or client_user.get("username") or tenant_id}
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/action-center/approve/{order_id}", f"http://xts_client_{tenant_id}:8000/api/v1/action-center/approve/{order_id}"]:
+            try:
+                resp = await http_client.post(target, json=payload, headers=headers)
+                if resp.status_code in (200, 400, 404):
+                    return JSONResponse(status_code=resp.status_code, content=resp.json())
+            except Exception:
+                continue
+
+    try:
+        from client import action_center_service
+        res = action_center_service.approve_pending_order(order_id, approver=payload["approver"])
+        return res
+    except Exception as err:
+        return {"status": "error", "message": str(err)}
+
+@app.post("/client/action-center/reject/{order_id}")
+async def client_action_center_reject(
+    order_id: str,
+    request: Request,
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = body.get("reason", "Rejected via Portal UI")
+
+    payload = {"reason": reason, "approver": client_user.get("email") or client_user.get("username") or tenant_id}
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/action-center/reject/{order_id}", f"http://xts_client_{tenant_id}:8000/api/v1/action-center/reject/{order_id}"]:
+            try:
+                resp = await http_client.post(target, json=payload, headers=headers)
+                if resp.status_code in (200, 400, 404):
+                    return JSONResponse(status_code=resp.status_code, content=resp.json())
+            except Exception:
+                continue
+
+    try:
+        from client import action_center_service
+        res = action_center_service.reject_pending_order(order_id, reason=reason, approver=payload["approver"])
+        return res
+    except Exception as err:
+        return {"status": "error", "message": str(err)}
+
+@app.post("/client/action-center/approve-all")
+async def client_action_center_approve_all(
+    request: Request,
+    client_user: dict = Depends(require_client_auth)
+):
+    tenant_id = client_user["tenant_id"]
+    port = docker_manager.get_tenant_port(tenant_id)
+    headers = {"Content-Type": "application/json"}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    payload = {"approver": client_user.get("email") or client_user.get("username") or tenant_id}
+    async with httpx.AsyncClient(timeout=15.0) as http_client:
+        for target in [f"http://127.0.0.1:{port}/api/v1/action-center/approve-all", f"http://xts_client_{tenant_id}:8000/api/v1/action-center/approve-all"]:
+            try:
+                resp = await http_client.post(target, json=payload, headers=headers)
+                if resp.status_code in (200, 400, 404):
+                    return JSONResponse(status_code=resp.status_code, content=resp.json())
+            except Exception:
+                continue
+
+    try:
+        from client import action_center_service
+        res = action_center_service.approve_all_pending_orders(approver=payload["approver"])
+        return res
+    except Exception as err:
+        return {"status": "error", "message": str(err)}
+
 @app.post("/client/cancel-order")
 async def client_cancel_order(
     request: Request,

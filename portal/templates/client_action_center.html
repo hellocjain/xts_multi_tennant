@@ -1,0 +1,387 @@
+{% extends "base.html" %}
+
+{% block title %}Action Center - OpenAlgo XTS{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6 pb-16">
+    <!-- Top Header Banner -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-bordercolor">
+        <div>
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm shadow-amber-500/10">
+                    <i data-lucide="shield-alert" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                        Action Center
+                        <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">SEMI-AUTO QUEUE</span>
+                    </h1>
+                    <p class="text-xs text-slate-400 mt-0.5">Human-in-the-loop review, approval, and rejection queue for algorithmic and webhook signals.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Header Actions -->
+        <div class="flex items-center space-x-3">
+            <button onclick="fetchActionCenterData()" class="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-cardbg border border-bordercolor text-xs text-slate-300 hover:text-white hover:bg-slate-800 transition">
+                <i data-lucide="refresh-cw" id="refresh-icon" class="w-3.5 h-3.5"></i>
+                <span>Refresh</span>
+            </button>
+            <button onclick="confirmApproveAll()" id="btn-approve-all" class="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/20 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                <i data-lucide="check-check" class="w-4 h-4"></i>
+                <span>Approve All</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 4 Key Telemetry Metric Cards -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Card 1: Pending -->
+        <div class="bg-cardbg border border-amber-500/30 p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Pending Orders</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-pending" class="text-3xl font-black font-mono text-amber-400">0</span>
+                <span class="text-xs text-amber-300/70 font-mono">awaiting approval</span>
+            </div>
+        </div>
+
+        <!-- Card 2: Approved -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Approved Today</span>
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-approved" class="text-3xl font-black font-mono text-emerald-400">0</span>
+                <span class="text-xs text-slate-500 font-mono">executed</span>
+            </div>
+        </div>
+
+        <!-- Card 3: Rejected -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Rejected Today</span>
+                <i data-lucide="x-circle" class="w-4 h-4 text-rose-400"></i>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+                <span id="stat-rejected" class="text-3xl font-black font-mono text-rose-400">0</span>
+                <span class="text-xs text-slate-500 font-mono">discarded</span>
+            </div>
+        </div>
+
+        <!-- Card 4: Buy / Sell Distribution -->
+        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl relative overflow-hidden shadow-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Action Flow</span>
+                <i data-lucide="arrow-left-right" class="w-4 h-4 text-brand-400"></i>
+            </div>
+            <div class="mt-2 flex items-center space-x-3 text-sm font-mono font-bold">
+                <span class="text-emerald-400"><span id="stat-buy">0</span> BUY</span>
+                <span class="text-slate-600">/</span>
+                <span class="text-rose-400"><span id="stat-sell">0</span> SELL</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Tabs -->
+    <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+        <div class="flex items-center space-x-2">
+            <button onclick="setFilter('pending')" id="tab-pending" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                Pending (<span id="tab-cnt-pending">0</span>)
+            </button>
+            <button onclick="setFilter('approved')" id="tab-approved" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition text-slate-400 hover:text-slate-200 hover:bg-slate-800">
+                Approved (<span id="tab-cnt-approved">0</span>)
+            </button>
+            <button onclick="setFilter('rejected')" id="tab-rejected" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition text-slate-400 hover:text-slate-200 hover:bg-slate-800">
+                Rejected (<span id="tab-cnt-rejected">0</span>)
+            </button>
+            <button onclick="setFilter('all')" id="tab-all" class="px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition text-slate-400 hover:text-slate-200 hover:bg-slate-800">
+                All Orders (<span id="tab-cnt-all">0</span>)
+            </button>
+        </div>
+        <div class="text-xs font-mono text-slate-500 hidden sm:block">
+            Auto-refresh active (3s)
+        </div>
+    </div>
+
+    <!-- Orders Table Card -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono text-xs">
+                <thead>
+                    <tr class="bg-slate-900/60 border-b border-bordercolor text-slate-400 uppercase text-[11px] font-semibold">
+                        <th class="py-3.5 px-4">Time (IST)</th>
+                        <th class="py-3.5 px-4">Strategy</th>
+                        <th class="py-3.5 px-4">Symbol</th>
+                        <th class="py-3.5 px-4">Action</th>
+                        <th class="py-3.5 px-4">Qty</th>
+                        <th class="py-3.5 px-4">Price</th>
+                        <th class="py-3.5 px-4">Product</th>
+                        <th class="py-3.5 px-4">Status</th>
+                        <th class="py-3.5 px-4 text-right">Decision</th>
+                    </tr>
+                </thead>
+                <tbody id="action-center-tbody" class="divide-y divide-bordercolor/60 text-slate-300">
+                    <tr>
+                        <td colspan="9" class="py-12 text-center text-slate-500">
+                            <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+                            <p>Loading Action Center orders...</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Raw JSON Details Inspector -->
+<div id="json-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+    <div class="bg-cardbg border border-bordercolor rounded-2xl w-full max-w-xl p-6 shadow-2xl relative">
+        <div class="flex items-center justify-between pb-4 border-b border-bordercolor">
+            <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
+                <i data-lucide="code" class="w-4 h-4 text-brand-400"></i>
+                Order Payload Details
+            </h3>
+            <button onclick="closeJsonModal()" class="text-slate-400 hover:text-white">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+        <div class="mt-4">
+            <pre id="json-modal-content" class="bg-slate-950 p-4 rounded-xl text-xs font-mono text-brand-300 overflow-x-auto max-h-96"></pre>
+        </div>
+        <div class="mt-6 flex justify-end">
+            <button onclick="closeJsonModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold text-slate-300 hover:text-white transition">
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentFilter = 'pending';
+let allOrders = [];
+
+async function fetchActionCenterData() {
+    const icon = document.getElementById('refresh-icon');
+    if (icon) icon.classList.add('animate-spin');
+
+    try {
+        const resp = await fetch('/client/action-center/api/data?status=all');
+        const data = await resp.json();
+
+        if (data.status === 'success' && data.data) {
+            const stats = data.data.statistics;
+            allOrders = data.data.orders || [];
+
+            // Update stats cards
+            document.getElementById('stat-pending').innerText = stats.total_pending || 0;
+            document.getElementById('stat-approved').innerText = stats.total_approved || 0;
+            document.getElementById('stat-rejected').innerText = stats.total_rejected || 0;
+            document.getElementById('stat-buy').innerText = stats.total_buy_orders || 0;
+            document.getElementById('stat-sell').innerText = stats.total_sell_orders || 0;
+
+            // Tab counts
+            document.getElementById('tab-cnt-pending').innerText = stats.total_pending || 0;
+            document.getElementById('tab-cnt-approved').innerText = stats.total_approved || 0;
+            document.getElementById('tab-cnt-rejected').innerText = stats.total_rejected || 0;
+            document.getElementById('tab-cnt-all').innerText = allOrders.length;
+
+            // Navbar badge sync
+            const navBadge = document.getElementById('action-center-badge');
+            if (navBadge) {
+                if (stats.total_pending > 0) {
+                    navBadge.innerText = stats.total_pending;
+                    navBadge.classList.remove('hidden');
+                } else {
+                    navBadge.classList.add('hidden');
+                }
+            }
+
+            // Disable Approve All button if 0 pending
+            const btnApproveAll = document.getElementById('btn-approve-all');
+            if (btnApproveAll) {
+                btnApproveAll.disabled = (stats.total_pending === 0);
+            }
+
+            renderTable();
+        }
+    } catch (err) {
+        console.error('Error fetching Action Center data:', err);
+    } finally {
+        if (icon) icon.classList.remove('animate-spin');
+    }
+}
+
+function setFilter(filter) {
+    currentFilter = filter;
+    ['pending', 'approved', 'rejected', 'all'].forEach(f => {
+        const btn = document.getElementById('tab-' + f);
+        if (btn) {
+            if (f === filter) {
+                btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition bg-amber-500/20 text-amber-400 border border-amber-500/40';
+            } else {
+                btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition text-slate-400 hover:text-slate-200 hover:bg-slate-800';
+            }
+        }
+    });
+    renderTable();
+}
+
+function renderTable() {
+    const tbody = document.getElementById('action-center-tbody');
+    if (!tbody) return;
+
+    const filtered = allOrders.filter(o => {
+        if (currentFilter === 'all') return true;
+        return o.status === currentFilter;
+    });
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="9" class="py-12 text-center text-slate-500">
+                    <i data-lucide="check-circle" class="w-8 h-8 mx-auto mb-2 text-emerald-500/50"></i>
+                    <p class="text-slate-400 font-bold">No ${currentFilter} orders in queue</p>
+                    <p class="text-xs text-slate-500 mt-1">Orders sent in semi-auto mode will appear here for 1-click review.</p>
+                </td>
+            </tr>
+        `;
+        if (window.lucide) lucide.createIcons();
+        return;
+    }
+
+    let rowsHtml = '';
+    filtered.forEach(o => {
+        const isBuy = (o.action === 'BUY');
+        const actBadge = isBuy
+            ? '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">BUY</span>'
+            : '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">SELL</span>';
+
+        let statusBadge = '';
+        if (o.status === 'pending') {
+            statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">PENDING</span>';
+        } else if (o.status === 'approved') {
+            statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">APPROVED</span>';
+        } else {
+            statusBadge = '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40">REJECTED</span>';
+        }
+
+        let actionButtons = '';
+        if (o.status === 'pending') {
+            actionButtons = `
+                <div class="flex items-center justify-end space-x-2">
+                    <button onclick="approveOrder(${o.id})" class="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm transition">
+                        Approve
+                    </button>
+                    <button onclick="rejectOrder(${o.id})" class="px-3 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600 border border-rose-500/40 text-rose-300 hover:text-white font-bold text-xs transition">
+                        Reject
+                    </button>
+                    <button onclick='viewJson(${JSON.stringify(o.raw_order_data)})' class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition" title="View Payload">
+                        <i data-lucide="eye" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `;
+        } else {
+            actionButtons = `
+                <div class="flex items-center justify-end space-x-2">
+                    <span class="text-[11px] text-slate-500">${o.broker_order_id ? '#' + o.broker_order_id : o.status}</span>
+                    <button onclick='viewJson(${JSON.stringify(o.raw_order_data)})' class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition" title="View Payload">
+                        <i data-lucide="eye" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `;
+        }
+
+        rowsHtml += `
+            <tr class="hover:bg-slate-800/30 transition">
+                <td class="py-3 px-4 text-slate-400">${o.created_at_ist}</td>
+                <td class="py-3 px-4 text-white font-bold">${o.strategy}</td>
+                <td class="py-3 px-4 text-brand-300 font-bold">${o.symbol} <span class="text-[10px] text-slate-500">(${o.exchange})</span></td>
+                <td class="py-3 px-4">${actBadge}</td>
+                <td class="py-3 px-4">${o.quantity}</td>
+                <td class="py-3 px-4 text-slate-300">${o.price > 0 ? '₹' + Number(o.price).toFixed(2) : 'MARKET'}</td>
+                <td class="py-3 px-4 text-slate-400">${o.product_type}</td>
+                <td class="py-3 px-4">${statusBadge}</td>
+                <td class="py-3 px-4 text-right">${actionButtons}</td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = rowsHtml;
+    if (window.lucide) lucide.createIcons();
+}
+
+async function approveOrder(id) {
+    try {
+        const resp = await fetch(`/client/action-center/approve/${id}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({approver: 'trader'})
+        });
+        const res = await resp.json();
+        if (res.status === 'success' || res.status === 'warning') {
+            fetchActionCenterData();
+        } else {
+            alert('Failed to approve order: ' + (res.message || 'Unknown error'));
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function rejectOrder(id) {
+    const reason = prompt('Enter rejection reason (optional):', 'Cancelled by trader');
+    if (reason === null) return; // User pressed Cancel
+
+    try {
+        const resp = await fetch(`/client/action-center/reject/${id}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reason: reason || 'Rejected by trader'})
+        });
+        const res = await resp.json();
+        if (res.status === 'success') {
+            fetchActionCenterData();
+        } else {
+            alert('Failed to reject order');
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function confirmApproveAll() {
+    if (!confirm('Are you sure you want to approve and execute ALL pending orders immediately?')) return;
+
+    try {
+        const resp = await fetch('/client/action-center/approve-all', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({approver: 'trader'})
+        });
+        const res = await resp.json();
+        fetchActionCenterData();
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function viewJson(data) {
+    document.getElementById('json-modal-content').innerText = JSON.stringify(data, null, 2);
+    document.getElementById('json-modal').classList.remove('hidden');
+}
+
+function closeJsonModal() {
+    document.getElementById('json-modal').classList.add('hidden');
+}
+
+// Initial fetch and auto-refresh loop
+document.addEventListener('DOMContentLoaded', () => {
+    fetchActionCenterData();
+    setInterval(fetchActionCenterData, 3000);
+});
+</script>
+{% endblock %}
