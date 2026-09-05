@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}Tools - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Header matching Screenshot -->
+    <div>
+        <h1 class="text-2xl font-bold text-white tracking-tight">Tools</h1>
+        <p class="text-sm text-slate-400 mt-1">Analytical tools for options trading and market analysis</p>
+    </div>
+
+    <!-- 3-Column Card Grid matching Screenshot -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+
+        <!-- 1. SB - Strategy Builder -->
+        <a href="/client/strategies" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-pink-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    SB
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-pink-400 transition">Strategy Builder</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Build multi-leg option strategies with live Greeks, payoff diagram and what-if simulators
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Strategy Builder
+            </div>
+        </a>
+
+        <!-- 2. SP - Strategy Portfolio -->
+        <a href="/client/strategies" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-purple-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    SP
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-purple-400 transition">Strategy Portfolio</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Saved strategies across MyTrades and Simulation watchlists
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Strategy Portfolio
+            </div>
+        </a>
+
+        <!-- 3. PB - Portfolio Backtester -->
+        <a href="/client/python" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    PB
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-emerald-400 transition">Portfolio Backtester</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Backtest a weighted portfolio against an index with real delivery costs, rebalancing rules, crisis periods and a full tearsheet
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Portfolio Backtester
+            </div>
+        </a>
+
+        <!-- 4. SB - SIP Backtester -->
+        <a href="/client/python" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    SB
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-emerald-300 transition">SIP Backtester</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        What a monthly, weekly or quarterly SIP would actually have returned: XIRR, rupee-cost averaging, start-date sensitivity and how it compares with a lumpsum
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open SIP Backtester
+            </div>
+        </a>
+
+        <!-- 5. PA - Portfolio Analyzer -->
+        <a href="/client/positions" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-cyan-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    PA
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-cyan-400 transition">Portfolio Analyzer</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Grade the holdings you actually own: concentration, co-movement, drawdown resilience and behaviour in past crises
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Portfolio Analyzer
+            </div>
+        </a>
+
+        <!-- 6. OC - Option Chain -->
+        <a href="/client/options" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    OC
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-teal-400 transition">Option Chain</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Real-time option chain with live Greeks, OI data, and quick order placement
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Option Chain
+            </div>
+        </a>
+
+        <!-- 7. OG - Option Greeks -->
+        <a href="/client/options" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    OG
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-indigo-400 transition">Option Greeks</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Historical IV, Delta, Theta, Vega, and Gamma charts for ATM options
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Option Greeks
+            </div>
+        </a>
+
+        <!-- 8. OT - OI Tracker -->
+        <a href="/client/maxpain" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    OT
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-blue-400 transition">OI Tracker</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Open Interest analysis with CE/PE OI bars, PCR overlay, and ATM strike marker
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open OI Tracker
+            </div>
+        </a>
+
+        <!-- 9. OR - OI Range -->
+        <a href="/client/gex" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-sky-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    OR
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-sky-400 transition">OI Range</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Open Interest by strike for a custom range with ATM-relative quick selectors and optional 1-minute auto-refresh
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open OI Range
+            </div>
+        </a>
+
+        <!-- 10. MP - Max Pain -->
+        <a href="/client/maxpain" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    MP
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-amber-400 transition">Max Pain Calculator</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Calculate pinpoint expiry strike where option buyers suffer maximum financial loss
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Max Pain
+            </div>
+        </a>
+
+        <!-- 11. GX - Gamma Exposure -->
+        <a href="/client/gex" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-purple-700 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    GX
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-purple-400 transition">Gamma Exposure (GEX)</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Track dealer hedging pressure, market maker pin levels, and flip strike volatility
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Gamma Exposure
+            </div>
+        </a>
+
+        <!-- 12. ST - ATM Straddle Engine -->
+        <a href="/client/straddle" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-teal-700 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    ST
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-teal-400 transition">ATM Straddle Engine</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Monitor combined ATM straddle premium decay and intraday delta drift in real-time
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open ATM Straddle
+            </div>
+        </a>
+
+        <!-- 13. CA - Calendar Arbitrage -->
+        <a href="/client/arbitrage" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-emerald-700 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    CA
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-emerald-400 transition">Calendar Arbitrage</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Identify cross-expiry volatility mispricings and term structure opportunities
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Calendar Arbitrage
+            </div>
+        </a>
+
+        <!-- 14. PY - Python Runner -->
+        <a href="/client/python" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-cyan-700 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    PY
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-cyan-400 transition">Python Runner</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Execute arbitrary quantitative strategies and signal backtests in an isolated sandbox
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Python Runner
+            </div>
+        </a>
+
+        <!-- 15. FL - Flow Builder -->
+        <a href="/client/flow" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-6 rounded-2xl transition flex flex-col justify-between group shadow-sm min-h-[190px]">
+            <div class="space-y-3">
+                <div class="w-8 h-8 rounded-lg bg-violet-700 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                    FL
+                </div>
+                <div>
+                    <h3 class="text-base font-bold text-white group-hover:text-purple-400 transition">Flow Builder</h3>
+                    <p class="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                        Visual node-based rule orchestration and algorithmic execution canvas
+                    </p>
+                </div>
+            </div>
+            <div class="pt-4 text-xs text-slate-500 font-medium group-hover:text-slate-300 transition">
+                Click to open Flow Builder
+            </div>
+        </a>
+
+    </div>
+
+</div>
+{% endblock %}

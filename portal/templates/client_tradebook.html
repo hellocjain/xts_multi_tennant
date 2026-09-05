@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Trade Book - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{ searchQuery: '' }">
+
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-white tracking-tight">Trade Book</h1>
+            <p class="text-sm text-slate-400 mt-1">All executed fills and completed transactions for today's session</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="window.location.reload()" class="px-3 py-1.5 bg-[#111625] hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800/80 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shadow-sm">
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                <span>Refresh</span>
+            </button>
+            <button onclick="window.print()" class="px-3 py-1.5 bg-[#111625] hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800/80 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shadow-sm">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <span>Export</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Trades Table -->
+    {% set filled_orders = [] %}
+    {% if client.broker_orders %}
+        {% for o in client.broker_orders %}
+            {% set st = (o.get('order_status') or o.get('status') or '')|lower %}
+            {% if st in ['complete', 'filled', 'executed'] %}
+                {% set _ = filled_orders.append(o) %}
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+
+    {% if filled_orders|length == 0 %}
+    <div class="bg-[#111625] border border-slate-800/80 rounded-2xl min-h-[350px] flex flex-col items-center justify-center p-12 shadow-sm text-center">
+        <i data-lucide="receipt" class="w-12 h-12 text-slate-600 mb-3 stroke-[1.5]"></i>
+        <h3 class="text-base font-bold text-white mb-1">No trades executed yet</h3>
+        <p class="text-xs text-slate-500">Completed order fills will appear here in real-time.</p>
+    </div>
+    {% else %}
+    <div class="bg-[#111625] border border-slate-800/80 rounded-2xl shadow-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left font-mono text-xs">
+                <thead class="bg-slate-900/60 border-b border-slate-800 text-slate-400 uppercase text-[10px] tracking-wider">
+                    <tr>
+                        <th class="py-3.5 px-4">Fill Time</th>
+                        <th class="py-3.5 px-4">Order ID</th>
+                        <th class="py-3.5 px-4">Symbol</th>
+                        <th class="py-3.5 px-4">Action</th>
+                        <th class="py-3.5 px-4 text-right">Filled Qty</th>
+                        <th class="py-3.5 px-4 text-right">Exec Price</th>
+                        <th class="py-3.5 px-4 text-right">Trade Value</th>
+                        <th class="py-3.5 px-4 text-center">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800/60">
+                    {% for tr in filled_orders %}
+                    {% set act = (tr.get('action') or tr.get('trans_type') or 'BUY')|upper %}
+                    {% set sym = tr.get('symbol') or tr.get('tradingsymbol') or 'N/A' %}
+                    {% set oid = tr.get('order_id') or tr.get('orderid') or tr.get('AppOrderID') or 'N/A' %}
+                    {% set q = tr.get('filled_quantity', tr.get('quantity', 0)) %}
+                    {% set p = tr.get('price', 0.0) %}
+                    {% set val = (q * p) if (q and p) else 0.0 %}
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="py-3 px-4 text-slate-400">{{ tr.get('time') or tr.get('OrderGeneratedDateTime') or '--:--:--' }}</td>
+                        <td class="py-3 px-4 text-slate-300 font-bold">#{{ oid }}</td>
+                        <td class="py-3 px-4 text-slate-100 font-semibold">{{ sym }}</td>
+                        <td class="py-3 px-4">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold {% if act == 'BUY' %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/30{% else %}bg-rose-500/10 text-rose-400 border border-rose-500/30{% endif %}">
+                                {{ act }}
+                            </span>
+                        </td>
+                        <td class="py-3 px-4 text-right font-bold text-slate-200">{{ q }}</td>
+                        <td class="py-3 px-4 text-right text-slate-200">₹{{ p|inr }}</td>
+                        <td class="py-3 px-4 text-right font-bold text-white">₹{{ val|inr }}</td>
+                        <td class="py-3 px-4 text-center">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Executed</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

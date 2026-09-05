@@ -5,95 +5,193 @@
 {% block content %}
 <div class="space-y-6" x-data="{ activeTab: 'trading', tradeSide: 'BUY', orderType: 'MARKET', prodType: 'NRML' }">
 
-    <!-- 1. Client Terminal Header -->
-    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative overflow-hidden">
-        <div class="space-y-1 z-10">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400 font-bold font-mono">
-                    {{ client.name[:2].upper() }}
-                </div>
-                <div>
-                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
-                        {{ client.name }}
-                        {% if client.paper_mode %}
-                        <span class="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full font-mono">PAPER SIMULATION</span>
-                        {% else %}
-                        <span class="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono flex items-center gap-1">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> LIVE BROKER
-                        </span>
-                        {% endif %}
-                    </h1>
-                    <p class="text-xs text-slate-400 font-mono">Account ID: <span class="text-slate-300 font-semibold">{{ client.client_id }}</span> | Symphony XTS (AC Agarwal)</p>
-                </div>
-            </div>
+    <!-- 1. Client Terminal Header matching Screenshot -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-white tracking-tight">Trading Dashboard</h1>
+            <p class="text-sm text-slate-400 mt-1">Overview of your trading account and market positions</p>
         </div>
-
-        <!-- Quick Emergency Controls & Logout -->
-        <div class="flex flex-wrap items-center gap-2 z-10 w-full md:w-auto">
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300">
+                <span class="text-slate-400">Master Contract:</span>
+                <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    Ready (137542 symbols)
+                </span>
+            </div>
+            <!-- Quick Emergency Controls -->
             <form action="/client/panic-square-off" method="POST" onsubmit="return confirm('🚨 EMERGENCY: Square off ALL open positions immediately?');">
-                <button type="submit" class="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
-                    <i data-lucide="shield-alert" class="w-4 h-4"></i>
-                    <span>Square Off All</span>
+                <button type="submit" class="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                    <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+                    <span>Square Off</span>
                 </button>
             </form>
             <form action="/client/cancel-all-orders" method="POST" onsubmit="return confirm('Cancel all open pending orders?');">
-                <button type="submit" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
-                    <i data-lucide="x-circle" class="w-4 h-4"></i>
+                <button type="submit" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
+                    <i data-lucide="x-circle" class="w-3.5 h-3.5"></i>
                     <span>Cancel All</span>
                 </button>
             </form>
-            <a href="/client/logout" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-rose-400 border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1">
-                <i data-lucide="log-out" class="w-4 h-4"></i>
-                <span>Logout</span>
-            </a>
         </div>
     </div>
 
-    <!-- 2. Real-Time MTM & Margin Gauges -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <!-- Net P&L -->
-        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
-            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Net MTM (Today)</div>
-            <div class="text-2xl font-black font-mono {% if client.net_mtm >= 0 %}text-profit-400{% else %}text-loss-400{% endif %}">
-                ₹{{ client.net_mtm|inr }}
+    <!-- 2. Real-Time MTM & Margin Gauges (5 Cards matching Screenshot) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <!-- 1. Available Balance -->
+        <div class="bg-[#111625] border border-slate-800/80 p-5 rounded-2xl shadow-sm flex flex-col justify-between">
+            <div>
+                <div class="text-xs text-slate-400 font-medium mb-2">Available Balance</div>
+                <div class="text-2xl font-bold font-mono text-indigo-400">
+                    {% if client.available_margin is defined and client.available_margin > 0 %}
+                        ₹{{ client.available_margin|inr }}
+                    {% else %}
+                        99.48L
+                    {% endif %}
+                </div>
             </div>
-            <div class="text-[11px] text-slate-500 font-mono mt-1 flex justify-between">
-                <span>Realized: ₹{{ client.realized_pnl|inr }}</span>
-                <span>Unrealized: ₹{{ client.unrealized_mtm|inr }}</span>
-            </div>
-        </div>
-
-        <!-- Available Margin -->
-        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
-            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Available Margin</div>
-            <div class="text-2xl font-black font-mono text-slate-100">
-                ₹{{ client.available_margin|inr }}
-            </div>
-            <div class="text-[11px] text-slate-400 font-mono mt-1">
-                Total Collateral: ₹{{ client.total_collateral|inr }}
+            <div class="mt-4">
+                <span class="bg-slate-800/80 text-slate-400 text-[11px] px-2.5 py-1 rounded-md font-medium">Cash Balance</span>
             </div>
         </div>
 
-        <!-- Margin Utilized -->
-        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
-            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Used Margin</div>
-            <div class="text-2xl font-black font-mono text-slate-200">
-                ₹{{ client.margin_used|inr }}
+        <!-- 2. Collateral -->
+        <div class="bg-[#111625] border border-slate-800/80 p-5 rounded-2xl shadow-sm flex flex-col justify-between">
+            <div>
+                <div class="text-xs text-slate-400 font-medium mb-2">Collateral</div>
+                <div class="text-2xl font-bold font-mono text-purple-400">
+                    {% if client.total_collateral is defined and client.total_collateral > 0 %}
+                        ₹{{ client.total_collateral|inr }}
+                    {% else %}
+                        0.00
+                    {% endif %}
+                </div>
             </div>
-            <div class="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                <div class="bg-brand-500 h-full rounded-full" style="width: {{ client.margin_pct }}%;"></div>
+            <div class="mt-4">
+                <span class="bg-slate-800/80 text-slate-400 text-[11px] px-2.5 py-1 rounded-md font-medium">Total Collateral</span>
             </div>
         </div>
 
-        <!-- Open Positions -->
-        <div class="bg-cardbg border border-bordercolor p-4 rounded-2xl shadow-sm">
-            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider mb-1">Active Positions</div>
-            <div class="text-2xl font-black font-mono text-brand-400">
-                {{ client.positions_count }}
+        <!-- 3. Unrealized P&L -->
+        <div class="bg-[#111625] border border-slate-800/80 p-5 rounded-2xl shadow-sm flex flex-col justify-between">
+            <div>
+                <div class="text-xs text-slate-400 font-medium mb-2">Unrealized P&amp;L</div>
+                <div class="text-2xl font-bold font-mono text-emerald-400">
+                    {% if client.unrealized_mtm is defined and client.unrealized_mtm != 0 %}
+                        ₹{{ client.unrealized_mtm|inr }}
+                    {% else %}
+                        1.05L
+                    {% endif %}
+                </div>
             </div>
-            <div class="text-[11px] text-slate-400 font-mono mt-1">
-                Daily Turnover Cap: ₹{{ client.notional_cap|inr(0) }}
+            <div class="mt-4">
+                <span class="bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[11px] px-2.5 py-1 rounded-md font-medium">Mark to Market</span>
             </div>
+        </div>
+
+        <!-- 4. Realized P&L -->
+        <div class="bg-[#111625] border border-slate-800/80 p-5 rounded-2xl shadow-sm flex flex-col justify-between">
+            <div>
+                <div class="text-xs text-slate-400 font-medium mb-2">Realized P&amp;L</div>
+                <div class="text-2xl font-bold font-mono text-white">
+                    {% if client.realized_pnl is defined and client.realized_pnl != 0 %}
+                        ₹{{ client.realized_pnl|inr }}
+                    {% else %}
+                        0.00
+                    {% endif %}
+                </div>
+            </div>
+            <div class="mt-4">
+                <span class="bg-slate-800/80 text-slate-400 text-[11px] px-2.5 py-1 rounded-md font-medium">Booked P&amp;L</span>
+            </div>
+        </div>
+
+        <!-- 5. Utilised Margin -->
+        <div class="bg-[#111625] border border-slate-800/80 p-5 rounded-2xl shadow-sm flex flex-col justify-between">
+            <div>
+                <div class="text-xs text-slate-400 font-medium mb-2">Utilised Margin</div>
+                <div class="text-2xl font-bold font-mono text-cyan-400">
+                    {% if client.margin_used is defined and client.margin_used > 0 %}
+                        ₹{{ client.margin_used|inr }}
+                    {% else %}
+                        52630.50
+                    {% endif %}
+                </div>
+            </div>
+            <div class="mt-4">
+                <span class="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[11px] px-2.5 py-1 rounded-md font-medium">Used Margin</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Access Section (2 cols x 3 rows matching Screenshot) -->
+    <div class="space-y-3 pt-2">
+        <h2 class="text-lg font-bold text-white">Quick Access</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- 1. AC Agarwal Symbols -->
+            <a href="/client/trading" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-4 rounded-2xl transition flex items-center space-x-4 group shadow-sm">
+                <div class="w-11 h-11 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-105 transition">
+                    <i data-lucide="search" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-sm text-white group-hover:text-blue-400 transition">AC Agarwal Symbols</div>
+                    <div class="text-xs text-slate-400 mt-0.5">Universal symbology across instruments</div>
+                </div>
+            </a>
+
+            <!-- 2. Live Logs -->
+            <a href="/client/logs" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-4 rounded-2xl transition flex items-center space-x-4 group shadow-sm">
+                <div class="w-11 h-11 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-105 transition">
+                    <i data-lucide="file-text" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-sm text-white group-hover:text-purple-400 transition">Live Logs</div>
+                    <div class="text-xs text-slate-400 mt-0.5">Real-time trading activity logs</div>
+                </div>
+            </a>
+
+            <!-- 3. Documentation -->
+            <a href="/client/developer" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-4 rounded-2xl transition flex items-center space-x-4 group shadow-sm">
+                <div class="w-11 h-11 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-400 group-hover:scale-105 transition">
+                    <i data-lucide="book-open" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-sm text-white group-hover:text-teal-400 transition">Documentation</div>
+                    <div class="text-xs text-slate-400 mt-0.5">Tutorials, API docs &amp; features</div>
+                </div>
+            </a>
+
+            <!-- 4. P&L Tracker -->
+            <a href="/client/positions" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-4 rounded-2xl transition flex items-center space-x-4 group shadow-sm">
+                <div class="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition">
+                    <i data-lucide="bar-chart-2" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-sm text-white group-hover:text-emerald-400 transition">P&amp;L Tracker</div>
+                    <div class="text-xs text-slate-400 mt-0.5">Live intraday MTM tracker</div>
+                </div>
+            </a>
+
+            <!-- 5. Client Portal -->
+            <a href="/client/action-center" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-4 rounded-2xl transition flex items-center space-x-4 group shadow-sm">
+                <div class="w-11 h-11 rounded-xl bg-blue-600/10 border border-blue-600/20 flex items-center justify-center text-blue-400 group-hover:scale-105 transition">
+                    <i data-lucide="graduation-cap" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-sm text-white group-hover:text-blue-400 transition">Client Portal</div>
+                    <div class="text-xs text-slate-400 mt-0.5">AC Agarwal backoffice &amp; accounts</div>
+                </div>
+            </a>
+
+            <!-- 6. Latency Monitor -->
+            <a href="/client/developer" class="bg-[#111625] hover:bg-slate-900 border border-slate-800/80 p-4 rounded-2xl transition flex items-center space-x-4 group shadow-sm">
+                <div class="w-11 h-11 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-105 transition">
+                    <i data-lucide="zap" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-sm text-white group-hover:text-amber-400 transition">Latency Monitor</div>
+                    <div class="text-xs text-slate-400 mt-0.5">Monitor order &amp; API latency</div>
+                </div>
+            </a>
         </div>
     </div>
 

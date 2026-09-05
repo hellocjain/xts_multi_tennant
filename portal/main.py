@@ -365,6 +365,96 @@ async def client_logs_page(request: Request, client_user: dict = Depends(require
         "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
+@app.get("/client/tools", response_class=HTMLResponse)
+async def client_tools_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_tools.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "tools",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/tools", response_class=HTMLResponse)
+async def tools_redirect_page(request: Request):
+    return RedirectResponse(url="/client/tools", status_code=307)
+
+@app.get("/client/tradebook", response_class=HTMLResponse)
+async def client_tradebook_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_tradebook.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "tradebook",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/tradebook", response_class=HTMLResponse)
+async def tradebook_redirect_page(request: Request):
+    return RedirectResponse(url="/client/tradebook", status_code=307)
+
+@app.get("/client/platforms", response_class=HTMLResponse)
+async def client_platforms_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    with closing(database.get_db_connection()) as conn:
+        tenant_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not tenant_row:
+            raise HTTPException(status_code=404, detail="Tenant profile not found")
+        tenant_dict = dict(tenant_row)
+
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
+        client_data = await telemetry_service.fetch_single_client_telemetry(http_client, tenant_dict)
+
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    api_key = creds.get("API_KEY", "") or tenant_id
+
+    return templates.TemplateResponse(request=request, name="client_platforms.html", context={
+        "client": client_data,
+        "client_user": client_user,
+        "current_user": client_user,
+        "api_key": api_key,
+        "active_page": "platforms",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/platforms", response_class=HTMLResponse)
+async def platforms_redirect_page(request: Request):
+    return RedirectResponse(url="/client/platforms", status_code=307)
+
 @app.get("/client/developer", response_class=HTMLResponse)
 async def client_developer_page(request: Request, client_user: dict = Depends(require_client_auth)):
     tenant_id = client_user["tenant_id"]
