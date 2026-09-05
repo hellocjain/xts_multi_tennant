@@ -62,12 +62,10 @@ sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-relea
 
 # Install Docker CE & Compose Plugin if missing
 if ! command -v docker &> /dev/null; then
-    echo "Installing Docker Engine..."
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo "Installing Docker Engine via official installer..."
+    curl -fsSL https://get.docker.com | sudo sh
     sudo apt-get update -y
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    sudo apt-get install -y docker-compose-plugin || true
 fi
 
 # Configure UFW firewall
@@ -181,12 +179,12 @@ sudo chmod 644 "$PROJECT_DIR/caddy/Caddyfile"
 # 4. Copy Code & Build Docker Images
 echo "[4/7] Building Docker images for Client Engine & Admin Portal..."
 # Copy source files to $PROJECT_DIR
-sudo cp -r client/* "$PROJECT_DIR/client/" 2>/dev/null || true
-sudo cp -r portal/* "$PROJECT_DIR/portal/" 2>/dev/null || true
-sudo cp -r backup/* "$PROJECT_DIR/backup/" 2>/dev/null || true
-sudo cp -r cli/* "$PROJECT_DIR/cli/" 2>/dev/null || true
-sudo cp -r scripts/* "$PROJECT_DIR/scripts/" 2>/dev/null || true
-sudo cp docker-compose.yml "$PROJECT_DIR/" 2>/dev/null || true
+sudo cp -a client/. "$PROJECT_DIR/client/" 2>/dev/null || true
+sudo cp -a portal/. "$PROJECT_DIR/portal/" 2>/dev/null || true
+sudo cp -a backup/. "$PROJECT_DIR/backup/" 2>/dev/null || true
+sudo cp -a cli/. "$PROJECT_DIR/cli/" 2>/dev/null || true
+sudo cp -a scripts/. "$PROJECT_DIR/scripts/" 2>/dev/null || true
+sudo cp -a docker-compose.yml "$PROJECT_DIR/" 2>/dev/null || true
 
 # Build Client base image with dual tags
 cd "$PROJECT_DIR/client"
