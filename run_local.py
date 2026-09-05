@@ -74,8 +74,31 @@ def seed_sample_paper_clients():
                     (pw_hash, time.time(), time.time())
                 )
 
+            # Client 3: Real AC Agarwal Symphony XTS (ABK01)
+            creds_abk = {
+                "API_KEY": "e20060f4b01697fb0f9301",
+                "API_SECRET": "Obcb827$3b",
+                "MD_API_KEY": "4ebf6ed2f3a146d6fb0685",
+                "MD_API_SECRET": "Xxkx150@PC",
+                "CLIENT_ID": "ABK01",
+                "WEBHOOK_SECRET": "Secret123",
+                "XTS_API_BASE_URL": "https://symphony.acagarwal.com:3000/interactive"
+            }
+            if not conn.execute("SELECT id FROM tenants WHERE id='abk01'").fetchone():
+                conn.execute("INSERT INTO tenants (id, name, status, created_at, updated_at) VALUES ('abk01', 'AC Agarwal (ABK01)', 'ACTIVE', ?, ?)", (time.time(), time.time()))
+                conn.execute("INSERT INTO tenant_risk_limits (tenant_id, max_lots_limit, max_order_value_inr, daily_notional_cap_inr, slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, updated_at) VALUES ('abk01', 50, 2500000, 5000000, 0.005, 3, 1, ?)", (time.time(),))
+            conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('abk01', ?, ?)", (security.encrypt_credentials(creds_abk), time.time()))
+
+            if not conn.execute("SELECT id FROM client_users WHERE username='abk01'").fetchone():
+                pw_hash_abk = security.hash_password("Abk01Pass123!")
+                conn.execute(
+                    "INSERT INTO client_users (id, tenant_id, username, password_hash, email, is_active, created_at, updated_at) VALUES ('usr_abk', 'abk01', 'abk01', ?, 'abk01@acagarwal.com', 1, ?, ?)",
+                    (pw_hash_abk, time.time(), time.time())
+                )
+
     docker_manager.provision_client_container("c01_alpha")
     docker_manager.provision_client_container("c02_beta")
+    docker_manager.provision_client_container("abk01")
 
 if __name__ == "__main__":
     print("\n" + "=" * 80)
@@ -88,12 +111,15 @@ if __name__ == "__main__":
     print("   👤 Admin Username          : admin")
     print("   🔑 Admin Password          : AdminPass123!")
     print("   📱 First Login             : Scan QR code with Google Authenticator")
-    print("\n👤 Client Trading Portal      : http://127.0.0.1:8500/client/login")
+    print("\n👤 Real Client Portal (ABK01) : http://127.0.0.1:8500/client/login")
+    print("   👤 Client Username         : abk01")
+    print("   🔑 Client Password         : Abk01Pass123!")
+    print("   📊 Directly opens          : /dashboard, /orderbook, /tradebook, /positions, /trading")
+    print("\n👤 Demo Client Portal (Paper) : http://127.0.0.1:8500/client/login")
     print("   👤 Client Username         : client1")
     print("   🔑 Client Password         : ClientPass123!")
-    print("   📊 Directly opens          : /dashboard, /orderbook, /tradebook, /positions, /trading")
-    print("\n💡 Pre-Loaded Local Engines   : c01_alpha (Port 8001) | c02_beta (Port 8002)")
-    print("📡 Local Webhook Simulator    : python3 local_test_signal.py c01_alpha BUY CRUDEOIL 1 6500.0")
+    print("\n💡 Active Local Engines       : c01_alpha (Port 8001) | c02_beta (Port 8002) | abk01 (Port 8003)")
+    print("📡 Local Webhook Simulator    : python3 local_test_signal.py abk01 BUY CRUDEOIL 1 6500.0")
     print("=" * 80 + "\n")
 
     # Start Portal with Uvicorn
