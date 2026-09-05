@@ -198,6 +198,12 @@ class WebSocketManager:
         self.latest_ltp[topic] = float(ltp)
         ts = time_sec or int(time.time())
 
+        try:
+            import candle_service
+            candle_service.default_candle_service.ingest_tick(symbol, exchange, float(ltp), volume=max(1, volume), timestamp=ts)
+        except Exception:
+            pass
+
         for ws, subs in list(self.subscriptions.items()):
             if topic in subs and ws in self.active_connections:
                 await self.send_market_data(ws, symbol, exchange, ltp, volume, ltq, ts)

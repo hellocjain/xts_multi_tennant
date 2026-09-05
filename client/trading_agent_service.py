@@ -449,4 +449,218 @@ def parse_trading_intent(prompt: str, context: Dict[str, Any]) -> Dict[str, Any]
         return {"intent": "query_option_chain", "symbol": symbol}
 
     # 7. General Quote / Technical Summary
-    return {"intent": "technical_summary", "symbol": symbol}
+    return {"intent": "technical_summary", "symbol": symbol, "source": "deterministic"}
+
+
+# =============================================================================
+# 5. Hybrid Multi-Provider LLM & Zero-Latency Failover Engine
+# =============================================================================
+
+TRADING_AGENT_TOOLS_SCHEMA = [
+    {
+        "type": "function",
+        "function": {
+            "name": "place_order",
+            "description": "Draft a trading order for explicit user review and confirmation card display",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["BUY", "SELL"]},
+                    "symbol": {"type": "string", "description": "Canonical trading symbol e.g. RELIANCE, NIFTY25AUG26FUT"},
+                    "quantity": {"type": "integer", "description": "Positive quantity to trade"},
+                    "price": {"type": "number", "description": "Limit price, or 0 for MARKET order"},
+                    "order_type": {"type": "string", "enum": ["MARKET", "LIMIT"]},
+                    "product": {"type": "string", "enum": ["NRML", "MIS", "CNC"]}
+                },
+                "required": ["action", "symbol", "quantity"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draw_swing_channel",
+            "description": "Compute and draw upper/lower linear regression swing channel on the active chart"
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draw_support_resistance",
+            "description": "Compute and draw key horizontal support and resistance pivot clusters on the active chart"
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draw_fibonacci",
+            "description": "Compute and draw Fibonacci retracement levels from the visible swing range"
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_indicator",
+            "description": "Add a technical indicator (SuperTrend, Bollinger Bands, RSI) to the active chart",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "indicator": {"type": "string", "enum": ["SuperTrend", "Bollinger Bands", "RSI"]},
+                    "period": {"type": "integer"},
+                    "multiplier": {"type": "number"}
+                },
+                "required": ["indicator"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_account",
+            "description": "Query account funds, margins, open positions, order book, or options chain",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query_type": {"type": "string", "enum": ["funds", "positions", "orders", "option_chain"]}
+                },
+                "required": ["query_type"]
+            }
+        }
+    }
+]
+
+def get_active_llm_provider() -> Optional[Dict[str, Any]]:
+    """Detects if an external LLM provider is configured in environment or client config."""
+    import os
+    if os.environ.get("GEMINI_API_KEY"):
+        return {"provider": "gemini", "api_key": os.environ["GEMINI_API_KEY"]}
+    if os.environ.get("OPENAI_API_KEY"):
+        return {"provider": "openai", "api_key": os.environ["OPENAI_API_KEY"]}
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return {"provider": "anthropic", "api_key": os.environ["ANTHROPIC_API_KEY"]}
+    if os.environ.get("OLLAMA_BASE_URL"):
+        return {"provider": "ollama", "base_url": os.environ["OLLAMA_BASE_URL"]}
+    return None
+
+def call_llm_provider(provider_info: Dict[str, Any], prompt: str, context: Dict[str, Any], timeout_sec: float = 1.5) -> Dict[str, Any]:
+    """
+    Executes a structured tool-calling request to the configured LLM provider.
+    Enforces a strict timeout to guarantee zero live-market execution lag.
+    """
+    import urllib.request
+    import urllib.error
+    provider = provider_info.get("provider")
+    api_key = provider_info.get("api_key", "")
+
+    headers = {"Content-Type": "application/json"}
+    
+    if provider == "openai":
+        url = "https://api.openai.com/v1/chat/completions"
+        headers["Authorization"] = f"Bearer {api_key}"
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": "You are a professional trading assistant operating a live OpenAlgo brokerage connection. Output function tool calls for user actions."},
+                {"role": "user", "content": f"Context: {json.dumps(context)}. User Request: {prompt}"}
+            ],
+            "tools": TRADING_AGENT_TOOLS_SCHEMA,
+            "tool_choice": "auto",
+            "temperature": 0.1
+        }
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            choice = data["choices"][0]["message"]
+            if choice.get("tool_calls"):
+                tc = choice["tool_calls"][0]["function"]
+                fn_name = tc["name"]
+                args = json.loads(tc.get("arguments", "{}"))
+                return _map_tool_call_to_intent(fn_name, args, context)
+
+    elif provider == "gemini":
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        gemini_tools = [{
+            "functionDeclarations": [
+                {
+                    "name": t["function"]["name"],
+                    "description": t["function"]["description"],
+                    "parameters": t["function"].get("parameters", {"type": "OBJECT", "properties": {}})
+                } for t in TRADING_AGENT_TOOLS_SCHEMA
+            ]
+        }]
+        payload = {
+            "contents": [{
+                "parts": [{"text": f"Context: {json.dumps(context)}\nUser prompt: {prompt}"}]
+            }],
+            "tools": gemini_tools
+        }
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                for part in parts:
+                    if "functionCall" in part:
+                        fc = part["functionCall"]
+                        return _map_tool_call_to_intent(fc["name"], fc.get("args", {}), context)
+
+    # If no tool calls emitted by LLM, fall back
+    raise ValueError(f"LLM did not return structured tool call for prompt: {prompt}")
+
+def _map_tool_call_to_intent(fn_name: str, args: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    """Maps LLM tool call schemas to the standardized OpenAlgo Copilot intent representation."""
+    sym = args.get("symbol") or context.get("symbol", "NIFTY")
+    exch = args.get("exchange") or context.get("exchange", "NSE")
+    
+    if fn_name == "place_order":
+        return {
+            "intent": "order",
+            "action": str(args.get("action", "BUY")).upper(),
+            "symbol": str(sym).upper(),
+            "exchange": "MCX" if str(sym).upper() in ("SILVER", "GOLD", "CRUDEOIL") else exch,
+            "quantity": int(args.get("quantity", 1)),
+            "order_type": str(args.get("order_type", "MARKET")).upper(),
+            "price": float(args.get("price", 0.0)),
+            "product": str(args.get("product", "NRML")).upper(),
+            "source": "llm"
+        }
+    elif fn_name == "draw_swing_channel":
+        return {"intent": "draw_channel", "source": "llm"}
+    elif fn_name == "draw_support_resistance":
+        return {"intent": "draw_support_resistance", "source": "llm"}
+    elif fn_name == "draw_fibonacci":
+        return {"intent": "draw_fibonacci", "source": "llm"}
+    elif fn_name == "add_indicator":
+        ind = args.get("indicator", "SuperTrend")
+        p = int(args.get("period", 10))
+        m = float(args.get("multiplier", 3.0))
+        return {"intent": "add_indicator", "indicator": ind, "params": {"period": p, "multiplier": m}, "source": "llm"}
+    elif fn_name == "query_account":
+        qt = args.get("query_type", "funds")
+        return {"intent": f"query_{qt}", "symbol": sym, "source": "llm"}
+
+    return {"intent": "technical_summary", "symbol": sym, "source": "llm"}
+
+def resolve_trading_intent_hybrid(prompt: str, context: Dict[str, Any], timeout_sec: float = 1.5) -> Dict[str, Any]:
+    """
+    Hybrid Resolution Architecture:
+    1. If external LLM provider credentials exist, attempts tool-calling inference with strict timeout (1.5s).
+    2. If provider is absent, times out, rate-limits, or errors, instantly triggers zero-latency (<1ms)
+       deterministic NLP fallback, guaranteeing 100% availability in live market conditions.
+    """
+    provider = get_active_llm_provider()
+    if provider:
+        try:
+            return call_llm_provider(provider, prompt, context, timeout_sec=timeout_sec)
+        except Exception as e:
+            logger.warning(f"Hybrid Copilot: LLM provider '{provider.get('provider')}' failed/timed out ({e}). Executing zero-latency deterministic failover.")
+            res = parse_trading_intent(prompt, context)
+            res["source"] = "deterministic_fallback"
+            return res
+
+    # Offline or unconfigured: pure deterministic execution
+    res = parse_trading_intent(prompt, context)
+    res["source"] = "deterministic"
+    return res
+

@@ -1246,6 +1246,13 @@ async def cancel_order(request: Request):
     if not order_id:
         return JSONResponse(status_code=400, content={"status": "error", "message": "order_id is required"})
 
+    # Check paper / analyzer mode
+    if get_current_trading_mode() in ("PAPER", "ANALYZER") or order_id in _ORDERS_REGISTRY:
+        if order_id in _ORDERS_REGISTRY:
+            _ORDERS_REGISTRY[order_id]["order_status"] = "cancelled"
+            _ORDERS_REGISTRY[order_id]["status"] = "cancelled"
+        return {"status": "success", "message": f"Order {order_id} cancelled successfully", "orderid": order_id}
+
     token = xts_api.get_interactive_token()
     client_id = getattr(config, "CLIENT_ID", "").strip()
     safe_url = xts_api.get_safe_base_url()
@@ -1265,6 +1272,12 @@ async def cancel_all_order(request: Request):
     data = await _extract_json(request)
     if not _verify_auth(data, request):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+
+    if get_current_trading_mode() in ("PAPER", "ANALYZER"):
+        for o in _ORDERS_REGISTRY.values():
+            o["order_status"] = "cancelled"
+            o["status"] = "cancelled"
+        return {"status": "success", "message": "All open orders cancelled successfully"}
 
     token = xts_api.get_interactive_token()
     client_id = getattr(config, "CLIENT_ID", "").strip()
@@ -2099,7 +2112,7 @@ async def agent_stream(request: Request):
     tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "default"))
 
     async def event_generator():
-        intent_res = trading_agent_service.parse_trading_intent(prompt, {
+        intent_res = trading_agent_service.resolve_trading_intent_hybrid(prompt, {
             "symbol": symbol,
             "exchange": exchange,
             "interval": interval

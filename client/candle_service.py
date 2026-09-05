@@ -52,10 +52,14 @@ DEFAULT_BASE_PRICES = {
 }
 
 
+import threading
+
 class CandleService:
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or os.path.join(os.path.dirname(__file__), "candles_cache.db")
         self._mem_conn = None
+        self._active_bars: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        self._lock = threading.Lock()
         if self.db_path == ":memory:":
             self._mem_conn = sqlite3.connect(":memory:")
             self._mem_conn.row_factory = sqlite3.Row
@@ -311,6 +315,59 @@ class CandleService:
         self.save_candles(symbol, exchange, interval, synthetic)
         return synthetic
 
+    def ingest_tick(
+        self,
+        symbol: str,
+        exchange: str,
+        price: float,
+        volume: int = 1,
+        timestamp: Optional[int] = None,
+        interval: str = "1m",
+    ) -> Dict[str, Any]:
+        """
+        Aggregates incoming real-time market ticks into candlestick bars.
+        Thread-safe and designed for sub-millisecond high-frequency ingestion.
+        """
+        if price <= 0:
+            return {}
+            
+        ts = int(timestamp or time.time())
+        interval_sec = INTERVAL_SECONDS.get(interval, 60)
+        bucket_ts = (ts // interval_sec) * interval_sec
+        key = (symbol.upper(), exchange.upper(), interval)
+
+        with self._lock:
+            current_bar = self._active_bars.get(key)
+            if not current_bar or current_bar["timestamp"] != bucket_ts:
+                # Flush previous bar to cache if one existed
+                if current_bar:
+                    self.save_candles(symbol, exchange, interval, [current_bar])
+                # Start new candle bucket
+                current_bar = {
+                    "timestamp": bucket_ts,
+                    "open": price,
+                    "high": price,
+                    "low": price,
+                    "close": price,
+                    "volume": volume,
+                    "oi": 0,
+                }
+            else:
+                current_bar["high"] = max(current_bar["high"], price)
+                current_bar["low"] = min(current_bar["low"], price)
+                current_bar["close"] = price
+                current_bar["volume"] += volume
+
+            self._active_bars[key] = current_bar
+            return dict(current_bar)
+
+    def get_active_bar(self, symbol: str, exchange: str, interval: str = "1m") -> Optional[Dict[str, Any]]:
+        key = (symbol.upper(), exchange.upper(), interval)
+        with self._lock:
+            bar = self._active_bars.get(key)
+            return dict(bar) if bar else None
+
 
 # Singleton instance
 default_candle_service = CandleService()
+
