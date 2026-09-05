@@ -539,8 +539,84 @@
             </div>
         </aside>
 
+        <!-- Panel D: AI Copilot Panel (Marketcalls TradingAgent) -->
+        <aside id="oa-panel-agent" class="hidden w-80 lg:w-[400px] border-l border-bordercolor bg-[#121722] flex flex-col z-20 flex-shrink-0 transition-all duration-300">
+            <!-- Copilot Header -->
+            <div class="border-b border-bordercolor bg-[#151A24] px-3 py-2 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-6 h-6 rounded-md bg-brand-500/20 border border-brand-500/40 flex items-center justify-center text-brand-400">
+                        <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                            Trading Agent
+                            <span class="text-[9px] px-1.5 py-0.2 rounded-full font-mono bg-brand-500/20 text-brand-400 border border-brand-500/30">AI Copilot</span>
+                        </div>
+                        <div class="text-[9px] text-slate-400 font-mono">Marketcalls OpenAlgo Copilot</div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <button id="btn-clear-agent-chat" class="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition" title="Clear Chat">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    </button>
+                    <button id="btn-close-agent-panel" class="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition" title="Close Panel (Esc)">
+                        <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Suggestions Chips -->
+            <div class="px-2.5 py-2 border-b border-bordercolor bg-slate-950/40 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-[10px]">
+                <button class="agent-chip px-2 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-brand-500/50 whitespace-nowrap transition" data-prompt="Draw channel connecting highs and lows">
+                    Channel
+                </button>
+                <button class="agent-chip px-2 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-brand-500/50 whitespace-nowrap transition" data-prompt="Mark support and resistance">
+                    Support / Resist
+                </button>
+                <button class="agent-chip px-2 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-brand-500/50 whitespace-nowrap transition" data-prompt="Add supertrend 10, 3">
+                    Supertrend
+                </button>
+                <button class="agent-chip px-2 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-brand-500/50 whitespace-nowrap transition" data-prompt="Fibonacci retracement">
+                    Fibonacci
+                </button>
+                <button class="agent-chip px-2 py-1 rounded-md bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-brand-500/50 whitespace-nowrap transition" data-prompt="What are my funds and open positions?">
+                    Funds & P&L
+                </button>
+            </div>
+
+            <!-- Chat Message History Feed -->
+            <div id="agent-chat-messages" class="flex-1 overflow-y-auto p-3 space-y-3 font-sans text-xs leading-relaxed">
+                <!-- Welcome greeting -->
+                <div class="flex items-start gap-2.5">
+                    <div class="w-6 h-6 rounded-md bg-brand-500/20 border border-brand-500/40 flex-shrink-0 flex items-center justify-center text-brand-400 mt-0.5">
+                        <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+                    </div>
+                    <div class="flex-1 bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-slate-300 space-y-1.5 shadow-sm">
+                        <p class="font-medium text-slate-100">Hello! I am your Technical Trading Copilot.</p>
+                        <p class="text-slate-400">Ask me to analyze price action, draw regression channels, mark support/resistance, calculate Fibonacci retracements, configure indicators, or draft orders with safety approval cards.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Input Footer -->
+            <div class="p-2.5 border-t border-bordercolor bg-[#151A24]">
+                <form id="agent-chat-form" class="flex items-center gap-2">
+                    <textarea id="agent-prompt-input" rows="1" placeholder="Ask AI analyst or order... (e.g., 'Draw channel', 'Buy 5 SBIN')" class="flex-1 bg-slate-900 border border-bordercolor rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 resize-none max-h-24 font-mono"></textarea>
+                    <button id="btn-send-agent-prompt" type="submit" class="p-2 bg-brand-500 hover:bg-brand-600 text-slate-950 font-bold rounded-xl transition flex-shrink-0" title="Send (Enter)">
+                        <i data-lucide="send" class="w-4 h-4"></i>
+                    </button>
+                </form>
+            </div>
+        </aside>
+
         <!-- Right Vertical Rail (Obsidian, mirroring OpenAlgo) -->
         <aside id="terminal-right-rail" class="w-10 border-l border-bordercolor bg-[#121722] flex flex-col items-center py-2 gap-2 z-20 flex-shrink-0">
+            <!-- AI Copilot Toggle -->
+            <button id="btn-rail-agent" class="rail-btn p-2 rounded-lg text-slate-400 hover:text-brand-400 hover:bg-slate-800 transition relative group" title="AI Copilot (Esc)">
+                <i data-lucide="bot" class="w-4 h-4"></i>
+                <span class="hidden group-hover:block absolute right-full mr-2 top-1.5 px-2 py-0.5 bg-slate-950 text-[10px] text-slate-200 border border-slate-800 rounded shadow-lg whitespace-nowrap z-50">AI Copilot (Esc)</span>
+            </button>
+
             <!-- Watchlist Toggle -->
             <button id="btn-rail-watchlist" class="rail-btn p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition relative group" title="Watchlist (Esc)">
                 <i data-lucide="list" class="w-4 h-4"></i>

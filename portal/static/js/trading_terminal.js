@@ -98,6 +98,7 @@ class OpenAlgoTradingTerminal {
         this.bindWatchlistPanel();
         this.bindOptionChainPanel();
         this.bindDrawerEvents();
+        this.bindAgentCopilot();
 
         this.initWebSocket();
         this.refreshOrdersAndPositions();
@@ -394,17 +395,20 @@ class OpenAlgoTradingTerminal {
     /* ── Right Rail & Slide-Out Panels ─────────────────────────────────── */
 
     bindRightRail() {
+        const btnAgent = document.getElementById('btn-rail-agent');
         const btnWatchlist = document.getElementById('btn-rail-watchlist');
         const btnOptions = document.getElementById('btn-rail-options');
         const btnDrawer = document.getElementById('btn-rail-drawer');
         const btnTopDrawer = document.getElementById('btn-toggle-drawer');
 
+        btnAgent?.addEventListener('click', () => this.toggleRightPanel('agent'));
         btnWatchlist?.addEventListener('click', () => this.toggleRightPanel('watchlist'));
         btnOptions?.addEventListener('click', () => this.toggleRightPanel('options'));
         btnDrawer?.addEventListener('click', () => this.toggleRightPanel('drawer'));
         btnTopDrawer?.addEventListener('click', () => this.toggleRightPanel('drawer'));
 
         // Close buttons inside panels
+        document.getElementById('btn-close-agent-panel')?.addEventListener('click', () => this.toggleRightPanel(null));
         document.getElementById('btn-close-watchlist-panel')?.addEventListener('click', () => this.toggleRightPanel(null));
         document.getElementById('btn-close-options-panel')?.addEventListener('click', () => this.toggleRightPanel(null));
         document.getElementById('btn-close-drawer')?.addEventListener('click', () => this.toggleRightPanel(null));
@@ -427,11 +431,13 @@ class OpenAlgoTradingTerminal {
 
     toggleRightPanel(panelId) {
         const panels = {
+            agent: document.getElementById('oa-panel-agent'),
             watchlist: document.getElementById('oa-panel-watchlist'),
             options: document.getElementById('oa-panel-options'),
             drawer: document.getElementById('terminal-side-drawer')
         };
         const railBtns = {
+            agent: document.getElementById('btn-rail-agent'),
             watchlist: document.getElementById('btn-rail-watchlist'),
             options: document.getElementById('btn-rail-options'),
             drawer: document.getElementById('btn-rail-drawer')
@@ -463,6 +469,10 @@ class OpenAlgoTradingTerminal {
 
             this.activeRightPanel = panelId;
 
+            if (panelId === 'agent') {
+                const inp = document.getElementById('agent-prompt-input');
+                if (inp) setTimeout(() => inp.focus(), 100);
+            }
             if (panelId === 'watchlist') this.loadWatchlists();
             if (panelId === 'options') this.loadOptionChain();
             if (panelId === 'drawer') this.refreshDrawerData();
@@ -1496,6 +1506,346 @@ class OpenAlgoTradingTerminal {
             toast.classList.remove('opacity-100', 'translate-y-0');
             toast.classList.add('opacity-0', 'translate-y-4');
         }, 3500);
+    }
+
+    /* ── AI Copilot (Marketcalls TradingAgent) ────────────────────────── */
+
+    bindAgentCopilot() {
+        const form = document.getElementById('agent-chat-form');
+        const input = document.getElementById('agent-prompt-input');
+        const clearBtn = document.getElementById('btn-clear-agent-chat');
+
+        form?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const text = input?.value?.trim();
+            if (text) {
+                input.value = '';
+                this.sendAgentPrompt(text);
+            }
+        });
+
+        input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                form?.dispatchEvent(new Event('submit'));
+            }
+        });
+
+        // Quick suggestion chips
+        document.querySelectorAll('.agent-chip').forEach(chip => {
+            chip.addEventListener('click', () => {
+                const prompt = chip.getAttribute('data-prompt');
+                if (prompt) {
+                    this.sendAgentPrompt(prompt);
+                }
+            });
+        });
+
+        // Clear chat
+        clearBtn?.addEventListener('click', () => {
+            const container = document.getElementById('agent-chat-messages');
+            if (container) {
+                container.innerHTML = `
+                    <div class="flex items-start gap-2.5">
+                        <div class="w-6 h-6 rounded-md bg-brand-500/20 border border-brand-500/40 flex-shrink-0 flex items-center justify-center text-brand-400 mt-0.5">
+                            <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+                        </div>
+                        <div class="flex-1 bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-slate-300 space-y-1.5 shadow-sm">
+                            <p class="font-medium text-slate-100">Conversation cleared.</p>
+                            <p class="text-slate-400">Ready for your next request.</p>
+                        </div>
+                    </div>
+                `;
+                if (window.lucide) window.lucide.createIcons();
+            }
+        });
+
+        // Approval Card delegation (Approve / Reject)
+        const messagesContainer = document.getElementById('agent-chat-messages');
+        messagesContainer?.addEventListener('click', (e) => {
+            const approveBtn = e.target.closest('.btn-approve-order');
+            if (approveBtn) {
+                const cardEl = approveBtn.closest('.order-approval-card');
+                if (cardEl) {
+                    const cardData = JSON.parse(cardEl.getAttribute('data-card') || '{}');
+                    this.handleApproveOrder(cardEl, cardData);
+                }
+            }
+
+            const rejectBtn = e.target.closest('.btn-reject-order');
+            if (rejectBtn) {
+                const cardEl = rejectBtn.closest('.order-approval-card');
+                if (cardEl) {
+                    cardEl.classList.add('opacity-50', 'pointer-events-none');
+                    const actionsDiv = cardEl.querySelector('.approval-card-actions');
+                    if (actionsDiv) {
+                        actionsDiv.innerHTML = `<div class="text-[11px] font-mono font-bold text-rose-400 py-1 flex items-center gap-1.5"><i data-lucide="x-circle" class="w-3.5 h-3.5"></i> Order Rejected by User</div>`;
+                        if (window.lucide) window.lucide.createIcons();
+                    }
+                }
+            }
+        });
+    }
+
+    async sendAgentPrompt(promptText) {
+        const messagesContainer = document.getElementById('agent-chat-messages');
+        if (!messagesContainer) return;
+
+        // 1. Append User Message
+        const userMsgEl = document.createElement('div');
+        userMsgEl.className = 'flex items-start justify-end gap-2';
+        userMsgEl.innerHTML = `
+            <div class="bg-brand-500/15 border border-brand-500/30 rounded-xl px-3 py-2 text-slate-100 max-w-[85%] font-medium">
+                ${promptText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+            </div>
+        `;
+        messagesContainer.appendChild(userMsgEl);
+
+        // 2. Append Assistant Message Placeholder
+        const assistantMsgEl = document.createElement('div');
+        assistantMsgEl.className = 'flex items-start gap-2.5';
+        const msgId = 'agent-msg-' + Date.now();
+        assistantMsgEl.innerHTML = `
+            <div class="w-6 h-6 rounded-md bg-brand-500/20 border border-brand-500/40 flex-shrink-0 flex items-center justify-center text-brand-400 mt-0.5">
+                <i data-lucide="bot" class="w-3.5 h-3.5"></i>
+            </div>
+            <div id="${msgId}" class="flex-1 bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-slate-300 space-y-2 shadow-sm">
+                <div class="typing-indicator flex items-center gap-1.5 text-slate-400">
+                    <span class="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse"></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse delay-100"></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-brand-400 animate-pulse delay-200"></span>
+                    <span class="text-[10px] ml-1">Analyzing market...</span>
+                </div>
+            </div>
+        `;
+        messagesContainer.appendChild(assistantMsgEl);
+        if (window.lucide) window.lucide.createIcons();
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+        const p = this.panes[this.focusedPaneId] || { symbol: 'NIFTY', exchange: 'NSE', interval: '5m' };
+        let fullContent = '';
+
+        try {
+            const resp = await fetch('/api/v1/agent/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: promptText,
+                    symbol: p.symbol,
+                    exchange: p.exchange,
+                    interval: p.interval,
+                    apikey: this.apiKey
+                })
+            });
+
+            if (!resp.ok) {
+                const errJson = await resp.json().catch(() => ({}));
+                const targetBox = document.getElementById(msgId);
+                if (targetBox) {
+                    targetBox.innerHTML = `<div class="text-rose-400">Error: ${errJson.message || 'Failed to communicate with AI Copilot.'}</div>`;
+                }
+                return;
+            }
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const event = JSON.parse(line.substring(6));
+                            const targetBox = document.getElementById(msgId);
+                            if (!targetBox) continue;
+
+                            if (event.type === 'token') {
+                                const typing = targetBox.querySelector('.typing-indicator');
+                                if (typing) typing.remove();
+
+                                fullContent += event.content;
+                                let formatted = fullContent
+                                    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-slate-100">$1</strong>')
+                                    .replace(/\*(.*?)\*/g, '<em class="text-slate-200">$1</em>')
+                                    .replace(/\n- (.*?)(?=\n|$)/g, '<li class="ml-4 list-disc text-slate-300">$1</li>')
+                                    .replace(/\n/g, '<br>');
+                                targetBox.innerHTML = `<div>${formatted}</div>`;
+                            } else if (event.type === 'chart_action') {
+                                this.executeAgentChartAction(event.action, event.data);
+                            } else if (event.type === 'approval_card') {
+                                this.renderApprovalCard(targetBox, event.card);
+                            }
+                        } catch (e) {}
+                    }
+                }
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+        } catch (err) {
+            const targetBox = document.getElementById(msgId);
+            if (targetBox) {
+                targetBox.innerHTML = `<div class="text-rose-400">Connection error: ${err.message}</div>`;
+            }
+        }
+    }
+
+    executeAgentChartAction(action, data) {
+        const p = this.panes[this.focusedPaneId];
+        if (!p) return;
+
+        if (action === 'add_indicator') {
+            const indName = data.name;
+            if (p.chart && p.chart.addIndicator) {
+                p.chart.addIndicator(indName, data.params || {});
+            }
+            this.showToast(`AI added indicator: ${indName}`, 'info');
+        } else if (action === 'set_interval') {
+            this.setInterval(data.interval);
+        } else if (action === 'set_chart_type') {
+            this.setChartType(data.chart_type);
+        } else if (action === 'clear_chart') {
+            if (p.chart && p.chart.removeAllIndicators) {
+                p.chart.removeAllIndicators();
+            }
+            this.showToast("AI cleared chart markup", "info");
+        } else if (action === 'draw_channel') {
+            this.showToast(`AI calculated ${data.structure}`, 'info');
+            if (p.chart && p.chart.drawTrendLine && data.upper_rail && data.lower_rail) {
+                try {
+                    p.chart.drawTrendLine(data.upper_rail);
+                    p.chart.drawTrendLine(data.lower_rail);
+                } catch (e) {}
+            }
+        } else if (action === 'draw_support_resistance') {
+            this.showToast("AI marked Support & Resistance levels", 'info');
+            if (p.chart && p.chart.drawHorizontalLine && data.levels) {
+                try {
+                    data.levels.forEach(lvl => p.chart.drawHorizontalLine(lvl.price, lvl.color));
+                } catch (e) {}
+            }
+        } else if (action === 'draw_fibonacci') {
+            this.showToast("AI plotted Fibonacci Retracements", 'info');
+            if (p.chart && p.chart.drawHorizontalLine && data.levels) {
+                try {
+                    data.levels.forEach(lvl => p.chart.drawHorizontalLine(lvl.price, '#a855f7'));
+                } catch (e) {}
+            }
+        }
+    }
+
+    renderApprovalCard(container, card) {
+        const s = card.checked_by_server || {};
+        const cardHtml = `
+            <div class="order-approval-card mt-3 p-3 rounded-xl border border-amber-500/40 bg-gradient-to-b from-slate-950 to-[#0e1526] shadow-xl space-y-2.5 font-sans" data-card='${JSON.stringify(card)}'>
+                <div class="flex items-center justify-between border-b border-bordercolor/60 pb-2">
+                    <div class="flex items-center gap-1.5 font-bold text-xs ${card.action === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}">
+                        <span class="px-1.5 py-0.5 rounded font-mono text-[10px] ${card.action === 'BUY' ? 'bg-emerald-500/20 border border-emerald-500/40' : 'bg-rose-500/20 border border-rose-500/40'}">${card.action}</span>
+                        <span>${card.quantity} ${card.symbol}</span>
+                    </div>
+                    <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 uppercase tracking-wider font-bold">
+                        ${card.mode} Mode
+                    </span>
+                </div>
+
+                <div class="rounded-lg bg-slate-900/90 border border-bordercolor/80 p-2 text-[11px] font-mono space-y-1">
+                    <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-800 pb-0.5">Checked by server</div>
+                    <div class="flex justify-between text-slate-300">
+                        <span>Live LTP:</span>
+                        <strong class="text-brand-400">₹${s.ltp ? s.ltp.toFixed(2) : '--'}</strong>
+                    </div>
+                    <div class="flex justify-between text-slate-300">
+                        <span>Notional:</span>
+                        <span>₹${s.notional ? s.notional.toLocaleString() : '--'}</span>
+                    </div>
+                    <div class="flex justify-between text-slate-300">
+                        <span>Req Margin:</span>
+                        <span class="text-amber-400 font-bold">₹${s.required_margin ? s.required_margin.toLocaleString() : '--'}</span>
+                    </div>
+                    <div class="flex justify-between text-slate-300">
+                        <span>Available Funds:</span>
+                        <span class="text-emerald-400">₹${s.available_funds ? s.available_funds.toLocaleString() : '--'}</span>
+                    </div>
+                </div>
+
+                <div class="approval-card-actions pt-1 flex items-center gap-2">
+                    <button class="btn-approve-order flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition shadow-md shadow-emerald-600/30 flex items-center justify-center gap-1.5">
+                        <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                        <span>Approve</span>
+                    </button>
+                    <button class="btn-reject-order px-3 py-1.5 bg-slate-800 hover:bg-rose-950 hover:text-rose-400 border border-bordercolor text-slate-300 font-bold text-xs rounded-lg transition">
+                        Reject
+                    </button>
+                </div>
+            </div>
+        `;
+        const wrap = document.createElement('div');
+        wrap.innerHTML = cardHtml;
+        container.appendChild(wrap);
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    async handleApproveOrder(cardEl, cardData) {
+        const actionsDiv = cardEl.querySelector('.approval-card-actions');
+        if (actionsDiv) {
+            actionsDiv.innerHTML = `
+                <div class="py-1 text-xs font-mono text-brand-400 flex items-center gap-2">
+                    <div class="w-3.5 h-3.5 border-2 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Verifying RiskGuard & routing...</span>
+                </div>
+            `;
+        }
+
+        try {
+            const resp = await fetch('/api/v1/agent/approve-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    card_id: cardData.card_id,
+                    symbol: cardData.symbol,
+                    exchange: cardData.exchange,
+                    action: cardData.action,
+                    quantity: cardData.quantity,
+                    order_type: cardData.order_type,
+                    price: cardData.price,
+                    product: cardData.product,
+                    apikey: this.apiKey
+                })
+            });
+
+            const res = await resp.json();
+            if (res.status === 'success') {
+                if (actionsDiv) {
+                    actionsDiv.innerHTML = `
+                        <div class="text-[11px] font-mono font-bold text-emerald-400 py-1 flex items-center gap-1.5">
+                            <i data-lucide="check-circle" class="w-4 h-4"></i>
+                            <span>Approved & Executed (ID: ${res.orderid})</span>
+                        </div>
+                    `;
+                }
+                this.showToast(`Order ${res.orderid} placed successfully!`, 'success');
+                this.refreshOrdersAndPositions();
+            } else {
+                if (actionsDiv) {
+                    actionsDiv.innerHTML = `
+                        <div class="text-[11px] font-mono text-rose-400 py-1 space-y-1">
+                            <div class="font-bold flex items-center gap-1"><i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> Order Refused by RiskGuard</div>
+                            <div class="text-[10px] text-slate-400">${res.message || 'Safety check failed'}</div>
+                        </div>
+                    `;
+                }
+                this.showToast(res.message || 'RiskGuard check failed', 'error');
+            }
+        } catch (e) {
+            if (actionsDiv) {
+                actionsDiv.innerHTML = `<div class="text-[11px] text-rose-400">Failed to place order: ${e.message}</div>`;
+            }
+        }
+        if (window.lucide) window.lucide.createIcons();
     }
 }
 
