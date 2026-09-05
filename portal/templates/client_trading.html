@@ -114,6 +114,11 @@
         </div>
 
         <div class="flex items-center gap-2">
+            <!-- Panels Drawer Toggle Button -->
+            <button id="btn-toggle-drawer" class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/80 hover:bg-slate-800 border border-bordercolor rounded-lg text-slate-300 transition" title="Toggle DOM, Orders, Positions & Trades">
+                <i data-lucide="panel-right" class="w-3.5 h-3.5 text-brand-400"></i>
+                <span class="hidden sm:inline">Panels</span>
+            </button>
             <!-- Fullscreen -->
             <button id="btn-fullscreen" class="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-lg transition" title="Toggle Fullscreen">
                 <i data-lucide="maximize-2" class="w-4 h-4"></i>
@@ -197,6 +202,103 @@
             <!-- Canvas Mounting Element -->
             <div id="chart-container" class="w-full h-full"></div>
         </main>
+
+        <!-- In-Terminal Multi-Tab Side Drawer (DOM / Orders / Positions / Trades) -->
+        <aside id="terminal-side-drawer" class="hidden w-80 lg:w-96 border-l border-bordercolor bg-[#121722] flex flex-col z-20 flex-shrink-0 transition-all duration-300">
+            <!-- Drawer Header & Tabs -->
+            <div class="border-b border-bordercolor bg-[#151A24] px-2 py-1.5 flex items-center justify-between">
+                <div class="flex items-center gap-1">
+                    <button class="drawer-tab-btn px-2 py-1 rounded text-xs font-mono font-bold bg-brand-500/20 text-brand-400 border border-brand-500/40" data-tab="dom">
+                        DOM
+                    </button>
+                    <button class="drawer-tab-btn px-2 py-1 rounded text-xs font-mono text-slate-400 hover:text-slate-200" data-tab="orders">
+                        Orders
+                    </button>
+                    <button class="drawer-tab-btn px-2 py-1 rounded text-xs font-mono text-slate-400 hover:text-slate-200" data-tab="positions">
+                        Positions
+                    </button>
+                    <button class="drawer-tab-btn px-2 py-1 rounded text-xs font-mono text-slate-400 hover:text-slate-200" data-tab="trades">
+                        Trades
+                    </button>
+                </div>
+                <button id="btn-close-drawer" class="p-1 text-slate-400 hover:text-slate-200 rounded hover:bg-slate-800" title="Close Panel">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
+
+            <!-- Drawer Content Body -->
+            <div class="flex-1 overflow-y-auto font-mono text-xs p-2">
+                <!-- Tab 1: DOM (5-Level Market Depth) -->
+                <div id="drawer-panel-dom" class="drawer-panel space-y-2">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                        <span id="dom-symbol-display" class="font-bold text-slate-200">SILVER10030SEP26FUT</span>
+                        <span>LTP: <strong id="dom-ltp-display" class="text-brand-400 font-mono">--</strong></span>
+                    </div>
+
+                    <!-- 5-Level Depth Ladder -->
+                    <div class="rounded-xl border border-bordercolor overflow-hidden bg-slate-950/60">
+                        <table class="w-full text-[11px] text-left divide-y divide-bordercolor">
+                            <thead class="bg-slate-900/80 text-[10px] text-slate-400 uppercase">
+                                <tr>
+                                    <th class="py-1 px-1.5 text-emerald-400">Orders</th>
+                                    <th class="py-1 px-1.5 text-emerald-400">Qty</th>
+                                    <th class="py-1 px-1.5 text-emerald-400 text-right">Bid</th>
+                                    <th class="py-1 px-1.5 text-rose-400">Ask</th>
+                                    <th class="py-1 px-1.5 text-rose-400">Qty</th>
+                                    <th class="py-1 px-1.5 text-rose-400 text-right">Orders</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dom-table-body" class="divide-y divide-slate-800/40">
+                                <tr><td colspan="6" class="p-4 text-center text-slate-500">Loading Market Depth...</td></tr>
+                            </tbody>
+                            <tfoot class="bg-slate-900/60 text-[10px] font-bold">
+                                <tr>
+                                    <td colspan="3" class="py-1 px-2 text-emerald-400">Total Buy: <span id="dom-total-buy-qty">0</span></td>
+                                    <td colspan="3" class="py-1 px-2 text-rose-400 text-right">Total Sell: <span id="dom-total-sell-qty">0</span></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <div class="text-[10px] text-slate-500 text-center">
+                        Tip: Click any Bid to Buy or Ask to Sell directly at that price level.
+                    </div>
+                </div>
+
+                <!-- Tab 2: Orders -->
+                <div id="drawer-panel-orders" class="drawer-panel hidden space-y-2">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                        <span class="font-bold text-slate-200">Order Book</span>
+                        <button id="btn-refresh-orders" class="text-[10px] text-brand-400 hover:underline">Refresh</button>
+                    </div>
+                    <div id="drawer-orders-list" class="space-y-1.5">
+                        <div class="p-4 text-center text-slate-500">No orders found.</div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Positions -->
+                <div id="drawer-panel-positions" class="drawer-panel hidden space-y-2">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                        <span class="font-bold text-slate-200">Net Positions</span>
+                        <span id="drawer-net-pnl" class="font-bold text-emerald-400">₹0.00</span>
+                    </div>
+                    <div id="drawer-positions-list" class="space-y-1.5">
+                        <div class="p-4 text-center text-slate-500">No open positions.</div>
+                    </div>
+                </div>
+
+                <!-- Tab 4: Trades -->
+                <div id="drawer-panel-trades" class="drawer-panel hidden space-y-2">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                        <span class="font-bold text-slate-200">Trade Book</span>
+                        <button id="btn-refresh-trades" class="text-[10px] text-brand-400 hover:underline">Refresh</button>
+                    </div>
+                    <div id="drawer-trades-list" class="space-y-1.5">
+                        <div class="p-4 text-center text-slate-500">No trades executed.</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
     </div>
 
     <!-- 4. Technical Indicators Modal -->

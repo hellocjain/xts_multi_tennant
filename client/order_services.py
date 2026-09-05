@@ -241,3 +241,94 @@ async def square_off_single_position(
         "quantity": square_qty,
         "result": res
     }
+
+
+def calculate_slippage_price(
+    symbol: str,
+    action: str,
+    ltp: float,
+    buffer_pct: float = 0.005,
+    tick_size: float = 0.05
+) -> float:
+    """
+    Calculates institutional price-protected limit price for market orders.
+    Prevents freak trades by capping BUY at (LTP * (1 + buffer)) and SELL at (LTP * (1 - buffer)),
+    quantized to the instrument's exact tick size.
+    """
+    if ltp <= 0:
+        return 0.0
+
+    act = action.strip().upper()
+    if act == "BUY":
+        raw_price = ltp * (1.0 + buffer_pct)
+    else:
+        raw_price = ltp * (1.0 - buffer_pct)
+
+    if tick_size > 0:
+        price = round(round(raw_price / tick_size) * tick_size, 4)
+    else:
+        price = round(raw_price, 2)
+    return max(price, 0.05)
+
+
+async def execute_reversal_order(
+    symbol: str,
+    new_action: str,
+    new_quantity: int,
+    price: float = 0.0,
+    order_ref: Optional[str] = None,
+    is_paper: bool = False
+) -> Dict[str, Any]:
+    """
+    Atomic Position Reversal:
+    Checks if there is an open opposite position on the target symbol.
+    If an opposite position exists:
+      1. Squares off the opposite position.
+      2. Immediately places the entry order for new_quantity on the new side.
+    If no opposite position exists (flat or same direction), places the order directly.
+    """
+    action_clean = new_action.strip().upper()
+    if action_clean not in ("BUY", "SELL"):
+        return {"status": "error", "message": f"Invalid action '{new_action}'. Must be BUY or SELL"}
+    if new_quantity <= 0:
+        return {"status": "error", "message": "Quantity must be greater than 0"}
+
+    pos_data = await asyncio.to_thread(xts_api.get_positions_telemetry)
+    positions = pos_data.get("positions", [])
+    clean_target = symbol.replace(" ", "").upper()
+
+    matching_pos = None
+    for p in positions:
+        pos_sym = str(p.get("symbol", "")).replace(" ", "").upper()
+        if clean_target in pos_sym or pos_sym in clean_target:
+            matching_pos = p
+            break
+
+    existing_qty = int(matching_pos.get("quantity", 0)) if matching_pos else 0
+    is_reversal = (action_clean == "BUY" and existing_qty < 0) or (action_clean == "SELL" and existing_qty > 0)
+
+    closed_pos_result = None
+    if is_reversal and abs(existing_qty) > 0:
+        logger.info(f"Reversal detected for {symbol}: Existing qty {existing_qty}, reversing to {action_clean} {new_quantity}")
+        closed_pos_result = await square_off_single_position(symbol)
+
+    # Place new entry order
+    base_ref = order_ref or f"REV_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+    entry_res = await asyncio.to_thread(
+        xts_api.execute_trade_with_retry,
+        action_clean, symbol, new_quantity, price, base_ref, attempt=1, is_paper=is_paper
+    )
+    is_ok = (entry_res.get("type") == "success" or entry_res.get("status") == "success")
+
+    return {
+        "status": "success" if is_ok else "error",
+        "symbol": symbol,
+        "action": action_clean,
+        "quantity": new_quantity,
+        "price": price,
+        "reversed": is_reversal,
+        "closed_position": closed_pos_result,
+        "order_result": entry_res,
+        "message": f"Order executed {'with reversal' if is_reversal else 'normally'}"
+    }
+

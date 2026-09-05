@@ -159,6 +159,10 @@ class CandleService:
         h = int(hashlib.md5(symbol.encode()).hexdigest()[:6], 16)
         return 100.0 + (h % 2000)
 
+    def get_last_price(self, symbol: str, seed_price: Optional[float] = None) -> float:
+        """Returns the last known or base reference price for a symbol."""
+        return self._resolve_base_price(symbol, seed_price)
+
     def generate_synthetic_candles(
         self,
         symbol: str,

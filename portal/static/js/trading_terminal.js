@@ -54,13 +54,17 @@ class OpenAlgoTradingTerminal {
         this.bindDrawingRailEvents();
         this.bindSearchAutocomplete();
         this.bindIndicatorsModal();
+        this.bindDrawerEvents();
 
         await this.loadSymbol(this.symbol, this.exchange);
         this.initWebSocket();
         this.refreshOrdersAndPositions();
 
         // Periodic orders & positions refresh
-        setInterval(() => this.refreshOrdersAndPositions(), 5000);
+        setInterval(() => {
+            this.refreshOrdersAndPositions();
+            this.refreshDrawerData();
+        }, 3000);
     }
 
     initChart() {
@@ -842,6 +846,393 @@ class OpenAlgoTradingTerminal {
         const loader = document.getElementById('chart-loading-spinner');
         if (loader) {
             loader.style.display = show ? 'flex' : 'none';
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // In-Terminal Multi-Tab Side Drawer (DOM / Orders / Positions / Trades)
+    // -------------------------------------------------------------------------
+    bindDrawerEvents() {
+        const toggleBtn = document.getElementById('btn-toggle-drawer');
+        const closeBtn = document.getElementById('btn-close-drawer');
+        const drawer = document.getElementById('terminal-side-drawer');
+
+        if (toggleBtn && drawer) {
+            toggleBtn.addEventListener('click', () => {
+                const isHidden = drawer.classList.contains('hidden');
+                if (isHidden) {
+                    drawer.classList.remove('hidden');
+                    this.refreshDrawerData();
+                } else {
+                    drawer.classList.add('hidden');
+                }
+                if (this.chart && this.container) {
+                    setTimeout(() => {
+                        this.chart.applyOptions({
+                            width: this.container.clientWidth,
+                            height: this.container.clientHeight
+                        });
+                    }, 50);
+                }
+            });
+        }
+
+        if (closeBtn && drawer) {
+            closeBtn.addEventListener('click', () => {
+                drawer.classList.add('hidden');
+                if (this.chart && this.container) {
+                    setTimeout(() => {
+                        this.chart.applyOptions({
+                            width: this.container.clientWidth,
+                            height: this.container.clientHeight
+                        });
+                    }, 50);
+                }
+            });
+        }
+
+        const tabBtns = document.querySelectorAll('.drawer-tab-btn');
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const tabName = e.currentTarget.getAttribute('data-tab');
+                this.activeDrawerTab = tabName;
+
+                tabBtns.forEach(b => {
+                    b.classList.remove('bg-brand-500/20', 'text-brand-400', 'border', 'border-brand-500/40', 'font-bold');
+                    b.classList.add('text-slate-400');
+                });
+                e.currentTarget.classList.add('bg-brand-500/20', 'text-brand-400', 'border', 'border-brand-500/40', 'font-bold');
+                e.currentTarget.classList.remove('text-slate-400');
+
+                document.querySelectorAll('.drawer-panel').forEach(p => p.classList.add('hidden'));
+                const activePanel = document.getElementById(`drawer-panel-${tabName}`);
+                if (activePanel) activePanel.classList.remove('hidden');
+
+                this.refreshDrawerData();
+            });
+        });
+
+        const refreshOrdBtn = document.getElementById('btn-refresh-orders');
+        if (refreshOrdBtn) {
+            refreshOrdBtn.addEventListener('click', () => this.fetchOrdersDrawer());
+        }
+        const refreshTrdBtn = document.getElementById('btn-refresh-trades');
+        if (refreshTrdBtn) {
+            refreshTrdBtn.addEventListener('click', () => this.fetchTradesDrawer());
+        }
+    }
+
+    async refreshDrawerData() {
+        const drawer = document.getElementById('terminal-side-drawer');
+        if (!drawer || drawer.classList.contains('hidden')) return;
+
+        const activeTab = this.activeDrawerTab || 'dom';
+        if (activeTab === 'dom') {
+            await this.fetchDOMDrawer();
+        } else if (activeTab === 'orders') {
+            await this.fetchOrdersDrawer();
+        } else if (activeTab === 'positions') {
+            await this.fetchPositionsDrawer();
+        } else if (activeTab === 'trades') {
+            await this.fetchTradesDrawer();
+        }
+    }
+
+    async fetchDOMDrawer() {
+        try {
+            const symDisplay = document.getElementById('dom-symbol-display');
+            if (symDisplay) symDisplay.textContent = this.symbol;
+
+            const ltpDisplay = document.getElementById('dom-ltp-display');
+            if (ltpDisplay) ltpDisplay.textContent = this.currentLtp ? this.currentLtp.toFixed(2) : '--';
+
+            const res = await fetch('/api/v1/depth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    apikey: this.apiKey,
+                    symbol: this.symbol,
+                    exchange: this.exchange
+                })
+            });
+            const data = await res.json();
+            if (data.status === 'success' && data.data) {
+                this.renderDOM(data.data);
+            }
+        } catch (e) {
+            console.error("DOM fetch error:", e);
+        }
+    }
+
+    renderDOM(depthData) {
+        const tbody = document.getElementById('dom-table-body');
+        if (!tbody) return;
+
+        const bids = depthData.bids || [];
+        const asks = depthData.asks || [];
+        let html = '';
+
+        for (let i = 0; i < 5; i++) {
+            const b = bids[i] || { price: 0, quantity: 0, orders: 0 };
+            const a = asks[i] || { price: 0, quantity: 0, orders: 0 };
+
+            html += `
+                <tr class="hover:bg-slate-900/80 transition">
+                    <td class="py-1 px-1.5 text-slate-400">${b.orders || '-'}</td>
+                    <td class="py-1 px-1.5 text-emerald-400 font-mono">${b.quantity || '-'}</td>
+                    <td class="py-1 px-1.5 text-emerald-300 font-bold text-right cursor-pointer hover:bg-emerald-500/20 rounded" onclick="window.terminalInstance.placeOrderAtPrice('BUY', ${b.price})">
+                        ${b.price ? b.price.toFixed(2) : '-'}
+                    </td>
+                    <td class="py-1 px-1.5 text-rose-300 font-bold cursor-pointer hover:bg-rose-500/20 rounded" onclick="window.terminalInstance.placeOrderAtPrice('SELL', ${a.price})">
+                        ${a.price ? a.price.toFixed(2) : '-'}
+                    </td>
+                    <td class="py-1 px-1.5 text-rose-400 font-mono">${a.quantity || '-'}</td>
+                    <td class="py-1 px-1.5 text-slate-400 text-right">${a.orders || '-'}</td>
+                </tr>
+            `;
+        }
+
+        tbody.innerHTML = html;
+
+        const totalBuyEl = document.getElementById('dom-total-buy-qty');
+        if (totalBuyEl) totalBuyEl.textContent = (depthData.total_buy_qty || 0).toLocaleString();
+
+        const totalSellEl = document.getElementById('dom-total-sell-qty');
+        if (totalSellEl) totalSellEl.textContent = (depthData.total_sell_qty || 0).toLocaleString();
+    }
+
+    async placeOrderAtPrice(action, price) {
+        if (!price || price <= 0) return;
+        const qty = this.lots * this.lotsize;
+        this.showToast(`Placing ${action} ${qty}x ${this.symbol} @ ${price}...`, 'info');
+
+        try {
+            const res = await fetch('/api/v1/order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    apikey: this.apiKey,
+                    action: action,
+                    symbol: this.symbol,
+                    exchange: this.exchange,
+                    quantity: qty,
+                    price: price,
+                    pricetype: 'LIMIT',
+                    product: this.product
+                })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                this.showToast(`Order Placed: ${data.orderid || 'OK'}`, 'success');
+                this.refreshOrdersAndPositions();
+                this.fetchDOMDrawer();
+            } else {
+                this.showToast(data.message || 'Order failed', 'error');
+            }
+        } catch (e) {
+            this.showToast(`Execution Error: ${e.message}`, 'error');
+        }
+    }
+
+    async fetchOrdersDrawer() {
+        const container = document.getElementById('drawer-orders-list');
+        if (!container) return;
+
+        try {
+            const res = await fetch('/api/v1/orderbook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apikey: this.apiKey })
+            });
+            const data = await res.json();
+            const orders = (data.status === 'success' && Array.isArray(data.data)) ? data.data : [];
+
+            if (orders.length === 0) {
+                container.innerHTML = '<div class="p-4 text-center text-slate-500">No orders placed today.</div>';
+                return;
+            }
+
+            let html = '';
+            for (let o of orders.slice().reverse()) {
+                const isBuy = (o.action || o.OrderSide || 'BUY').toUpperCase() === 'BUY';
+                const status = (o.status || o.order_status || o.OrderStatus || 'open').toLowerCase();
+                const oid = o.orderid || o.AppOrderID || 'N/A';
+                const sym = o.symbol || o.TradingSymbol || this.symbol;
+                const qty = o.quantity || o.OrderQuantity || 0;
+                const prc = o.price || o.OrderPrice || 0;
+
+                html += `
+                    <div class="p-2 bg-slate-900/90 rounded-lg border border-bordercolor flex items-center justify-between text-[11px]">
+                        <div>
+                            <div class="flex items-center gap-1.5 font-bold">
+                                <span class="px-1.5 py-0.2 rounded text-[9px] ${isBuy ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}">
+                                    ${isBuy ? 'BUY' : 'SELL'}
+                                </span>
+                                <span class="text-slate-100">${sym}</span>
+                            </div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">
+                                ${qty} Qty @ ₹${Number(prc).toFixed(2)} | #${oid}
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                status === 'complete' ? 'bg-emerald-500/10 text-emerald-400' :
+                                status === 'open' ? 'bg-blue-500/10 text-blue-400' :
+                                'bg-rose-500/10 text-rose-400'
+                            }">${status.toUpperCase()}</span>
+                            ${status === 'open' ? `
+                                <button class="p-1 text-rose-400 hover:bg-rose-500/20 rounded" onclick="window.terminalInstance.cancelOrder('${oid}')" title="Cancel Order">
+                                    <i data-lucide="x-circle" class="w-3.5 h-3.5"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+            if (window.lucide) window.lucide.createIcons();
+        } catch (e) {
+            container.innerHTML = `<div class="p-4 text-center text-rose-400">Failed to load orders: ${e.message}</div>`;
+        }
+    }
+
+    async fetchPositionsDrawer() {
+        const container = document.getElementById('drawer-positions-list');
+        const pnlEl = document.getElementById('drawer-net-pnl');
+        if (!container) return;
+
+        try {
+            const res = await fetch('/api/v1/positionbook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apikey: this.apiKey })
+            });
+            const data = await res.json();
+            const positions = (data.status === 'success' && Array.isArray(data.data)) ? data.data : [];
+            const netMtm = data.net_mtm || 0.0;
+
+            if (pnlEl) {
+                pnlEl.textContent = (netMtm >= 0 ? '+₹' : '-₹') + Math.abs(netMtm).toFixed(2);
+                pnlEl.className = `font-bold ${netMtm >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+            }
+
+            const openPos = positions.filter(p => Number(p.quantity) !== 0);
+            if (openPos.length === 0) {
+                container.innerHTML = '<div class="p-4 text-center text-slate-500">No open positions.</div>';
+                return;
+            }
+
+            let html = '';
+            for (let p of openPos) {
+                const qty = Number(p.quantity);
+                const isLong = qty > 0;
+                const sym = p.symbol || p.TradingSymbol || 'N/A';
+                const avgPrice = Number(p.buy_price || p.average_price || 0);
+                const pnl = Number(p.unrealized_pnl || p.pnl || 0);
+
+                html += `
+                    <div class="p-2 bg-slate-900/90 rounded-lg border border-bordercolor flex items-center justify-between text-[11px]">
+                        <div>
+                            <div class="flex items-center gap-1.5 font-bold">
+                                <span class="px-1.5 py-0.2 rounded text-[9px] ${isLong ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}">
+                                    ${isLong ? 'LONG' : 'SHORT'}
+                                </span>
+                                <span class="text-slate-100">${sym}</span>
+                            </div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">
+                                ${Math.abs(qty)} Qty @ ₹${avgPrice.toFixed(2)}
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <div class="text-right">
+                                <div class="font-bold font-mono ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                                    ${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}
+                                </div>
+                            </div>
+                            <button class="px-2 py-1 bg-rose-500/20 hover:bg-rose-500 text-rose-400 hover:text-white rounded text-[10px] font-bold transition" onclick="window.terminalInstance.squareOffPosition('${sym}')">
+                                Square Off
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        } catch (e) {
+            container.innerHTML = `<div class="p-4 text-center text-rose-400">Failed to load positions: ${e.message}</div>`;
+        }
+    }
+
+    async squareOffPosition(symbol) {
+        if (!confirm(`Square off position for ${symbol}?`)) return;
+        this.showToast(`Squaring off ${symbol}...`, 'info');
+
+        try {
+            const res = await fetch('/api/v1/closeposition', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apikey: this.apiKey, symbol: symbol })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                this.showToast(`Position squared off for ${symbol}`, 'success');
+                this.refreshOrdersAndPositions();
+                this.fetchPositionsDrawer();
+            } else {
+                this.showToast(data.message || 'Square-off failed', 'error');
+            }
+        } catch (e) {
+            this.showToast(`Square-off error: ${e.message}`, 'error');
+        }
+    }
+
+    async fetchTradesDrawer() {
+        const container = document.getElementById('drawer-trades-list');
+        if (!container) return;
+
+        try {
+            const res = await fetch('/api/v1/tradebook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apikey: this.apiKey })
+            });
+            const data = await res.json();
+            const trades = (data.status === 'success' && Array.isArray(data.data)) ? data.data : [];
+
+            if (trades.length === 0) {
+                container.innerHTML = '<div class="p-4 text-center text-slate-500">No trades executed today.</div>';
+                return;
+            }
+
+            let html = '';
+            for (let t of trades.slice().reverse()) {
+                const isBuy = (t.action || t.OrderSide || 'BUY').toUpperCase() === 'BUY';
+                const sym = t.symbol || t.TradingSymbol || this.symbol;
+                const qty = t.quantity || t.TradedQuantity || 0;
+                const prc = Number(t.average_price || t.TradePrice || t.price || 0);
+                const time = t.trade_time || t.OrderExecutionTime || 'Today';
+
+                html += `
+                    <div class="p-2 bg-slate-900/90 rounded-lg border border-bordercolor flex items-center justify-between text-[11px]">
+                        <div>
+                            <div class="flex items-center gap-1.5 font-bold">
+                                <span class="px-1.5 py-0.2 rounded text-[9px] ${isBuy ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}">
+                                    ${isBuy ? 'BOUGHT' : 'SOLD'}
+                                </span>
+                                <span class="text-slate-100">${sym}</span>
+                            </div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">
+                                ${qty} Qty @ ₹${prc.toFixed(2)}
+                            </div>
+                        </div>
+                        <div class="text-right text-[10px] text-slate-500 font-mono">
+                            ${time}
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        } catch (e) {
+            container.innerHTML = `<div class="p-4 text-center text-rose-400">Failed to load trades: ${e.message}</div>`;
         }
     }
 }

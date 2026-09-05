@@ -230,6 +230,52 @@ class TokenDatabase:
 
         return results
 
+    def get_expiry_dates(
+        self, symbol: str, exchange: str = "NFO", instrumenttype: str = "options"
+    ) -> List[str]:
+        """Retrieves sorted unique expiry dates for given underlying and instrument type."""
+        import datetime
+        sym_clean = symbol.strip().upper()
+        exch_clean = exchange.strip().upper()
+        inst_type = instrumenttype.strip().lower()
+
+        found_expiries = set()
+        for item in self._symbols_list:
+            if exch_clean and item.exchange != exch_clean:
+                continue
+            if not (item.symbol.startswith(sym_clean) or item.name == sym_clean):
+                continue
+
+            if inst_type == "futures":
+                if "FUT" in item.instrumenttype or item.symbol.endswith("FUT"):
+                    if item.expiry:
+                        found_expiries.add(item.expiry)
+            else:
+                if "OPT" in item.instrumenttype or item.symbol.endswith("CE") or item.symbol.endswith("PE"):
+                    if item.expiry:
+                        found_expiries.add(item.expiry)
+
+        if found_expiries:
+            def _parse_exp(exp_str):
+                for fmt in ("%d-%b-%Y", "%d-%b-%y", "%d%b%Y", "%d%b%y", "%Y-%m-%d"):
+                    try:
+                        return datetime.datetime.strptime(exp_str.strip(), fmt)
+                    except Exception:
+                        pass
+                return datetime.datetime.max
+
+            return sorted(list(found_expiries), key=_parse_exp)
+
+        # Dynamic fallback for standard upcoming derivative expiries (next 5 Thursdays)
+        today = datetime.date.today()
+        generated = []
+        cur = today
+        while len(generated) < 5:
+            cur += datetime.timedelta(days=1)
+            if cur.weekday() == 3:  # Thursday
+                generated.append(cur.strftime("%d-%b-%Y").upper())
+        return generated
+
 
 # Global singleton instance
 _GLOBAL_TOKEN_DB = TokenDatabase()
@@ -253,6 +299,10 @@ def get_symbol_info(symbol: str, exchange: str) -> Optional[SymbolData]:
 
 def search_symbols(query: Optional[str] = None, exchange: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
     return _GLOBAL_TOKEN_DB.search_symbols(query, exchange, limit)
+
+
+def get_expiry_dates(symbol: str, exchange: str = "NFO", instrumenttype: str = "options") -> List[str]:
+    return _GLOBAL_TOKEN_DB.get_expiry_dates(symbol, exchange, instrumenttype)
 
 
 def init_token_db(db_path: Optional[str] = None) -> int:
