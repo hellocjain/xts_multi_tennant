@@ -39,13 +39,45 @@ else
     echo "✅ Existing swap memory detected (${SWAP_TOTAL}MB)."
 fi
 
-# Kernel Memory Tuning (Locks Active Trading Processes into Fast Physical RAM)
-echo "⚡ Tuning Linux kernel memory parameters for zero-latency execution..."
-sudo sysctl -w vm.swappiness=20 2>/dev/null || true
-sudo sysctl -w vm.vfs_cache_pressure=50 2>/dev/null || true
+# Kernel & Network Latency Tuning for Low-Latency Algorithmic Execution
+echo "⚡ Tuning Linux kernel & TCP socket parameters for low-latency market execution..."
 sudo tee /etc/sysctl.d/99-xts.conf > /dev/null << 'EOF'
+# Memory & SQLite cache tuning
 vm.swappiness=20
 vm.vfs_cache_pressure=50
+
+# High concurrency file descriptors
+fs.file-max=2097152
+
+# Socket backlog & connection capacity (handles market open bursts)
+net.core.somaxconn=65535
+net.ipv4.tcp_max_syn_backlog=65535
+net.core.netdev_max_backlog=16384
+
+# Low-latency TCP socket recycling
+net.ipv4.tcp_tw_reuse=1
+net.ipv4.tcp_fin_timeout=15
+net.ipv4.tcp_fastopen=3
+
+# Large network buffers for bursty WebSocket market tick streams
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.ipv4.tcp_rmem=4096 87380 16777216
+net.ipv4.tcp_wmem=4096 65536 16777216
+
+# Congestion Control (BBR)
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+sudo sysctl --system >/dev/null 2>&1 || true
+
+# File descriptor limits
+echo "📈 Setting enterprise file descriptor limits (nofile=65535)..."
+sudo tee /etc/security/limits.d/99-xts.conf > /dev/null << 'EOF'
+* soft nofile 65535
+* hard nofile 65535
+root soft nofile 65535
+root hard nofile 65535
 EOF
 
 # Detect VPS Public IP Address
@@ -58,7 +90,12 @@ fi
 echo "✅ Detected Public Server IP: $SERVER_PUBLIC_IP"
 
 sudo apt-get update -y
-sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release ufw fail2ban python3 python3-pip tzdata
+sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release ufw fail2ban python3 python3-pip tzdata chrony git
+
+# Configure Chrony for Exchange NTP Millisecond Synchronization
+echo "⏱️ Configuring Chrony sub-millisecond NTP clock synchronization..."
+sudo systemctl enable chrony >/dev/null 2>&1 || true
+sudo systemctl restart chrony >/dev/null 2>&1 || true
 
 # Install Docker CE & Compose Plugin if missing
 if ! command -v docker &> /dev/null; then
@@ -67,6 +104,21 @@ if ! command -v docker &> /dev/null; then
     sudo apt-get update -y
     sudo apt-get install -y docker-compose-plugin || true
 fi
+
+# Docker Daemon Logging & Live-Restore Optimization (Prevents log disk exhaustion)
+echo "🐳 Configuring Docker daemon optimizations (log rotation & live restore)..."
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json > /dev/null << 'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "50m",
+    "max-file": "3"
+  },
+  "live-restore": true
+}
+EOF
+sudo systemctl restart docker >/dev/null 2>&1 || true
 
 # Configure UFW firewall
 echo "Configuring firewall..."
@@ -93,19 +145,20 @@ if [ -d "$PROJECT_DIR/caddy/Caddyfile" ]; then
     sudo rm -rf "$PROJECT_DIR/caddy/Caddyfile"
 fi
 
-# 3. Interactive Domain & Security Setup
+# 3. Interactive Domain & Security Setup (Supports Env Vars & Pipe-friendly Non-interactive)
 echo ""
 echo "=== 3. DOMAIN & SECURITY CONFIGURATION ==="
-read -p "Enter your Domain Name (or Press Enter for Direct Server IP [$SERVER_PUBLIC_IP]): " DOMAIN_NAME
+if [ -t 0 ]; then
+    [ -z "$DOMAIN_NAME" ] && read -p "Enter your Domain Name (or Press Enter for Direct Server IP [$SERVER_PUBLIC_IP]): " DOMAIN_NAME
+    [ -z "$ADMIN_IPS" ] && read -p "Enter Allowed Admin IP/CIDR (e.g. 1.2.3.4/32 or press Enter to allow all): " ADMIN_IPS
+    [ -z "$ADMIN_USER" ] && read -p "Enter Initial Admin Username [Default: admin]: " ADMIN_USER
+    [ -z "$ADMIN_PASS" ] && read -s -p "Enter Initial Admin Password [Leave blank to generate random]: " ADMIN_PASS; echo
+fi
+
 DOMAIN_NAME=${DOMAIN_NAME:-":80"}
-
-read -p "Enter Allowed Admin IP/CIDR (e.g. 1.2.3.4/32 or press Enter to allow all): " ADMIN_IPS
 ADMIN_IPS=${ADMIN_IPS:-"0.0.0.0/0"}
-
-read -p "Enter Initial Admin Username [Default: admin]: " ADMIN_USER
 ADMIN_USER=${ADMIN_USER:-"admin"}
 
-read -s -p "Enter Initial Admin Password [Leave blank to generate random]: " ADMIN_PASS; echo
 if [ -z "$ADMIN_PASS" ]; then
     ADMIN_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")
     echo "🔑 Generated Admin Password: $ADMIN_PASS"
@@ -178,13 +231,13 @@ sudo chmod 644 "$PROJECT_DIR/caddy/Caddyfile"
 
 # 4. Copy Code & Build Docker Images
 echo "[4/7] Building Docker images for Client Engine & Admin Portal..."
-# Copy source files to $PROJECT_DIR
-sudo cp -a client/. "$PROJECT_DIR/client/" 2>/dev/null || true
-sudo cp -a portal/. "$PROJECT_DIR/portal/" 2>/dev/null || true
-sudo cp -a backup/. "$PROJECT_DIR/backup/" 2>/dev/null || true
-sudo cp -a cli/. "$PROJECT_DIR/cli/" 2>/dev/null || true
-sudo cp -a scripts/. "$PROJECT_DIR/scripts/" 2>/dev/null || true
-sudo cp -a docker-compose.yml "$PROJECT_DIR/" 2>/dev/null || true
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sudo cp -a "$SRC_DIR/client/." "$PROJECT_DIR/client/" 2>/dev/null || true
+sudo cp -a "$SRC_DIR/portal/." "$PROJECT_DIR/portal/" 2>/dev/null || true
+sudo cp -a "$SRC_DIR/backup/." "$PROJECT_DIR/backup/" 2>/dev/null || true
+sudo cp -a "$SRC_DIR/cli/." "$PROJECT_DIR/cli/" 2>/dev/null || true
+sudo cp -a "$SRC_DIR/scripts/." "$PROJECT_DIR/scripts/" 2>/dev/null || true
+sudo cp -a "$SRC_DIR/docker-compose.yml" "$PROJECT_DIR/" 2>/dev/null || true
 
 # Build Client base image with dual tags
 cd "$PROJECT_DIR/client"
