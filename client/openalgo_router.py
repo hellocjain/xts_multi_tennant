@@ -11,6 +11,7 @@ import uuid
 import logging
 import re
 import datetime
+import math
 from typing import Dict, Any, Optional, List
 
 import config
@@ -41,6 +42,17 @@ router = APIRouter(prefix="/api/v1", tags=["OpenAlgo API V1"])
 
 _ORDERS_REGISTRY: Dict[str, dict] = {}
 _ANALYZER_SIGNALS: List[dict] = []
+
+def _safe_float(val, default=0.0) -> float:
+    try:
+        if val is None:
+            return default
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return f
+    except Exception:
+        return default
 
 def get_current_trading_mode() -> str:
     """Returns the current operational mode: 'LIVE', 'PAPER', or 'ANALYZER'."""
@@ -168,15 +180,38 @@ async def place_order(request: Request):
     if not _verify_auth(data, request):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
 
+    # Circuit Breaker Check
+    is_paused = bool(getattr(config, "TRADING_PAUSED", False))
+    try:
+        import main as client_main_mod
+        if getattr(client_main_mod, "TRADING_PAUSED", False):
+            is_paused = True
+    except Exception:
+        pass
+    if is_paused:
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Trading is currently PAUSED by Circuit Breaker"})
+
     action = str(data.get("action", "BUY")).upper()
     symbol = str(data.get("symbol", "")).strip()
     exchange = str(data.get("exchange", "")).strip().upper()
-    quantity = int(data.get("quantity", 0))
-    price = float(data.get("price", 0.0))
+    try:
+        raw_qty = data.get("quantity", 0)
+        quantity = int(float(raw_qty))
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid quantity"})
+
+    try:
+        raw_price = data.get("price", 0.0)
+        price = float(raw_price)
+        if math.isnan(price) or math.isinf(price) or price < 0:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid price value"})
+    except Exception:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid price format"})
+
     order_ref = data.get("order_ref") or data.get("strategy") or f"OA_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
 
-    if not symbol or quantity <= 0:
-        return JSONResponse(status_code=400, content={"status": "error", "message": "Symbol and positive quantity are required"})
+    if not symbol or quantity <= 0 or quantity > 10000000:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Symbol and valid positive quantity are required"})
 
     # Check token_db for tick_size quantization
     sym_info = token_db.get_symbol_info(symbol, exchange) if exchange else None
@@ -1631,7 +1666,7 @@ async def multiquotes(request: Request):
         inst = xts_api.resolve_contract(sym)
         inst_id = inst.get("inst_id") if inst else None
         exch_seg = inst.get("exch_seg") if inst else (ex + "CM" if ex == "NSE" else ex)
-        ltp = float(xts_api.get_live_price(inst_id, exch_seg) if inst_id else 0.0)
+        ltp = _safe_float(xts_api.get_live_price(inst_id, exch_seg) if inst_id else 0.0, 0.0)
 
         if ltp <= 0:
             ltp = float(candle_service.default_candle_service.get_last_price(sym))
@@ -1677,7 +1712,7 @@ async def depth(request: Request):
     inst = xts_api.resolve_contract(symbol)
     inst_id = inst.get("inst_id") if inst else None
     exch_seg = inst.get("exch_seg") if inst else "NSECM"
-    ltp = float(xts_api.get_live_price(inst_id, exch_seg) if inst_id else 0.0)
+    ltp = _safe_float(xts_api.get_live_price(inst_id, exch_seg) if inst_id else 0.0, 0.0)
     if ltp <= 0:
         ltp = float(candle_service.default_candle_service.get_last_price(symbol))
     if ltp <= 0:
@@ -1919,7 +1954,7 @@ async def option_greeks(request: Request):
         spot = forward_price
     else:
         inst_spot = xts_api.resolve_contract(underlying)
-        spot = float(xts_api.get_live_price(inst_spot.get("inst_id"), inst_spot.get("exch_seg")) if inst_spot else 0.0)
+        spot = _safe_float(xts_api.get_live_price(inst_spot.get("inst_id"), inst_spot.get("exch_seg")) if inst_spot else 0.0, 0.0)
         if spot <= 0:
             spot = strike
 
@@ -1927,7 +1962,7 @@ async def option_greeks(request: Request):
 
     # Option market price
     opt_inst = xts_api.resolve_contract(symbol)
-    opt_price = float(xts_api.get_live_price(opt_inst.get("inst_id"), opt_inst.get("exch_seg")) if opt_inst else 0.0)
+    opt_price = _safe_float(xts_api.get_live_price(opt_inst.get("inst_id"), opt_inst.get("exch_seg")) if opt_inst else 0.0, 0.0)
 
     # Implied volatility
     if opt_price > 0:
@@ -2083,7 +2118,11 @@ async def agent_stream(request: Request):
             exch = intent_res["exchange"]
 
             inst = xts_api.resolve_contract(sym)
-            live_ltp = float(xts_api.get_live_price(inst.get("inst_id"), inst.get("exch_seg")) if inst else 0.0)
+            live_price_val = xts_api.get_live_price(inst.get("inst_id"), inst.get("exch_seg")) if inst else None
+            try:
+                live_ltp = float(live_price_val) if live_price_val is not None else 0.0
+            except Exception:
+                live_ltp = 0.0
             if live_ltp <= 0:
                 live_ltp = 100.0
 
@@ -2204,7 +2243,7 @@ async def agent_stream(request: Request):
         # 9. Technical Summary Fallback
         else:
             inst = xts_api.resolve_contract(symbol)
-            live_ltp = float(xts_api.get_live_price(inst.get("inst_id"), inst.get("exch_seg")) if inst else 0.0)
+            live_ltp = _safe_float(xts_api.get_live_price(inst.get("inst_id"), inst.get("exch_seg")) if inst else 0.0, 0.0)
             if live_ltp <= 0:
                 live_ltp = 24500.0
             msg = f"**{symbol} Technical Overview** ({interval}):\n- Current LTP: ₹{live_ltp:,.2f}\n- Exchange: {exchange}\n- Status: Ready\nAsk me to draw channels, mark support/resistance, calculate Fibonacci, or draft orders."
@@ -2235,7 +2274,7 @@ async def agent_approve_order(request: Request):
     exchange = str(data.get("exchange") or "NSE").strip().upper()
 
     inst = xts_api.resolve_contract(symbol)
-    live_ltp = float(xts_api.get_live_price(inst.get("inst_id"), inst.get("exch_seg")) if inst else 0.0)
+    live_ltp = _safe_float(xts_api.get_live_price(inst.get("inst_id"), inst.get("exch_seg")) if inst else 0.0, 0.0)
     if live_ltp <= 0:
         live_ltp = 100.0
 

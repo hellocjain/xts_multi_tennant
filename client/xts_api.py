@@ -11,6 +11,7 @@ import threading
 import fcntl
 import calendar
 import uuid
+import math
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 
 import config
@@ -467,7 +468,13 @@ def _sane_numeric(value, minimum, maximum, field_name, line_preview):
 def apply_tick_size(price, tick_size, action="BUY"):
     if tick_size <= 0:
         tick_size = 0.05
-    p = Decimal(str(round(float(price), 6)))
+    try:
+        f_price = float(price)
+        if math.isnan(f_price) or math.isinf(f_price) or f_price <= 0:
+            return 0.0
+        p = Decimal(str(round(f_price, 6)))
+    except Exception:
+        return 0.0
     t = Decimal(str(tick_size))
     if action == "BUY":
         ticks = (p / t).quantize(Decimal('1'), rounding=ROUND_CEILING)
@@ -1009,6 +1016,9 @@ def get_live_prices_batch(instrument_pairs):
     return prices
 
 def _get_daily_risk_file():
+    override = os.environ.get("DAILY_RISK_STATE_FILE")
+    if override:
+        return override
     data_dir = getattr(config, "DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(data_dir, "daily_risk_state.json")
 
