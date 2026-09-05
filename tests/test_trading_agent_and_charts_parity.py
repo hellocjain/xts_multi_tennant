@@ -122,7 +122,8 @@ def test_openalgo_charts_1000_ticks_per_second_conflation():
     symbol = "NIFTY25AUG26FUT"
     exchange = "NSE"
     interval = "1m"
-    now = int(time.time())
+    # Align to start of current minute so all 1,000 micro-ticks stay within the same 1m candle
+    now = (int(time.time()) // 60) * 60
 
     start_price = 24500.0
     highest_price = 24500.0
