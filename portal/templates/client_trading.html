@@ -5,65 +5,10 @@
 {% block content %}
 <div class="flex flex-col h-[calc(100vh-5rem)] -m-4 md:-m-6 bg-[#0B0E14] text-slate-200 overflow-hidden font-sans select-none">
 
-    <!-- 1. Top Navigation Bar (Matching OpenAlgo Terminal) -->
-    <header class="h-12 border-b border-bordercolor bg-[#121722] px-4 flex items-center justify-between z-20 flex-shrink-0">
-        <div class="flex items-center gap-4">
-            <!-- Brand / Broker Info -->
-            <div class="flex items-center gap-2.5">
-                <div class="w-7 h-7 rounded-lg bg-brand-500/20 border border-brand-500/40 flex items-center justify-center text-brand-400 font-bold font-mono text-xs">
-                    AC
-                </div>
-                <div class="hidden sm:block">
-                    <div class="text-xs font-bold text-slate-100 flex items-center gap-2">
-                        AC Agarwal
-                        <span class="text-[9px] px-1.5 py-0.2 rounded font-mono {% if client.paper_mode %}bg-blue-500/10 text-blue-400 border border-blue-500/30{% else %}bg-emerald-500/10 text-emerald-400 border border-emerald-500/30{% endif %}">
-                            {% if client.paper_mode %}PAPER{% else %}LIVE BROKER{% endif %}
-                        </span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Main Navigation Links -->
-            <nav class="flex items-center gap-1">
-                <a href="/client/dashboard" class="px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition">
-                    Dashboard
-                </a>
-                <a href="/client/orders" class="px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition hidden md:inline-block">
-                    Orderbook
-                </a>
-                <a href="/client/positions" class="px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition hidden md:inline-block">
-                    Positions
-                </a>
-                <a href="/client/trading" class="px-3 py-1.5 rounded-lg text-xs font-mono font-bold bg-brand-500/20 text-brand-400 border border-brand-500/40 transition">
-                    Trading
-                </a>
-                <a href="/client/tools" class="px-3 py-1.5 rounded-lg text-xs font-mono text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition hidden md:inline-block">
-                    Tools
-                </a>
-            </nav>
-        </div>
-
-        <!-- Right Quick Controls -->
-        <div class="flex items-center gap-2.5">
-            <!-- WebSocket Liveness Indicator -->
-            <div class="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 border border-bordercolor rounded-lg text-[11px] font-mono">
-                <span id="ws-status-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
-                <span id="ws-status-text" class="text-slate-400">CONNECTING</span>
-            </div>
-
-            <!-- Emergency Panic Square Off -->
-            <form action="/client/panic-square-off" method="POST" onsubmit="return confirm('🚨 EMERGENCY: Square off ALL open positions immediately?');">
-                <button type="submit" class="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-lg text-xs font-bold transition flex items-center gap-1">
-                    <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
-                    <span class="hidden sm:inline">Panic Square Off</span>
-                </button>
-            </form>
-
-            <a href="/client/logout" class="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition" title="Logout">
-                <i data-lucide="log-out" class="w-4 h-4"></i>
-            </a>
-        </div>
-    </header>
+    <!-- Emergency Panic Square Off Form (Hidden / Hotkey Accessible) -->
+    <form id="trading-panic-form" action="/client/panic-square-off" method="POST" class="hidden" onsubmit="return confirm('🚨 EMERGENCY: Square off ALL open positions immediately?');">
+        <button type="submit" id="btn-panic-square-off">Panic Square Off</button>
+    </form>
 
     <!-- 2. Chart Top Toolbar (Matching OpenAlgo Terminal) -->
     <div class="h-11 border-b border-bordercolor bg-[#151A24] px-3 flex items-center justify-between text-xs font-mono z-10 flex-shrink-0">

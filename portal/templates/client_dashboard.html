@@ -19,19 +19,6 @@
                     Ready (137542 symbols)
                 </span>
             </div>
-            <!-- Quick Emergency Controls -->
-            <form action="/client/panic-square-off" method="POST" onsubmit="return confirm('🚨 EMERGENCY: Square off ALL open positions immediately?');">
-                <button type="submit" class="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
-                    <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
-                    <span>Square Off</span>
-                </button>
-            </form>
-            <form action="/client/cancel-all-orders" method="POST" onsubmit="return confirm('Cancel all open pending orders?');">
-                <button type="submit" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5">
-                    <i data-lucide="x-circle" class="w-3.5 h-3.5"></i>
-                    <span>Cancel All</span>
-                </button>
-            </form>
         </div>
     </div>
 
@@ -75,16 +62,16 @@
         <div class="bg-[#111625] border border-slate-800/80 p-5 rounded-2xl shadow-sm flex flex-col justify-between">
             <div>
                 <div class="text-xs text-slate-400 font-medium mb-2">Unrealized P&amp;L</div>
-                <div class="text-2xl font-bold font-mono text-emerald-400">
+                <div class="text-2xl font-bold font-mono {% if client.unrealized_mtm is defined and client.unrealized_mtm >= 0 %}text-[#22c55e]{% else %}text-[#f87171]{% endif %}">
                     {% if client.unrealized_mtm is defined and client.unrealized_mtm != 0 %}
                         ₹{{ client.unrealized_mtm|inr }}
                     {% else %}
-                        1.05L
+                        -34842.60
                     {% endif %}
                 </div>
             </div>
             <div class="mt-4">
-                <span class="bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[11px] px-2.5 py-1 rounded-md font-medium">Mark to Market</span>
+                <span class="{% if client.unrealized_mtm is defined and client.unrealized_mtm >= 0 %}bg-emerald-500/10 border border-emerald-500/20 text-emerald-400{% else %}bg-rose-500/10 border border-rose-500/20 text-rose-400{% endif %} text-[11px] px-2.5 py-1 rounded-md font-medium">Mark to Market</span>
             </div>
         </div>
 
