@@ -434,6 +434,26 @@ async def client_tradebook_page(request: Request, client_user: dict = Depends(re
 async def tradebook_redirect_page(request: Request):
     return RedirectResponse(url="/client/tradebook", status_code=307)
 
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_redirect_page(request: Request):
+    return RedirectResponse(url="/client/dashboard", status_code=307)
+
+@app.get("/orderbook", response_class=HTMLResponse)
+async def orderbook_redirect_page(request: Request):
+    return RedirectResponse(url="/client/orders", status_code=307)
+
+@app.get("/orders", response_class=HTMLResponse)
+async def orders_redirect_page(request: Request):
+    return RedirectResponse(url="/client/orders", status_code=307)
+
+@app.get("/positions", response_class=HTMLResponse)
+async def positions_redirect_page(request: Request):
+    return RedirectResponse(url="/client/positions", status_code=307)
+
+@app.get("/trading", response_class=HTMLResponse)
+async def trading_redirect_page(request: Request):
+    return RedirectResponse(url="/client/trading", status_code=307)
+
 @app.get("/client/platforms", response_class=HTMLResponse)
 async def client_platforms_page(request: Request, client_user: dict = Depends(require_client_auth)):
     tenant_id = client_user["tenant_id"]

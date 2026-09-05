@@ -167,6 +167,19 @@ def get_tenant_port(tenant_id: str) -> int:
     with PORT_LOCK:
         if tenant_id in LOCAL_PORTS:
             return LOCAL_PORTS[tenant_id]
+        
+        # Check persisted port file on disk
+        port_file = os.path.join(get_client_data_root(), tenant_id, "port.txt")
+        if os.path.exists(port_file):
+            try:
+                with open(port_file, "r") as pf:
+                    saved_p = int(pf.read().strip())
+                    if saved_p > 0:
+                        LOCAL_PORTS[tenant_id] = saved_p
+                        return saved_p
+            except Exception:
+                pass
+
         used = set(LOCAL_PORTS.values())
         p = BASE_LOCAL_PORT
         while p in used or _is_port_in_use(p):
@@ -244,6 +257,8 @@ def provision_client_container(tenant_id: str) -> dict:
     try:
         with open(os.path.join(tenant_data_dir, "client.pid"), "w") as pf:
             pf.write(str(proc.pid))
+        with open(os.path.join(tenant_data_dir, "port.txt"), "w") as pf:
+            pf.write(str(port))
     except Exception:
         pass
     logger.info(f"✅ Local process for {tenant_id} launched on PID {proc.pid} (Port: {port})")

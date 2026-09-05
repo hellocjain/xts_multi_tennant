@@ -53,36 +53,48 @@ def seed_sample_paper_clients():
     database.init_portal_db()
     with database.get_db_connection() as conn:
         with conn:
-            # Client 1: Alpha
+            creds_a = {"API_KEY": "MOCK_KEY_A", "API_SECRET": "MOCK_SEC_A", "CLIENT_ID": "ALPHA01", "WEBHOOK_SECRET": "Secret123", "XTS_API_BASE_URL": "https://symphony.acagarwal.com:3000/interactive"}
             if not conn.execute("SELECT id FROM tenants WHERE id='c01_alpha'").fetchone():
-                creds_a = {"API_KEY": "MOCK_KEY_A", "API_SECRET": "MOCK_SEC_A", "CLIENT_ID": "ALPHA01", "WEBHOOK_SECRET": "Secret123", "XTS_API_BASE_URL": "https://symphony.acagarwal.com:3000/interactive"}
                 conn.execute("INSERT INTO tenants (id, name, status, created_at, updated_at) VALUES ('c01_alpha', 'Rahul Mehta (Paper)', 'ACTIVE', ?, ?)", (time.time(), time.time()))
-                conn.execute("INSERT INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('c01_alpha', ?, ?)", (security.encrypt_credentials(creds_a), time.time()))
                 conn.execute("INSERT INTO tenant_risk_limits (tenant_id, max_lots_limit, max_order_value_inr, daily_notional_cap_inr, slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, updated_at) VALUES ('c01_alpha', 50, 2500000, 5000000, 0.005, 3, 1, ?)", (time.time(),))
+            conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('c01_alpha', ?, ?)", (security.encrypt_credentials(creds_a), time.time()))
 
             # Client 2: Beta
+            creds_b = {"API_KEY": "MOCK_KEY_B", "API_SECRET": "MOCK_SEC_B", "CLIENT_ID": "BETA01", "WEBHOOK_SECRET": "Secret123", "XTS_API_BASE_URL": "https://symphony.acagarwal.com:3000/interactive"}
             if not conn.execute("SELECT id FROM tenants WHERE id='c02_beta'").fetchone():
-                creds_b = {"API_KEY": "MOCK_KEY_B", "API_SECRET": "MOCK_SEC_B", "CLIENT_ID": "BETA01", "WEBHOOK_SECRET": "Secret123", "XTS_API_BASE_URL": "https://symphony.acagarwal.com:3000/interactive"}
                 conn.execute("INSERT INTO tenants (id, name, status, created_at, updated_at) VALUES ('c02_beta', 'Amit Kumar (Paper)', 'ACTIVE', ?, ?)", (time.time(), time.time()))
-                conn.execute("INSERT INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('c02_beta', ?, ?)", (security.encrypt_credentials(creds_b), time.time()))
                 conn.execute("INSERT INTO tenant_risk_limits (tenant_id, max_lots_limit, max_order_value_inr, daily_notional_cap_inr, slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, updated_at) VALUES ('c02_beta', 100, 5000000, 10000000, 0.005, 3, 1, ?)", (time.time(),))
+            conn.execute("INSERT OR REPLACE INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES ('c02_beta', ?, ?)", (security.encrypt_credentials(creds_b), time.time()))
+
+            # Seed Sample Client User for client portal login
+            if not conn.execute("SELECT id FROM client_users WHERE username='client1'").fetchone():
+                pw_hash = security.hash_password("ClientPass123!")
+                conn.execute(
+                    "INSERT INTO client_users (id, tenant_id, username, password_hash, email, is_active, created_at, updated_at) VALUES ('usr_c1', 'c01_alpha', 'client1', ?, 'client1@trading.local', 1, ?, ?)",
+                    (pw_hash, time.time(), time.time())
+                )
 
     docker_manager.provision_client_container("c01_alpha")
     docker_manager.provision_client_container("c02_beta")
 
 if __name__ == "__main__":
-    print("\n" + "=" * 75)
-    print("🚀 STARTING XTS MULTI-TENANT ENTERPRISE CLUSTER (LOCAL MODE)")
-    print("=" * 75)
+    print("\n" + "=" * 80)
+    print("🚀 STARTING XTS MULTI-TENANT ENTERPRISE CLUSTER (LOCAL ENVIRONMENT)")
+    print("=" * 80)
     
     seed_sample_paper_clients()
 
-    print("\n🌐 Admin Portal URL    : http://127.0.0.1:8500/admin/login")
-    print("👤 Admin Username      : admin")
-    print("🔑 Admin Password      : AdminPass123!")
-    print("\n📱 On First Login      : Scan QR code with Google Authenticator / 1Password")
-    print("💡 Pre-Loaded Clients  : c01_alpha (Port 8001) | c02_beta (Port 8002)")
-    print("=" * 75 + "\n")
+    print("\n🌐 Institutional Admin Portal : http://127.0.0.1:8500/admin/login")
+    print("   👤 Admin Username          : admin")
+    print("   🔑 Admin Password          : AdminPass123!")
+    print("   📱 First Login             : Scan QR code with Google Authenticator")
+    print("\n👤 Client Trading Portal      : http://127.0.0.1:8500/client/login")
+    print("   👤 Client Username         : client1")
+    print("   🔑 Client Password         : ClientPass123!")
+    print("   📊 Directly opens          : /dashboard, /orderbook, /tradebook, /positions, /trading")
+    print("\n💡 Pre-Loaded Local Engines   : c01_alpha (Port 8001) | c02_beta (Port 8002)")
+    print("📡 Local Webhook Simulator    : python3 local_test_signal.py c01_alpha BUY CRUDEOIL 1 6500.0")
+    print("=" * 80 + "\n")
 
     # Start Portal with Uvicorn
     uvicorn.run("main:app", app_dir=os.path.join(PROJECT_ROOT, "portal"), host="127.0.0.1", port=8500, log_level="info")
