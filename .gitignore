@@ -36,4 +36,8 @@ htmlcov/
 
 # Local Reference Code & Ingestion Library
 references/
+strategy_runtime/
+strategy_logs/
+client/strategy_runtime/
+client/strategy_logs/
 

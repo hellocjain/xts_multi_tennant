@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+
+{% block title %}Flow No-Code Builder - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Page Header Strip -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 font-bold">
+                    <i data-lucide="git-merge" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        Flow No-Code Visual Builder
+                        <span class="text-xs bg-purple-500/10 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded-full font-mono">
+                            Visual Workflows
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Design automated conditional trading flows using visual trigger, condition, and action blocks</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2 font-mono text-xs">
+            <button onclick="openNewFlowModal()" class="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold transition flex items-center gap-1.5 shadow-lg shadow-purple-500/20">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                <span>Create Flow</span>
+            </button>
+            <button onclick="loadFlows()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition" title="Refresh">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Active Flows Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="flows-grid-container">
+        <!-- Injected via JS -->
+        <div class="col-span-full py-12 text-center text-slate-500 font-mono text-xs">
+            Loading visual flows...
+        </div>
+    </div>
+
+    <!-- Visual Canvas & Interactive Node Diagram Container -->
+    <div class="bg-cardbg border border-bordercolor rounded-2xl p-6 shadow-xl space-y-6 font-mono">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-bordercolor pb-4">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-purple-400"></span>
+                    <h3 class="text-base font-bold text-slate-100" id="active-flow-title">Visual Flow Canvas: 9:20 AM Short Straddle Flow</h3>
+                </div>
+                <p class="text-xs text-slate-400">Flow ID: <span id="active-flow-id" class="text-slate-300">straddle_flow</span></p>
+            </div>
+
+            <div class="flex items-center gap-2 text-xs">
+                <button onclick="executeActiveFlow()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-obsidian rounded-xl font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-500/20">
+                    <i data-lucide="play" class="w-4 h-4 fill-current"></i>
+                    <span>Execute Flow Now</span>
+                </button>
+                <button onclick="viewFlowLogs()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-bold transition flex items-center gap-1.5">
+                    <i data-lucide="scroll-text" class="w-4 h-4"></i>
+                    <span>Execution Logs</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Node Graph Flowchart -->
+        <div class="p-6 bg-slate-950/60 rounded-xl border border-slate-800/80 overflow-x-auto min-h-[360px] flex items-center justify-center">
+            <div id="flow-canvas" class="flex flex-col md:flex-row items-center gap-6 min-w-[700px]">
+                <!-- Injected Node Diagram -->
+            </div>
+        </div>
+
+        <!-- Node Palette Legend -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+            <div class="p-3.5 bg-slate-900/60 border border-cyan-500/20 rounded-xl flex items-center gap-3 text-xs">
+                <div class="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-bold">
+                    <i data-lucide="clock" class="w-4 h-4"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-cyan-300">1. Trigger Blocks</div>
+                    <div class="text-[10px] text-slate-400">Time (09:20), Price, Interval</div>
+                </div>
+            </div>
+
+            <div class="p-3.5 bg-slate-900/60 border border-amber-500/20 rounded-xl flex items-center gap-3 text-xs">
+                <div class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
+                    <i data-lucide="filter" class="w-4 h-4"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-amber-300">2. Condition Blocks</div>
+                    <div class="text-[10px] text-slate-400">MTM Range, Position Flat, Time Window</div>
+                </div>
+            </div>
+
+            <div class="p-3.5 bg-slate-900/60 border border-emerald-500/20 rounded-xl flex items-center gap-3 text-xs">
+                <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold">
+                    <i data-lucide="zap" class="w-4 h-4"></i>
+                </div>
+                <div>
+                    <div class="font-bold text-emerald-300">3. Action Blocks</div>
+                    <div class="text-[10px] text-slate-400">Buy/Sell Options, Square-Off, Alert</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Flow Execution Logs Modal -->
+    <div id="logs-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-cardbg border border-bordercolor rounded-2xl w-full max-w-3xl p-6 shadow-2xl space-y-4 font-mono">
+            <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="scroll-text" class="w-5 h-5 text-purple-400"></i>
+                    <h3 class="text-base font-bold text-slate-100">Flow Execution Audit Trail</h3>
+                </div>
+                <button onclick="closeLogsModal()" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div id="flow-logs-table-container" class="max-h-96 overflow-y-auto">
+                <table class="w-full text-left text-xs">
+                    <thead>
+                        <tr class="border-b border-bordercolor text-slate-400 text-[11px] uppercase">
+                            <th class="py-2">Time</th>
+                            <th class="py-2">Event</th>
+                            <th class="py-2">Details</th>
+                            <th class="py-2 text-right">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="flow-logs-tbody" class="divide-y divide-bordercolor/60 text-slate-300">
+                        <tr><td colspan="4" class="py-4 text-center text-slate-500">Loading audit trail...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+let activeFlowId = "straddle_flow";
+let flowsCache = [];
+
+async function loadFlows() {
+    try {
+        const res = await fetch("/client/api/flow/list");
+        const json = await res.json();
+        flowsCache = json.data || [];
+
+        // If no flows in DB, save starter templates
+        if (flowsCache.length === 0) {
+            const tmplRes = await fetch("/client/api/flow/templates");
+            const tmplJson = await tmplRes.json();
+            const tmpls = tmplJson.data || {};
+            for (const key of Object.keys(tmpls)) {
+                await fetch("/client/api/flow/save", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        id: key,
+                        name: tmpls[key].name,
+                        description: tmpls[key].description,
+                        flow: tmpls[key].flow
+                    })
+                });
+            }
+            const reloadRes = await fetch("/client/api/flow/list");
+            const reloadJson = await reloadRes.json();
+            flowsCache = reloadJson.data || [];
+        }
+
+        renderFlowsGrid(flowsCache);
+        const active = flowsCache.find(f => f.id === activeFlowId) || flowsCache[0];
+        if (active) {
+            selectFlow(active.id);
+        }
+
+        lucide.createIcons();
+    } catch (e) {
+        console.error("Error loading flows:", e);
+    }
+}
+
+function renderFlowsGrid(flows) {
+    const container = document.getElementById("flows-grid-container");
+    container.innerHTML = flows.map(f => `
+        <div onclick="selectFlow('${f.id}')" class="bg-cardbg border ${f.id === activeFlowId ? 'border-purple-500/50 shadow-purple-500/10' : 'border-bordercolor'} rounded-2xl p-5 shadow-xl space-y-4 font-mono transition cursor-pointer hover:border-slate-700">
+            <div class="flex items-start justify-between border-b border-bordercolor pb-3">
+                <div class="space-y-1">
+                    <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full ${f.is_enabled ? 'bg-emerald-400' : 'bg-slate-600'}"></span>
+                        ${f.name}
+                    </h3>
+                    <p class="text-[11px] text-slate-400 line-clamp-1">${f.description}</p>
+                </div>
+                <button onclick="event.stopPropagation(); toggleFlow('${f.id}', ${!f.is_enabled})" class="px-2.5 py-1 rounded-full text-xs font-bold ${f.is_enabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}">
+                    ${f.is_enabled ? 'ENABLED' : 'PAUSED'}
+                </button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-[11px]">
+                <div class="p-2 bg-slate-900 border border-bordercolor rounded-lg">
+                    <span class="text-slate-500">Nodes:</span>
+                    <span class="text-slate-200 font-bold ml-1">${(f.flow?.nodes || []).length} Blocks</span>
+                </div>
+                <div class="p-2 bg-slate-900 border border-bordercolor rounded-lg">
+                    <span class="text-slate-500">Last Run:</span>
+                    <span class="text-purple-300 font-bold ml-1">${f.last_run_at ? f.last_run_at.split(' ')[1] : 'None'}</span>
+                </div>
+            </div>
+
+            <div class="pt-1 flex items-center justify-between text-xs">
+                <span class="text-[10px] text-slate-500 font-mono">ID: ${f.id}</span>
+                <div class="flex items-center gap-2">
+                    <button onclick="event.stopPropagation(); executeFlow('${f.id}')" class="px-3 py-1 bg-purple-500/10 hover:bg-purple-500 text-purple-300 hover:text-white border border-purple-500/30 rounded-lg text-xs font-bold transition">
+                        Run
+                    </button>
+                    <button onclick="event.stopPropagation(); deleteFlow('${f.id}')" class="p-1 text-slate-500 hover:text-rose-400 transition" title="Delete">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function selectFlow(flowId) {
+    activeFlowId = flowId;
+    const flow = flowsCache.find(f => f.id === flowId);
+    if (!flow) return;
+
+    document.getElementById("active-flow-title").innerText = `Visual Flow Canvas: ${flow.name}`;
+    document.getElementById("active-flow-id").innerText = flow.id;
+    renderFlowCanvas(flow);
+    renderFlowsGrid(flowsCache);
+    lucide.createIcons();
+}
+
+function renderFlowCanvas(flow) {
+    const nodes = flow.flow?.nodes || [];
+    const canvas = document.getElementById("flow-canvas");
+
+    if (nodes.length === 0) {
+        canvas.innerHTML = `<div class="text-slate-500 text-xs">No blocks configured in this flow.</div>`;
+        return;
+    }
+
+    canvas.innerHTML = nodes.map((n, idx) => {
+        let borderColor = "border-cyan-500/40 text-cyan-400 bg-cyan-950/20";
+        let iconName = "clock";
+        if (n.type === "condition") {
+            borderColor = "border-amber-500/40 text-amber-400 bg-amber-950/20";
+            iconName = "filter";
+        } else if (n.type === "action") {
+            borderColor = "border-emerald-500/40 text-emerald-400 bg-emerald-950/20";
+            iconName = "zap";
+        }
+
+        const isLast = (idx === nodes.length - 1);
+
+        return `
+            <div class="flex items-center gap-4">
+                <div class="p-4 rounded-xl border ${borderColor} shadow-lg min-w-[180px] space-y-1.5 font-mono">
+                    <div class="flex items-center gap-2 text-xs font-bold">
+                        <i data-lucide="${iconName}" class="w-4 h-4"></i>
+                        <span>${n.title || n.type.toUpperCase()}</span>
+                    </div>
+                    <div class="text-[10px] text-slate-400 leading-tight">
+                        ${n.data?.trigger_type || n.data?.type || 'Standard Block'}
+                    </div>
+                </div>
+                ${!isLast ? `
+                    <div class="text-slate-600">
+                        <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+async function executeActiveFlow() {
+    await executeFlow(activeFlowId);
+}
+
+async function executeFlow(flowId) {
+    try {
+        const res = await fetch("/client/api/flow/run", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id: flowId})
+        });
+        const json = await res.json();
+        if (json.status === "success") {
+            alert(`Flow executed successfully! Actions triggered: ${json.actions_executed}`);
+            loadFlows();
+        } else {
+            alert(`Flow execution failed: ${json.message}`);
+        }
+    } catch (e) {
+        alert("Execution error: " + e.message);
+    }
+}
+
+async function toggleFlow(flowId, isEnabled) {
+    try {
+        await fetch("/client/api/flow/toggle", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id: flowId, is_enabled: isEnabled})
+        });
+        loadFlows();
+    } catch (e) {
+        console.error("Toggle error:", e);
+    }
+}
+
+async function deleteFlow(flowId) {
+    if (!confirm(`Delete flow '${flowId}'?`)) return;
+    try {
+        await fetch(`/client/api/flow/delete/${flowId}`, {method: "DELETE"});
+        loadFlows();
+    } catch (e) {
+        console.error("Delete error:", e);
+    }
+}
+
+async function viewFlowLogs() {
+    document.getElementById("logs-modal").classList.remove("hidden");
+    try {
+        const res = await fetch(`/client/api/flow/logs?flow_id=${activeFlowId}`);
+        const json = await res.json();
+        const logs = json.data || [];
+        const tbody = document.getElementById("flow-logs-tbody");
+        if (logs.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-slate-500">No events logged yet for this flow.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = logs.map(l => `
+            <tr class="py-2.5">
+                <td class="py-2 font-mono text-[11px] text-slate-400">${l.triggered_at}</td>
+                <td class="py-2 font-bold text-purple-300 text-xs">${l.event_type}</td>
+                <td class="py-2 text-slate-300 text-xs">${l.details}</td>
+                <td class="py-2 text-right">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${l.status === 'SUCCESS' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400'}">
+                        ${l.status}
+                    </span>
+                </td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        console.error("Logs error:", e);
+    }
+}
+
+function closeLogsModal() {
+    document.getElementById("logs-modal").classList.add("hidden");
+}
+
+function openNewFlowModal() {
+    const name = prompt("Enter a name for the new visual flow:", "My Custom Algo Flow");
+    if (!name) return;
+    const id = `flow_${Date.now()}`;
+    const flowData = {
+        nodes: [
+            {"id": "t1", "type": "trigger", "title": "Time (09:20 IST)", "data": {"trigger_type": "TIME"}},
+            {"id": "c1", "type": "condition", "title": "Position == 0", "data": {"type": "POSITION_COUNT"}},
+            {"id": "a1", "type": "action", "title": "Place ATM Straddle", "data": {"type": "PLACE_OPTIONS_ORDER"}}
+        ],
+        edges: [
+            {"from": "t1", "to": "c1"},
+            {"from": "c1", "to": "a1"}
+        ]
+    };
+
+    fetch("/client/api/flow/save", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({id, name, flow: flowData, description: "Custom user created flow"})
+    }).then(() => loadFlows());
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    loadFlows();
+});
+</script>
+{% endblock %}

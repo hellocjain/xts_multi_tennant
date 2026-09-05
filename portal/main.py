@@ -481,6 +481,28 @@ async def client_scalping_page(request: Request, client_user: dict = Depends(req
         "trading_mode": get_tenant_trading_mode(tenant_id)
     })
 
+@app.get("/client/python", response_class=HTMLResponse)
+async def client_python_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    return templates.TemplateResponse(request=request, name="client_python.html", context={
+        "client": {},
+        "client_user": client_user,
+        "current_user": client_user,
+        "active_page": "python",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
+@app.get("/client/flow", response_class=HTMLResponse)
+async def client_flow_page(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    return templates.TemplateResponse(request=request, name="client_flow.html", context={
+        "client": {},
+        "client_user": client_user,
+        "current_user": client_user,
+        "active_page": "flow",
+        "trading_mode": get_tenant_trading_mode(tenant_id)
+    })
+
 @app.post("/client/api/maxpain")
 async def client_api_maxpain(request: Request, client_user: dict = Depends(require_client_auth)):
     try:
@@ -576,6 +598,201 @@ async def client_api_arbitrage(request: Request, client_user: dict = Depends(req
         )
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# --- Python Strategy Runner API Proxies ---
+@app.get("/client/api/python/list")
+@app.post("/client/api/python/list")
+async def client_api_python_list(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    try:
+        from client import python_strategy_service
+        return {"status": "success", "data": python_strategy_service.list_strategies(tenant_id)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/client/api/python/templates")
+async def client_api_python_templates(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        from client import python_strategy_service
+        return {"status": "success", "data": python_strategy_service.STRATEGY_TEMPLATES}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/client/api/python/save")
+async def client_api_python_save(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    strat_id = body.get("id") or f"strat_{int(time.time())}"
+    name = body.get("name", "Custom Strategy")
+    code = body.get("code_content", "")
+    desc = body.get("description", "")
+    try:
+        from client import python_strategy_service
+        res = python_strategy_service.save_strategy(strat_id, tenant_id, name, code, desc)
+        return {"status": "success", "data": res}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/client/api/python/run")
+async def client_api_python_run(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    strat_id = body.get("id") or ""
+    try:
+        from client import python_strategy_service
+        return python_strategy_service.run_strategy(strat_id, tenant_id)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/client/api/python/stop")
+async def client_api_python_stop(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    strat_id = body.get("id") or ""
+    try:
+        from client import python_strategy_service
+        return python_strategy_service.stop_strategy(strat_id, tenant_id)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/client/api/python/logs")
+async def client_api_python_logs(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    strat_id = request.query_params.get("id", "")
+    lines = int(request.query_params.get("lines", 100))
+    try:
+        from client import python_strategy_service
+        return python_strategy_service.get_strategy_logs(strat_id, tenant_id, lines=lines)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.delete("/client/api/python/delete/{strat_id}")
+async def client_api_python_delete(strat_id: str, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    try:
+        from client import python_strategy_service
+        python_strategy_service.delete_strategy(strat_id, tenant_id)
+        return {"status": "success", "message": f"Strategy {strat_id} deleted"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# --- Flow No-Code Visual Builder API Proxies ---
+@app.get("/client/api/flow/list")
+@app.post("/client/api/flow/list")
+async def client_api_flow_list(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    try:
+        from client import flow_executor_service
+        return {"status": "success", "data": flow_executor_service.list_flows(tenant_id)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/client/api/flow/templates")
+async def client_api_flow_templates(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        from client import flow_executor_service
+        return {"status": "success", "data": flow_executor_service.FLOW_TEMPLATES}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/client/api/flow/save")
+async def client_api_flow_save(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    flow_id = body.get("id") or f"flow_{int(time.time())}"
+    name = body.get("name", "Custom Flow")
+    flow_data = body.get("flow", {})
+    desc = body.get("description", "")
+    try:
+        from client import flow_executor_service
+        res = flow_executor_service.save_flow(flow_id, tenant_id, name, flow_data, desc)
+        return {"status": "success", "data": res}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/client/api/flow/toggle")
+async def client_api_flow_toggle(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    flow_id = body.get("id", "")
+    is_enabled = bool(body.get("is_enabled", True))
+    try:
+        from client import flow_executor_service
+        flow_executor_service.toggle_flow(flow_id, tenant_id, is_enabled)
+        return {"status": "success", "id": flow_id, "is_enabled": is_enabled}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/client/api/flow/run")
+async def client_api_flow_run(request: Request, client_user: dict = Depends(require_client_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    tenant_id = client_user["tenant_id"]
+    flow_id = body.get("id", "")
+    try:
+        from client import flow_executor_service
+        flow = flow_executor_service.get_flow(flow_id, tenant_id)
+        if not flow:
+            return {"status": "error", "message": "Flow not found"}
+        res = await flow_executor_service.execute_flow_actions(flow, {})
+        return res
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.delete("/client/api/flow/delete/{flow_id}")
+async def client_api_flow_delete(flow_id: str, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    try:
+        from client import flow_executor_service
+        flow_executor_service.delete_flow(flow_id, tenant_id)
+        return {"status": "success", "message": f"Flow {flow_id} deleted"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/client/api/flow/logs")
+async def client_api_flow_logs(request: Request, client_user: dict = Depends(require_client_auth)):
+    tenant_id = client_user["tenant_id"]
+    flow_id = request.query_params.get("flow_id")
+    try:
+        from client import flow_executor_service
+        logs = flow_executor_service.get_flow_logs(tenant_id, flow_id=flow_id)
+        return {"status": "success", "data": logs}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+
 
 
 @app.get("/client/action-center/count")

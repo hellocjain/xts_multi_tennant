@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+
+{% block title %}Python Strategy Runner - {{ client.name }} | OpenAlgo{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Page Header Strip -->
+    <div class="bg-cardbg border border-bordercolor p-5 md:p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-bold">
+                    <i data-lucide="terminal" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        Python Strategy Runner
+                        <span class="text-xs bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full font-mono">
+                            In-Browser Host
+                        </span>
+                    </h1>
+                    <p class="text-xs text-slate-400 font-mono">Run autonomous Python algos directly in cloud subprocesses with live log streaming</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2 font-mono text-xs">
+            <select id="template-selector" onchange="loadTemplate(this.value)" class="bg-slate-900 border border-bordercolor text-slate-200 px-3 py-2 rounded-xl text-xs focus:border-cyan-500 outline-none">
+                <option value="">-- Select Algo Template --</option>
+                <option value="sma_crossover">EMA 9/21 Trend Crossover</option>
+                <option value="atm_straddle">9:20 AM ATM Short Straddle</option>
+                <option value="supertrend_options">Supertrend Options Buyer</option>
+            </select>
+            <button onclick="createNewStrategy()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-bordercolor rounded-xl font-bold transition flex items-center gap-1.5">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                <span>New Script</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Strategy Runner Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Left Column: Strategy List & Parameters (4 cols) -->
+        <div class="lg:col-span-4 space-y-4">
+            <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl space-y-4 font-mono">
+                <div class="flex items-center justify-between border-b border-bordercolor pb-3">
+                    <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                        <i data-lucide="folder-code" class="w-4 h-4 text-cyan-400"></i>
+                        Saved Strategies
+                    </h3>
+                    <span id="strat-count" class="text-xs text-slate-400 font-bold">0 Scripts</span>
+                </div>
+
+                <div id="strategy-list-container" class="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                    <div class="p-4 text-center text-xs text-slate-500">Loading scripts...</div>
+                </div>
+            </div>
+
+            <!-- Environment Details Card -->
+            <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl space-y-3 font-mono text-xs">
+                <div class="text-slate-300 font-bold uppercase tracking-wider flex items-center gap-2 border-b border-bordercolor pb-2">
+                    <i data-lucide="cpu" class="w-4 h-4 text-emerald-400"></i>
+                    Execution Context
+                </div>
+                <div class="space-y-1.5 text-slate-400 text-[11px]">
+                    <div class="flex justify-between">
+                        <span>Runtime:</span>
+                        <span class="text-slate-200 font-bold">Python 3.12 (Isolated Subprocess)</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>API Base URL:</span>
+                        <span class="text-cyan-400 font-bold">http://127.0.0.1:8000</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Auth Injection:</span>
+                        <span class="text-emerald-400 font-bold">Auto (OPENALGO_API_KEY)</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Log Persistence:</span>
+                        <span class="text-slate-200">client/strategy_logs/</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Code Editor & Live Logs Terminal (8 cols) -->
+        <div class="lg:col-span-8 space-y-4">
+
+            <!-- Code Editor Card -->
+            <div class="bg-cardbg border border-bordercolor rounded-2xl p-5 shadow-xl space-y-4 font-mono">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-bordercolor pb-3">
+                    <div class="space-y-1">
+                        <input id="script-name-input" type="text" placeholder="Strategy Name" value="My OpenAlgo Strategy" class="bg-slate-900 border border-bordercolor text-slate-100 font-bold px-3 py-1.5 rounded-xl text-sm focus:border-cyan-500 outline-none w-64">
+                        <input id="script-id-input" type="hidden" value="strat_default">
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <button id="btn-save" onclick="saveCurrentStrategy()" class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                            <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                            <span>Save</span>
+                        </button>
+                        <button id="btn-run" onclick="runCurrentStrategy()" class="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-obsidian rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20">
+                            <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                            <span>Run Strategy</span>
+                        </button>
+                        <button id="btn-stop" onclick="stopCurrentStrategy()" class="px-4 py-1.5 bg-rose-500/20 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                            <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i>
+                            <span>Stop</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Editor Textarea -->
+                <div class="relative">
+                    <textarea id="code-editor" rows="16" spellcheck="false" class="w-full bg-[#0a0e14] border border-bordercolor rounded-xl p-4 font-mono text-xs text-slate-200 focus:border-cyan-500 outline-none leading-relaxed resize-y selection:bg-cyan-500/30" placeholder="# Write your OpenAlgo Python strategy here..."></textarea>
+                </div>
+            </div>
+
+            <!-- Live Terminal Output Console -->
+            <div class="bg-[#080c10] border border-bordercolor rounded-2xl p-5 shadow-2xl space-y-3 font-mono">
+                <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                    <div class="flex items-center gap-2">
+                        <div class="flex gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-rose-500/80"></span>
+                            <span class="w-2.5 h-2.5 rounded-full bg-amber-500/80"></span>
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500/80"></span>
+                        </div>
+                        <span class="text-xs font-bold text-slate-300 ml-2 uppercase tracking-wider">Console Terminal Stream</span>
+                        <span id="terminal-status-badge" class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">IDLE</span>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <button onclick="fetchStrategyLogs()" class="p-1.5 text-slate-400 hover:text-slate-200 transition" title="Refresh Logs">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button onclick="clearTerminalDisplay()" class="p-1.5 text-slate-400 hover:text-slate-200 transition" title="Clear Display">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="terminal-console" class="h-64 overflow-y-auto bg-black/50 p-3 rounded-xl border border-slate-900 text-emerald-400 font-mono text-[11px] leading-relaxed whitespace-pre-wrap select-text">
+[System] Strategy console ready. Load a template or click 'Run Strategy' to initiate background process.
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+let activeStrategyId = "strat_default";
+let pollInterval = null;
+
+async function loadStrategies() {
+    try {
+        const res = await fetch("/client/api/python/list");
+        const json = await res.json();
+        const list = json.data || [];
+        
+        const container = document.getElementById("strategy-list-container");
+        document.getElementById("strat-count").innerText = `${list.length} Scripts`;
+
+        if (list.length === 0) {
+            container.innerHTML = `
+                <div class="p-4 text-center text-xs text-slate-500">
+                    No scripts created yet.<br>Choose a template from above or create a new script.
+                </div>`;
+            return;
+        }
+
+        container.innerHTML = list.map(s => `
+            <div onclick="selectStrategy('${s.id}')" class="p-3 rounded-xl border transition cursor-pointer flex items-center justify-between ${s.id === activeStrategyId ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-300' : 'bg-slate-900/70 border-bordercolor text-slate-300 hover:border-slate-700'}">
+                <div class="space-y-0.5">
+                    <div class="text-xs font-bold flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full ${s.is_running ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}"></span>
+                        <span>${s.name}</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500">${s.last_run_at ? 'Last run: ' + s.last_run_at : 'Never run'}</div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${s.is_running ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}">
+                        ${s.status}
+                    </span>
+                    <button onclick="event.stopPropagation(); deleteStrategy('${s.id}')" class="p-1 hover:text-rose-400 text-slate-500" title="Delete">
+                        <i data-lucide="trash" class="w-3.5 h-3.5"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+
+        lucide.createIcons();
+    } catch (e) {
+        console.error("Error loading strategies:", e);
+    }
+}
+
+async function selectStrategy(stratId) {
+    try {
+        const res = await fetch("/client/api/python/list");
+        const json = await res.json();
+        const strat = (json.data || []).find(s => s.id === stratId);
+        if (strat) {
+            activeStrategyId = strat.id;
+            document.getElementById("script-id-input").value = strat.id;
+            document.getElementById("script-name-input").value = strat.name;
+            document.getElementById("code-editor").value = strat.code_content;
+            
+            updateStatusBadge(strat.is_running);
+            fetchStrategyLogs();
+            loadStrategies();
+        }
+    } catch (e) {
+        console.error("Error selecting strategy:", e);
+    }
+}
+
+async function loadTemplate(tmplKey) {
+    if (!tmplKey) return;
+    try {
+        const res = await fetch("/client/api/python/templates");
+        const json = await res.json();
+        const tmpl = (json.data || {})[tmplKey];
+        if (tmpl) {
+            document.getElementById("script-name-input").value = tmpl.name;
+            document.getElementById("code-editor").value = tmpl.code;
+            activeStrategyId = `strat_${Date.now()}`;
+            document.getElementById("script-id-input").value = activeStrategyId;
+            await saveCurrentStrategy();
+        }
+    } catch (e) {
+        console.error("Error loading template:", e);
+    }
+}
+
+function createNewStrategy() {
+    activeStrategyId = `strat_${Date.now()}`;
+    document.getElementById("script-id-input").value = activeStrategyId;
+    document.getElementById("script-name-input").value = "New Algo Strategy";
+    document.getElementById("code-editor").value = `"""
+Custom OpenAlgo Trading Strategy
+"""
+import time
+
+print(f"[{time.strftime('%H:%M:%S')}] OpenAlgo Strategy Initialized")
+while True:
+    print(f"[{time.strftime('%H:%M:%S')}] Monitoring market ticks...")
+    time.sleep(10)
+`;
+    updateStatusBadge(false);
+    clearTerminalDisplay();
+}
+
+async function saveCurrentStrategy() {
+    const id = document.getElementById("script-id-input").value || activeStrategyId;
+    const name = document.getElementById("script-name-input").value.trim() || "Untitled Strategy";
+    const code = document.getElementById("code-editor").value;
+
+    try {
+        const res = await fetch("/client/api/python/save", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id, name, code_content: code})
+        });
+        const json = await res.json();
+        if (json.status === "success") {
+            appendTerminal(`[System] Strategy '${name}' saved successfully.\n`);
+            loadStrategies();
+        }
+    } catch (e) {
+        alert("Error saving strategy: " + e.message);
+    }
+}
+
+async function runCurrentStrategy() {
+    await saveCurrentStrategy();
+    const id = document.getElementById("script-id-input").value || activeStrategyId;
+    try {
+        const res = await fetch("/client/api/python/run", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id})
+        });
+        const json = await res.json();
+        if (json.status === "success") {
+            appendTerminal(`\n[System] Strategy started (PID: ${json.pid}). Streaming live output...\n`);
+            updateStatusBadge(true);
+            loadStrategies();
+            startPollingLogs();
+        } else {
+            appendTerminal(`\n[System Error] ${json.message}\n`);
+        }
+    } catch (e) {
+        alert("Error starting strategy: " + e.message);
+    }
+}
+
+async function stopCurrentStrategy() {
+    const id = document.getElementById("script-id-input").value || activeStrategyId;
+    try {
+        const res = await fetch("/client/api/python/stop", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({id})
+        });
+        const json = await res.json();
+        appendTerminal(`\n[System] ${json.message}\n`);
+        updateStatusBadge(false);
+        loadStrategies();
+        stopPollingLogs();
+    } catch (e) {
+        alert("Error stopping strategy: " + e.message);
+    }
+}
+
+async function deleteStrategy(stratId) {
+    if (!confirm("Are you sure you want to delete this Python script?")) return;
+    try {
+        await fetch(`/client/api/python/delete/${stratId}`, {method: "DELETE"});
+        loadStrategies();
+        if (activeStrategyId === stratId) {
+            createNewStrategy();
+        }
+    } catch (e) {
+        console.error("Delete error:", e);
+    }
+}
+
+async function fetchStrategyLogs() {
+    const id = document.getElementById("script-id-input").value || activeStrategyId;
+    try {
+        const res = await fetch(`/client/api/python/logs?id=${id}&lines=200`);
+        const json = await res.json();
+        if (json.status === "success" && json.logs) {
+            const consoleBox = document.getElementById("terminal-console");
+            consoleBox.innerText = json.logs;
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
+    } catch (e) {
+        console.error("Logs fetch error:", e);
+    }
+}
+
+function startPollingLogs() {
+    stopPollingLogs();
+    pollInterval = setInterval(fetchStrategyLogs, 2000);
+}
+
+function stopPollingLogs() {
+    if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+    }
+}
+
+function appendTerminal(msg) {
+    const consoleBox = document.getElementById("terminal-console");
+    consoleBox.innerText += msg;
+    consoleBox.scrollTop = consoleBox.scrollHeight;
+}
+
+function clearTerminalDisplay() {
+    document.getElementById("terminal-console").innerText = "[System] Terminal cleared.\n";
+}
+
+function updateStatusBadge(isRunning) {
+    const badge = document.getElementById("terminal-status-badge");
+    if (isRunning) {
+        badge.innerText = "RUNNING (ACTIVE)";
+        badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold animate-pulse";
+    } else {
+        badge.innerText = "STOPPED";
+        badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700";
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    loadStrategies();
+    // Default sample if empty
+    if (!document.getElementById("code-editor").value) {
+        loadTemplate("sma_crossover");
+    }
+});
+</script>
+{% endblock %}

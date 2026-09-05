@@ -184,6 +184,14 @@
                             <i data-lucide="scale" class="w-3.5 h-3.5 text-emerald-400"></i>
                             <span>Calendar Arbitrage</span>
                         </a>
+                        <a href="/client/python" class="flex items-center space-x-2 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 hover:text-cyan-400 transition">
+                            <i data-lucide="terminal" class="w-3.5 h-3.5 text-cyan-400"></i>
+                            <span>Python Runner</span>
+                        </a>
+                        <a href="/client/flow" class="flex items-center space-x-2 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 hover:text-purple-400 transition">
+                            <i data-lucide="git-merge" class="w-3.5 h-3.5 text-purple-400"></i>
+                            <span>Flow Builder</span>
+                        </a>
                     </div>
                 </div>
 
@@ -393,6 +401,14 @@
                 <a href="/client/arbitrage" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl transition {% if active_page == 'arbitrage' %}bg-emerald-500/20 text-emerald-400 font-bold{% else %}text-slate-200 hover:bg-slate-800/80{% endif %}">
                     <i data-lucide="scale" class="w-4 h-4 text-emerald-400"></i>
                     <span>Calendar Arbitrage</span>
+                </a>
+                <a href="/client/python" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl transition {% if active_page == 'python' %}bg-cyan-500/20 text-cyan-400 font-bold{% else %}text-slate-200 hover:bg-slate-800/80{% endif %}">
+                    <i data-lucide="terminal" class="w-4 h-4 text-cyan-400"></i>
+                    <span>Python Runner</span>
+                </a>
+                <a href="/client/flow" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl transition {% if active_page == 'flow' %}bg-purple-500/20 text-purple-400 font-bold{% else %}text-slate-200 hover:bg-slate-800/80{% endif %}">
+                    <i data-lucide="git-merge" class="w-4 h-4 text-purple-400"></i>
+                    <span>Flow Builder</span>
                 </a>
                 <a href="/client/strategies" onclick="toggleMobileDrawer(false)" class="flex items-center space-x-3 px-3.5 py-2.5 rounded-xl transition {% if active_page == 'strategies' %}bg-brand-500/20 text-brand-400 font-bold{% else %}text-slate-200 hover:bg-slate-800/80{% endif %}">
                     <i data-lucide="code-2" class="w-4 h-4 text-slate-400"></i>

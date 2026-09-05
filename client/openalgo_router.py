@@ -28,6 +28,12 @@ import options_order_service
 import gtt_service
 import action_center_service
 import analytics_service
+try:
+    import python_strategy_service
+    import flow_executor_service
+except ImportError:
+    from client import python_strategy_service
+    from client import flow_executor_service
 
 logger = logging.getLogger(__name__)
 
@@ -2380,6 +2386,163 @@ async def agent_chart_math(request: Request):
         return JSONResponse(status_code=400, content={"status": "error", "message": f"Unknown calc type '{calc_type}'"})
 
     return {"status": "success", "type": calc_type, "data": res}
+
+
+# -----------------------------------------------------------------------------
+# 19. OpenAlgo Python Strategy Runner API (/api/v1/python/...)
+# -----------------------------------------------------------------------------
+@router.post("/python/list")
+@router.get("/python/list")
+async def list_python_strategies_api(request: Request):
+    data = await _extract_json(request) if request.method == "POST" else dict(request.query_params)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    strats = python_strategy_service.list_strategies(tenant_id)
+    return {"status": "success", "data": strats}
+
+
+@router.get("/python/templates")
+@router.post("/python/templates")
+async def get_python_templates_api(request: Request):
+    return {"status": "success", "data": python_strategy_service.STRATEGY_TEMPLATES}
+
+
+@router.post("/python/save")
+async def save_python_strategy_api(request: Request):
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    strategy_id = str(data.get("id") or data.get("strategy_id") or f"strat_{int(time.time())}")
+    name = str(data.get("name") or "Custom Strategy")
+    description = str(data.get("description") or "")
+    code = str(data.get("code") or data.get("code_content") or "")
+    strat = python_strategy_service.save_strategy(strategy_id, tenant_id, name, code, description)
+    return {"status": "success", "data": strat}
+
+
+@router.post("/python/run")
+async def run_python_strategy_api(request: Request):
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    strategy_id = str(data.get("id") or data.get("strategy_id") or "")
+    api_key = str(data.get("apikey") or data.get("api_key") or "")
+    res = python_strategy_service.run_strategy(strategy_id, tenant_id, api_key=api_key)
+    return res
+
+
+@router.post("/python/stop")
+async def stop_python_strategy_api(request: Request):
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    strategy_id = str(data.get("id") or data.get("strategy_id") or "")
+    res = python_strategy_service.stop_strategy(strategy_id, tenant_id)
+    return res
+
+
+@router.post("/python/logs")
+@router.get("/python/logs")
+async def get_python_logs_api(request: Request):
+    data = await _extract_json(request) if request.method == "POST" else dict(request.query_params)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    strategy_id = str(data.get("id") or data.get("strategy_id") or "")
+    lines = int(data.get("lines") or 100)
+    res = python_strategy_service.get_strategy_logs(strategy_id, tenant_id, lines=lines)
+    return res
+
+
+@router.delete("/python/delete/{strategy_id}")
+async def delete_python_strategy_api(strategy_id: str, request: Request):
+    tenant_id = getattr(config, "CLIENT_ID", "default")
+    python_strategy_service.delete_strategy(strategy_id, tenant_id)
+    return {"status": "success", "message": f"Strategy {strategy_id} deleted"}
+
+
+# -----------------------------------------------------------------------------
+# 20. OpenAlgo Flow No-Code Visual Builder API (/api/v1/flow/...)
+# -----------------------------------------------------------------------------
+@router.get("/flow/list")
+@router.post("/flow/list")
+async def list_flows_api(request: Request):
+    data = await _extract_json(request) if request.method == "POST" else dict(request.query_params)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    flows = flow_executor_service.list_flows(tenant_id)
+    return {"status": "success", "data": flows}
+
+
+@router.get("/flow/templates")
+@router.post("/flow/templates")
+async def get_flow_templates_api(request: Request):
+    return {"status": "success", "data": flow_executor_service.FLOW_TEMPLATES}
+
+
+@router.post("/flow/save")
+async def save_flow_api(request: Request):
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    flow_id = str(data.get("id") or data.get("flow_id") or f"flow_{int(time.time())}")
+    name = str(data.get("name") or "New Flow")
+    description = str(data.get("description") or "")
+    flow_obj = data.get("flow") or {}
+    res = flow_executor_service.save_flow(flow_id, tenant_id, name, flow_obj, description)
+    return {"status": "success", "data": res}
+
+
+@router.post("/flow/toggle")
+async def toggle_flow_api(request: Request):
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    flow_id = str(data.get("id") or data.get("flow_id") or "")
+    is_enabled = bool(data.get("is_enabled", True))
+    flow_executor_service.toggle_flow(flow_id, tenant_id, is_enabled)
+    return {"status": "success", "id": flow_id, "is_enabled": is_enabled}
+
+
+@router.post("/flow/run")
+async def run_flow_api(request: Request):
+    data = await _extract_json(request)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    flow_id = str(data.get("id") or data.get("flow_id") or "")
+    flow = flow_executor_service.get_flow(flow_id, tenant_id)
+    if not flow:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Flow not found"})
+    res = await flow_executor_service.execute_flow_actions(flow, {})
+    return res
+
+
+@router.delete("/flow/delete/{flow_id}")
+async def delete_flow_api(flow_id: str, request: Request):
+    tenant_id = getattr(config, "CLIENT_ID", "default")
+    flow_executor_service.delete_flow(flow_id, tenant_id)
+    return {"status": "success", "message": f"Flow {flow_id} deleted"}
+
+
+@router.get("/flow/logs")
+@router.post("/flow/logs")
+async def get_flow_logs_api(request: Request):
+    data = await _extract_json(request) if request.method == "POST" else dict(request.query_params)
+    if not _verify_auth(data, request):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid API key"})
+    tenant_id = str(data.get("tenant_id") or getattr(config, "CLIENT_ID", "") or "default").strip() or "default"
+    flow_id = data.get("flow_id")
+    logs = flow_executor_service.get_flow_logs(tenant_id, flow_id=flow_id)
+    return {"status": "success", "data": logs}
+
 
 
 
