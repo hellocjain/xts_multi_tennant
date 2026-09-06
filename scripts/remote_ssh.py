@@ -2,7 +2,7 @@
 import sys
 import paramiko
 
-def run_remote_command(cmd, host="168.144.72.117", user="root", password="Check"):
+def run_remote_command(cmd, host="139.59.20.239", user="root", password="Check"):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
