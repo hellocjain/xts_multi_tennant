@@ -168,6 +168,10 @@ def audit_web_ingress():
     direct_ok = out.strip() in ("200", "302", "303")
     log_check("Direct Portal Container Port 8500", direct_ok, f"(HTTP {out})")
 
+    code, out = run_cmd("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/admin/dashboard")
+    dash_ok = out.strip() in ("200", "302", "303", "307")
+    log_check("Portal Dashboard Protected Route (Port 80)", dash_ok, f"(HTTP {out})")
+
 
 
 def audit_systemd_timers():
