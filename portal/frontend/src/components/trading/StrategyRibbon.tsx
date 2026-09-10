@@ -72,11 +72,12 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
 
   const handleReset = async () => {
     if (!selectedStrat || isResetting) return;
-    if (!confirm(`Are you sure you want to reset virtual state to FLAT for ${selectedStrat.symbol}?`)) return;
     setIsResetting(true);
     try {
       await onResetFlat(selectedStrat);
-      toast.success(`Reset ${selectedStrat.symbol} to FLAT`);
+      toast.success(`Reset ${selectedStrat.symbol} to FLAT`, {
+        description: 'Virtual position set to 0 and trend reset.',
+      });
     } catch (err: any) {
       toast.error(`Reset flat failed: ${err.message}`);
     } finally {
@@ -260,9 +261,8 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
             <button
               type="button"
               onClick={() => {
-                if (confirm(`Delete strategy ${selectedStrat.symbol} (${selectedStrat.timeframe})?`)) {
-                  onDeleteStrategy(selectedStrat.id);
-                }
+                onDeleteStrategy(selectedStrat.id);
+                toast.success(`Removed strategy ${selectedStrat.symbol} (${selectedStrat.timeframe})`);
               }}
               title="Delete Strategy"
               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition"

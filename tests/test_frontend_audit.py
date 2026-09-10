@@ -681,3 +681,124 @@ def test_api_orders_and_audit_logs(monkeypatch):
     res_logs = client.get("/api/audit-logs")
     assert res_logs.status_code == 200
     assert "logs" in res_logs.json()
+
+
+def test_api_client_settings_and_update_credentials(monkeypatch):
+    """Verifies GET /api/clients/{tenant_id}/settings and PUT /api/clients/{tenant_id}/credentials."""
+    monkeypatch.setattr(docker_manager, "restart_client_container", lambda cid: True)
+
+    client = get_auth_client()
+    res = client.get("/api/clients/t_live_profit/settings")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["name"] == "Live Trader Pro"
+    assert "credentials" in data
+    assert data["credentials"]["broker_client_id"] == "DM933"
+    assert "risk_limits" in data
+    assert "webhook" in data
+    assert "webhook_url" in data["webhook"]
+    assert "webhook_secret" in data["webhook"]
+
+    # Test updating credentials
+    res_update = client.put("/api/clients/t_live_profit/credentials", json={
+        "name": "Live Trader Pro Updated",
+        "api_key": "NEW_KEY_123",
+        "api_secret": "NEW_SECRET_456",
+        "broker_client_id": "XTS_NEW_ID",
+        "execution_mode": "PAPER"
+    })
+    assert res_update.status_code == 200
+
+    # Verify updated settings
+    res_after = client.get("/api/clients/t_live_profit/settings")
+    assert res_after.status_code == 200
+    after_data = res_after.json()
+    assert after_data["name"] == "Live Trader Pro Updated"
+    assert after_data["credentials"]["api_key"] == "NEW_KEY_123"
+    assert after_data["credentials"]["broker_client_id"] == "XTS_NEW_ID"
+    assert after_data["credentials"]["execution_mode"] == "PAPER"
+
+
+def test_api_client_update_risk_limits(monkeypatch):
+    """Verifies PUT /api/clients/{tenant_id}/risk-limits."""
+    monkeypatch.setattr(docker_manager, "write_client_config", lambda cid: True)
+
+    client = get_auth_client()
+    res = client.put("/api/clients/t_live_profit/risk-limits", json={
+        "max_lots_limit": 50,
+        "max_order_value_inr": 2500000.0,
+        "daily_notional_cap_inr": 8000000.0,
+        "max_daily_loss_inr": 35000.0,
+        "slippage_buffer_pct": 0.008,
+        "min_days_before_expiry_mcx": 5
+    })
+    assert res.status_code == 200
+
+    # Verify updated values in settings
+    res_get = client.get("/api/clients/t_live_profit/settings")
+    assert res_get.status_code == 200
+    risk = res_get.json()["risk_limits"]
+    assert risk["max_lots_limit"] == 50
+    assert risk["max_order_value_inr"] == 2500000.0
+    assert risk["max_daily_loss_inr"] == 35000.0
+    assert risk["min_days_before_expiry_mcx"] == 5
+
+
+def test_api_client_rotate_webhook_secret(monkeypatch):
+    """Verifies POST /api/clients/{tenant_id}/webhook-secret/rotate."""
+    monkeypatch.setattr(docker_manager, "write_client_config", lambda cid: True)
+
+    client = get_auth_client()
+    orig_res = client.get("/api/clients/t_live_profit/settings")
+    orig_secret = orig_res.json()["webhook"]["webhook_secret"]
+
+    res_rot = client.post("/api/clients/t_live_profit/webhook-secret/rotate")
+    assert res_rot.status_code == 200
+    new_secret = res_rot.json()["webhook_secret"]
+    assert new_secret != orig_secret
+    assert len(new_secret) >= 16
+
+    # Verify new secret is reflected
+    res_after = client.get("/api/clients/t_live_profit/settings")
+    assert res_after.json()["webhook"]["webhook_secret"] == new_secret
+
+
+def test_api_positions_square_off_and_bulk_cancel(monkeypatch):
+    """Verifies /api/clients/{tenant_id}/positions/square-off and /api/orders/bulk-cancel."""
+    # Mock httpx.AsyncClient to simulate client container responses
+    class MockResponse:
+        def __init__(self, status_code, json_data):
+            self.status_code = status_code
+            self._json = json_data
+            self.headers = {"content-type": "application/json"}
+        def json(self):
+            return self._json
+
+    class MockAsyncClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        async def post(self, url, **kwargs):
+            if "positions/square-off" in url:
+                return MockResponse(200, {"status": "success", "message": "Position squared off"})
+            if "orders/cancel-all" in url:
+                return MockResponse(200, {"status": "success", "message": "All orders cancelled"})
+            return MockResponse(404, {"detail": "Not found"})
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
+
+    client = get_auth_client()
+    res_sq = client.post("/api/clients/t_live_profit/positions/square-off", json={
+        "symbol": "CRUDEOIL1!",
+        "quantity": 1,
+        "side": "SELL"
+    })
+    assert res_sq.status_code == 200
+    assert res_sq.json()["status"] == "success"
+
+    res_bulk = client.post("/api/orders/bulk-cancel", json={"tenant_id": "t_live_profit"})
+    assert res_bulk.status_code == 200
+    assert res_bulk.json()["status"] == "success"
+

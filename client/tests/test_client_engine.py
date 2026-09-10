@@ -943,6 +943,89 @@ def test_sec_xts_009_panic_pricing_fails_closed_without_hardcoded_100(monkeypatc
     assert len(dispatched_orders) == 0, f"Dispatched dangerous orders: {dispatched_orders}"
 
 
+def test_internal_order_cancel_and_bulk_cancel(monkeypatch):
+    """Tests /internal/orders/{app_order_id}/cancel and /internal/orders/cancel-all."""
+    client = TestClient(app)
+
+    # In paper trade mode
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", True)
+
+    res_cancel = client.post("/internal/orders/APP_12345/cancel")
+    assert res_cancel.status_code == 200
+    assert res_cancel.json()["status"] == "success"
+    assert res_cancel.json()["mode"] == "PAPER"
+
+    res_cancel_all = client.post("/internal/orders/cancel-all")
+    assert res_cancel_all.status_code == 200
+    assert res_cancel_all.json()["status"] == "success"
+    assert res_cancel_all.json()["mode"] == "PAPER"
+
+
+def test_internal_position_square_off(monkeypatch):
+    """Tests /internal/positions/square-off in paper mode and live mock."""
+    client = TestClient(app)
+
+    # 1. Paper trade mode
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", True)
+    res_paper = client.post("/internal/positions/square-off", json={
+        "symbol": "CRUDEOIL1!",
+        "quantity": 1,
+        "side": "SELL"
+    })
+    assert res_paper.status_code == 200
+    assert res_paper.json()["status"] == "success"
+    assert res_paper.json()["mode"] == "PAPER"
+
+    # 2. Live mode with mock broker positions and execution
+    monkeypatch.setattr(config, "PAPER_TRADE_MODE", False)
+    monkeypatch.setattr(config, "CLIENT_ID", "TEST_CLIENT")
+    monkeypatch.setattr(xts_api, "get_interactive_token", lambda *a, **kw: "mock_token")
+    monkeypatch.setattr(xts_api.ORDER_RATE_LIMITER, "acquire", lambda *a, **kw: True)
+    monkeypatch.setattr(xts_api, "get_live_price", lambda *a, **kw: 6500.0)
+
+    class MockResp:
+        status_code = 200
+        def json(self):
+            return {
+                "type": "success",
+                "result": {
+                    "positionList": [{
+                        "ExchangeInstrumentId": 12345,
+                        "ExchangeSegment": "MCXFO",
+                        "ProductType": "NRML",
+                        "TradingSymbol": "CRUDEOIL24NOVFUT",
+                        "Quantity": 2,
+                        "BuyAveragePrice": 6480.0,
+                        "SellAveragePrice": 0,
+                        "LastTradedPrice": 6500.0
+                    }]
+                }
+            }
+
+    dispatched = []
+    def mock_post(url, headers=None, json=None, timeout=None):
+        dispatched.append(json)
+        r = MockResp()
+        r.json = lambda: {"type": "success", "result": {"AppOrderID": 999888}}
+        return r
+
+    monkeypatch.setattr(xts_api.api_session, "get", lambda *a, **kw: MockResp())
+    monkeypatch.setattr(xts_api.api_session, "post", mock_post)
+
+    res_live = client.post("/internal/positions/square-off", json={
+        "symbol": "CRUDEOIL24NOVFUT",
+        "quantity": 2,
+        "side": "SELL"
+    })
+    assert res_live.status_code == 200
+    data = res_live.json()
+    assert data["status"] == "success"
+    assert len(dispatched) >= 1
+    assert dispatched[0]["orderSide"] == "SELL"
+    assert dispatched[0]["orderQuantity"] == 2
+
+
+
 
 
 

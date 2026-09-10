@@ -2288,3 +2288,224 @@ def panic_square_off_all():
             "closed_quantity": total_closed_qty,
             "unclosed_quantity": 0
         }
+
+def cancel_order(app_order_id: str):
+    """Cancels an open order by AppOrderID."""
+    if getattr(config, "PAPER_TRADE_MODE", False):
+        logger.info(f"PAPER TRADE: Cancel order requested for {app_order_id}")
+        return {"status": "success", "mode": "PAPER", "message": f"Paper order {app_order_id} cancelled"}
+
+    token = get_interactive_token()
+    if not token:
+        return {"status": "error", "message": "Auth failed"}
+
+    client_id = getattr(config, "CLIENT_ID", "").strip()
+    safe_url = get_safe_base_url()
+    headers = {"authorization": token, "Content-Type": "application/json"}
+
+    if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
+        return {"status": "error", "message": "Rate limit exceeded while cancelling order"}
+
+    cancel_url = f"{safe_url}/orders?appOrderID={app_order_id}&clientID={client_id}"
+    try:
+        resp = api_session.delete(cancel_url, json={"appOrderID": app_order_id, "clientID": client_id}, headers=headers, timeout=5)
+        try:
+            res_json = resp.json()
+        except Exception:
+            res_json = {"text": resp.text[:100]}
+        if resp.status_code in (200, 202) and res_json.get("type") in ("success", None):
+            return {"status": "success", "result": res_json}
+        else:
+            return {"status": "error", "result": res_json, "message": res_json.get("description") or res_json.get("message") or f"HTTP {resp.status_code}"}
+    except Exception as e:
+        logger.error(f"Error cancelling order {app_order_id}: {e}")
+        return {"status": "error", "message": str(e)}
+
+def cancel_all_orders():
+    """Cancels all open/pending orders for this client."""
+    if getattr(config, "PAPER_TRADE_MODE", False):
+        return {"status": "success", "mode": "PAPER", "cancelled_count": 0}
+
+    token = get_interactive_token()
+    if not token:
+        return {"status": "error", "message": "Auth failed"}
+
+    client_id = getattr(config, "CLIENT_ID", "").strip()
+    safe_url = get_safe_base_url()
+    headers = {"authorization": token, "Content-Type": "application/json"}
+
+    # 1. Attempt atomic cancel-all
+    try:
+        cancel_all_url = f"{safe_url}/orders/cancelall"
+        c_all_resp = None
+        if ORDER_RATE_LIMITER.acquire(timeout=3.0):
+            c_all_resp = api_session.post(cancel_all_url, json={"clientID": client_id}, headers=headers, timeout=5)
+        if c_all_resp is not None and c_all_resp.status_code == 200 and c_all_resp.json().get("type") == "success":
+            logger.info(f"🚨 ATOMIC CANCEL ALL SUCCESSFUL for client {client_id}")
+            return {"status": "success", "method": "ATOMIC_CANCEL_ALL", "message": "All open orders cancelled"}
+    except Exception as e:
+        logger.warning(f"Atomic cancel-all failed, falling back to sequential: {e}")
+
+    # Fallback to sequential cancel of each open order
+    try:
+        cancelled_orders = []
+        ord_url = f"{safe_url}/orders"
+        o_resp = api_session.get(ord_url, headers=headers, timeout=5)
+        orders = o_resp.json().get("result", []) if o_resp.status_code == 200 else []
+        for ord_item in orders:
+            if isinstance(ord_item, dict):
+                st = ord_item.get("OrderStatus")
+                app_id = ord_item.get("AppOrderID")
+                if st in ("Open", "New", "Pending", "PartiallyFilled", "PendingNew", "Replaced") and app_id:
+                    cancel_url = f"{safe_url}/orders?appOrderID={app_id}&clientID={client_id}"
+                    if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
+                        continue
+                    api_session.delete(cancel_url, json={"appOrderID": app_id, "clientID": client_id}, headers=headers, timeout=4)
+                    cancelled_orders.append(app_id)
+        return {"status": "success", "cancelled_orders": cancelled_orders, "count": len(cancelled_orders)}
+    except Exception as e:
+        logger.error(f"Sequential order cancellation error: {e}")
+        return {"status": "error", "message": str(e)}
+
+def square_off_single_position(symbol: str = "", instrument_id: int = None, quantity: int = None, side: str = None, exchange_segment: str = None, product_type: str = None):
+    """Squares off an open position for a single instrument."""
+    if getattr(config, "PAPER_TRADE_MODE", False):
+        logger.info(f"PAPER TRADE: Square-off requested for symbol={symbol}")
+        return {"status": "success", "mode": "PAPER", "message": f"Paper position for {symbol} squared off"}
+
+    token = get_interactive_token()
+    if not token:
+        return {"status": "error", "message": "Auth failed"}
+
+    client_id = getattr(config, "CLIENT_ID", "").strip()
+    safe_url = get_safe_base_url()
+    headers = {"authorization": token, "Content-Type": "application/json"}
+
+    try:
+        pos_url = f"{safe_url}/portfolio/positions?dayOrNet=NetWise"
+        resp = api_session.get(pos_url, headers=headers, timeout=5)
+        if resp.status_code in (400, 401, 403):
+            clear_tokens()
+            token = get_interactive_token(force_refresh=True)
+            if token:
+                headers = {"authorization": token, "Content-Type": "application/json"}
+                resp = api_session.get(pos_url, headers=headers, timeout=5)
+
+        positions = resp.json().get("result", {}).get("positionList", [])
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to fetch positions: {e}"}
+
+    matched_pos = None
+    target_sym_clean = re.sub(r'[\s\-]+', '', symbol).upper() if symbol else ""
+    for p in positions:
+        p_qty = int(p.get("Quantity", 0))
+        if p_qty == 0:
+            continue
+        p_inst_id = int(p.get("ExchangeInstrumentId", 0) or p.get("InstrumentId", 0))
+        p_sym = str(p.get("TradingSymbol", "")).strip().upper()
+        p_sym_clean = re.sub(r'[\s\-]+', '', p_sym)
+
+        if instrument_id and p_inst_id == instrument_id:
+            matched_pos = p
+            break
+        if target_sym_clean and (p_sym_clean == target_sym_clean or target_sym_clean in p_sym_clean or p_sym_clean in target_sym_clean):
+            matched_pos = p
+            break
+
+    if not matched_pos:
+        return {"status": "error", "message": f"No open position found matching symbol={symbol} (inst_id={instrument_id})"}
+
+    qty_in_pos = int(matched_pos.get("Quantity", 0))
+    inst_id = int(matched_pos.get("ExchangeInstrumentId", 0) or matched_pos.get("InstrumentId", 0))
+    exch_seg = exchange_segment or matched_pos.get("ExchangeSegment", "MCXFO")
+    prod_type = product_type or matched_pos.get("ProductType", "NRML")
+    sym = matched_pos.get("TradingSymbol", symbol)
+
+    # Determine action (if pos is long, action to close is SELL, if short, action to close is BUY)
+    action = side.upper() if side else ("SELL" if qty_in_pos > 0 else "BUY")
+    square_qty = abs(quantity) if (quantity is not None and quantity > 0) else abs(qty_in_pos)
+
+    # Instrument metadata for tick size and freeze limit
+    inst_meta = get_instrument_by_id(inst_id)
+    if inst_meta:
+        tick_size = inst_meta["tick_size"]
+        freeze_limit = inst_meta["freeze_qty"]
+        exch_seg = inst_meta["exch_seg"]
+    else:
+        clean_lookup = re.sub(r'[\s\-]+', '', sym)
+        _, _, _, inst_tick, _, inst_freeze, _ = get_dynamic_contract_info(clean_lookup)
+        tick_size = inst_tick or 0.05
+        freeze_limit = inst_freeze or getattr(config, "DEFAULT_FREEZE_QTY_IF_UNKNOWN", 100000)
+
+    live_price = get_live_price(inst_id, exch_seg)
+    if not live_price or live_price == "TOKEN_EXPIRED":
+        try:
+            candles = fetch_ohlc_candles(exch_seg, inst_id, 60, 1)
+            if candles and isinstance(candles, list) and len(candles) > 0:
+                last_c = candles[-1]
+                if isinstance(last_c, dict) and last_c.get("close", 0) > 0:
+                    live_price = float(last_c["close"])
+        except Exception:
+            pass
+
+    if not live_price or live_price == "TOKEN_EXPIRED":
+        if action == "BUY":
+            pos_price = float(matched_pos.get("SellAveragePrice", 0) or matched_pos.get("ActualSellAveragePrice", 0) or matched_pos.get("LastTradedPrice", 0) or matched_pos.get("LTP", 0) or 0)
+        else:
+            pos_price = float(matched_pos.get("BuyAveragePrice", 0) or matched_pos.get("ActualBuyAveragePrice", 0) or matched_pos.get("LastTradedPrice", 0) or matched_pos.get("LTP", 0) or 0)
+        if pos_price > 0:
+            live_price = pos_price
+
+    if not live_price or live_price == "TOKEN_EXPIRED" or float(live_price) <= 0:
+        return {"status": "error", "message": f"Cannot determine safe execution price for {sym}. Refusing blind order dispatch!"}
+
+    live_price = float(live_price)
+    buffer = max(live_price * 0.01, tick_size * 10)
+    raw_limit = (live_price + buffer) if action == "BUY" else (live_price - buffer)
+    exec_price = apply_tick_size(raw_limit, tick_size, action)
+
+    chunks = slice_quantity_for_freeze(square_qty, freeze_limit)
+    successful_chunks = []
+    failed_chunks = []
+
+    for chunk_idx, chunk_qty in enumerate(chunks, start=1):
+        order_ref = f"SQ_{int(time.time()*1000)}_{chunk_idx}_{uuid.uuid4().hex[:6]}"
+        order_url = f"{safe_url}/orders"
+        payload = {
+            "exchangeSegment": exch_seg,
+            "exchangeInstrumentID": inst_id,
+            "productType": prod_type,
+            "orderType": "LIMIT",
+            "orderSide": action,
+            "timeInForce": "DAY",
+            "disclosedQuantity": 0,
+            "orderQuantity": chunk_qty,
+            "limitPrice": exec_price,
+            "stopPrice": 0,
+            "apiOrderSource": "WEBAPI",
+            "orderUniqueIdentifier": order_ref,
+            "clientID": client_id,
+        }
+        if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
+            failed_chunks.append({"symbol": sym, "qty": chunk_qty, "reason": "Rate limit exceeded"})
+            continue
+        try:
+            resp_post = api_session.post(order_url, headers=headers, json=payload, timeout=8)
+            try:
+                res = resp_post.json()
+            except Exception:
+                res = {"type": "error", "description": f"HTTP {resp_post.status_code}"}
+            if res.get("type") == "success" or res.get("status") == "success":
+                successful_chunks.append({"symbol": sym, "action": action, "qty": chunk_qty, "result": res})
+            else:
+                failed_chunks.append({"symbol": sym, "action": action, "qty": chunk_qty, "result": res, "reason": res.get("description") or res.get("message") or "Broker rejection"})
+        except Exception as err:
+            failed_chunks.append({"symbol": sym, "action": action, "qty": chunk_qty, "reason": str(err)})
+
+    if failed_chunks and not successful_chunks:
+        return {"status": "error", "message": f"Square off failed for {sym}", "failed_chunks": failed_chunks}
+    elif failed_chunks:
+        return {"status": "partial_success", "message": f"Partial square off for {sym}", "successful_chunks": successful_chunks, "failed_chunks": failed_chunks}
+    else:
+        return {"status": "success", "message": f"Square off executed for {sym}", "chunks": successful_chunks}
+

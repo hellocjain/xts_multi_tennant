@@ -1039,6 +1039,60 @@ async def resume_trading(request: Request):
     logger.info(f"RESUMED: Client {getattr(config, 'CLIENT_ID', '')} trading state set to ACTIVE")
     return {"status": "success", "trading_paused": False}
 
+@app.post("/internal/orders/{app_order_id}/cancel")
+async def cancel_order_internal(app_order_id: str, request: Request):
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    res = await anyio.to_thread.run_sync(xts_api.cancel_order, app_order_id)
+    return res
+
+@app.post("/internal/orders/cancel-all")
+async def cancel_all_orders_internal(request: Request):
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    res = await anyio.to_thread.run_sync(xts_api.cancel_all_orders)
+    return res
+
+@app.post("/internal/positions/square-off")
+async def square_off_position_internal(request: Request):
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    sym = body.get("symbol", "")
+    inst_id = body.get("instrument_id")
+    qty = body.get("quantity")
+    side = body.get("side")
+    exch_seg = body.get("exchange_segment")
+    prod_type = body.get("product_type")
+
+    res = await anyio.to_thread.run_sync(
+        lambda: xts_api.square_off_single_position(
+            symbol=sym,
+            instrument_id=inst_id,
+            quantity=qty,
+            side=side,
+            exchange_segment=exch_seg,
+            product_type=prod_type
+        )
+    )
+    return res
+
 @app.post("/panic")
 async def panic(request: Request):
     """Emergency Kill-Switch API endpoint"""

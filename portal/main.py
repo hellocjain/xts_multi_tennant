@@ -2573,6 +2573,258 @@ async def api_cancel_order(
 
     return {"status": "error", "message": "Failed to reach client container"}
 
+@app.post("/api/clients/{tenant_id}/positions/square-off")
+async def api_square_off_position(
+    tenant_id: str,
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/positions/square-off"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/positions/square-off"
+    url_local = f"http://127.0.0.1:{port}/internal/positions/square-off"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, json=body, timeout=10.0)
+                if resp.status_code in (200, 202):
+                    res = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"status": "ok"}
+                    database.record_audit(user["username"], "SQUARE_OFF_POSITION", {"target": body, "result": res}, tenant_id)
+                    return res
+            except Exception:
+                pass
+
+    return JSONResponse(status_code=502, content={"status": "error", "message": f"Failed to reach client {tenant_id} container for position square-off"})
+
+@app.post("/api/orders/bulk-cancel")
+async def api_bulk_cancel_orders(
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    target_tenant = body.get("tenant_id")
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    headers = {}
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    if target_tenant and target_tenant != "ALL":
+        port = docker_manager.get_tenant_port(target_tenant)
+        urls = [
+            f"http://127.0.0.1:{port}/internal/orders/cancel-all",
+            f"{telemetry_service.CADDY_PROXY_BASE}/{target_tenant}/internal/orders/cancel-all",
+            f"http://xts_client_{target_tenant}:8000/internal/orders/cancel-all"
+        ]
+        async with httpx.AsyncClient() as client:
+            for u in urls:
+                try:
+                    resp = await client.post(u, headers=headers, timeout=8.0)
+                    if resp.status_code in (200, 202):
+                        database.record_audit(user["username"], "BULK_CANCEL_ORDERS", {"tenant_id": target_tenant})
+                        return resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"status": "ok"}
+                except Exception:
+                    pass
+        return JSONResponse(status_code=502, content={"status": "error", "message": f"Failed to reach client {target_tenant}"})
+
+    # Bulk cancel across all active clients
+    with closing(database.get_db_connection()) as conn:
+        tenants = conn.execute("SELECT id FROM tenants WHERE status='ACTIVE'").fetchall()
+
+    async def _cancel_one(tid: str):
+        p = docker_manager.get_tenant_port(tid)
+        for u in [
+            f"http://127.0.0.1:{p}/internal/orders/cancel-all",
+            f"{telemetry_service.CADDY_PROXY_BASE}/{tid}/internal/orders/cancel-all",
+            f"http://xts_client_{tid}:8000/internal/orders/cancel-all"
+        ]:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(u, headers=headers, timeout=5.0)
+                    if resp.status_code in (200, 202):
+                        return {"tenant_id": tid, "status": "success"}
+            except Exception:
+                pass
+        return {"tenant_id": tid, "status": "unreachable"}
+
+    results = await asyncio.gather(*[_cancel_one(t["id"]) for t in tenants], return_exceptions=True)
+    database.record_audit(user["username"], "BULK_CANCEL_ALL_CLIENTS", {"results": str(results)})
+    return {"status": "ok", "cancelled_clients": len(tenants), "results": results}
+
+@app.get("/api/clients/{tenant_id}/settings")
+async def api_get_client_settings(
+    tenant_id: str,
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    with closing(database.get_db_connection()) as conn:
+        t_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not t_row:
+            raise HTTPException(status_code=404, detail="Client not found")
+        c_row = conn.execute("SELECT * FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+        r_row = conn.execute("SELECT * FROM tenant_risk_limits WHERE tenant_id=?", (tenant_id,)).fetchone()
+
+    creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    risk_dict = dict(r_row) if r_row else {}
+
+    return {
+        "name": t_row["name"],
+        "credentials": {
+            "api_key": creds.get("API_KEY", ""),
+            "api_secret": creds.get("API_SECRET", ""),
+            "broker_client_id": creds.get("CLIENT_ID", tenant_id),
+            "execution_mode": "PAPER" if risk_dict.get("paper_trade_mode") else "LIVE"
+        },
+        "risk_limits": {
+            "max_lots_limit": risk_dict.get("max_lots_limit", 100),
+            "max_order_value_inr": float(risk_dict.get("max_order_value_inr", 5000000.0)),
+            "daily_notional_cap_inr": float(risk_dict.get("daily_notional_cap_inr", 10000000.0)),
+            "max_daily_loss_inr": float(risk_dict.get("max_daily_loss_inr", 50000.0)),
+            "slippage_buffer_pct": float(risk_dict.get("slippage_buffer_pct", 0.005)),
+            "min_days_before_expiry_mcx": int(risk_dict.get("min_days_before_expiry_mcx", 7)),
+        },
+        "webhook": {
+            "webhook_url": build_webhook_info(request, tenant_id, "")["webhook_url"],
+            "webhook_secret": creds.get("WEBHOOK_SECRET", "")
+        }
+    }
+
+@app.put("/api/clients/{tenant_id}/credentials")
+async def api_update_client_credentials(
+    tenant_id: str,
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    with closing(database.get_db_connection()) as conn:
+        t_row = conn.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+        if not t_row:
+            raise HTTPException(status_code=404, detail="Client not found")
+        c_row = conn.execute("SELECT * FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+
+    existing_creds = security.decrypt_credentials(c_row["encrypted_payload"]) if c_row else {}
+    name = str(body.get("name", t_row["name"])).strip() or t_row["name"]
+    api_key = str(body.get("api_key", existing_creds.get("API_KEY", ""))).strip()
+    api_secret = str(body.get("api_secret", existing_creds.get("API_SECRET", ""))).strip()
+    client_id = str(body.get("broker_client_id", existing_creds.get("CLIENT_ID", tenant_id))).strip()
+    is_paper = 1 if str(body.get("execution_mode", "LIVE")).upper() == "PAPER" else 0
+    now = time.time()
+
+    creds_payload = {
+        "API_KEY": api_key,
+        "API_SECRET": api_secret,
+        "MD_API_KEY": api_key,
+        "MD_API_SECRET": api_secret,
+        "CLIENT_ID": client_id,
+        "WEBHOOK_SECRET": existing_creds.get("WEBHOOK_SECRET", uuid.uuid4().hex),
+        "XTS_API_BASE_URL": existing_creds.get("XTS_API_BASE_URL", "https://symphony.acagarwal.com:3000/interactive")
+    }
+    enc_creds = security.encrypt_credentials(creds_payload)
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("UPDATE tenants SET name=?, updated_at=? WHERE id=?", (name, now, tenant_id))
+            conn.execute("UPDATE tenant_credentials SET encrypted_payload=?, updated_at=? WHERE tenant_id=?", (enc_creds, now, tenant_id))
+            conn.execute("UPDATE tenant_risk_limits SET paper_trade_mode=?, updated_at=? WHERE tenant_id=?", (is_paper, now, tenant_id))
+
+    try:
+        docker_manager.restart_client_container(tenant_id)
+    except Exception as d_err:
+        logger.warning(f"Container restart warning for {tenant_id}: {d_err}")
+
+    database.record_audit(user["username"], "UPDATE_CLIENT_CREDENTIALS", {"execution_mode": "PAPER" if is_paper else "LIVE"}, tenant_id)
+    return {"status": "ok", "message": "Credentials updated and client container restarted"}
+
+@app.put("/api/clients/{tenant_id}/risk-limits")
+async def api_update_client_risk_limits(
+    tenant_id: str,
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    max_lots = max(1, int(body.get("max_lots_limit", 100)))
+    max_order_val = max(1000.0, float(body.get("max_order_value_inr", 5000000.0)))
+    daily_notional = max(1000.0, float(body.get("daily_notional_cap_inr", 10000000.0)))
+    max_daily_loss = max(500.0, float(body.get("max_daily_loss_inr", 50000.0)))
+    slippage_buf = max(0.0001, min(0.05, float(body.get("slippage_buffer_pct", 0.005))))
+    min_days_mcx = max(0, int(body.get("min_days_before_expiry_mcx", 7)))
+    now = time.time()
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("""
+                UPDATE tenant_risk_limits SET
+                    max_lots_limit=?, max_order_value_inr=?, daily_notional_cap_inr=?,
+                    max_daily_loss_inr=?, slippage_buffer_pct=?, min_days_before_expiry_mcx=?, updated_at=?
+                WHERE tenant_id=?
+            """, (max_lots, max_order_val, daily_notional, max_daily_loss, slippage_buf, min_days_mcx, now, tenant_id))
+
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception as d_err:
+        logger.warning(f"Config write warning for {tenant_id}: {d_err}")
+
+    database.record_audit(user["username"], "UPDATE_RISK_LIMITS", {
+        "max_lots_limit": max_lots,
+        "max_daily_loss_inr": max_daily_loss,
+        "daily_notional_cap_inr": daily_notional,
+        "slippage_buffer_pct": slippage_buf,
+        "min_days_before_expiry_mcx": min_days_mcx
+    }, tenant_id)
+    return {"status": "ok", "message": "Risk limits saved and client config regenerated"}
+
+@app.post("/api/clients/{tenant_id}/webhook-secret/rotate")
+async def api_rotate_webhook_secret(
+    tenant_id: str,
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    with closing(database.get_db_connection()) as conn:
+        c_row = conn.execute("SELECT * FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
+        if not c_row:
+            raise HTTPException(status_code=404, detail="Client credentials not found")
+
+    existing_creds = security.decrypt_credentials(c_row["encrypted_payload"])
+    new_secret = uuid.uuid4().hex
+    existing_creds["WEBHOOK_SECRET"] = new_secret
+    enc_creds = security.encrypt_credentials(existing_creds)
+    now = time.time()
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("UPDATE tenant_credentials SET encrypted_payload=?, updated_at=? WHERE tenant_id=?", (enc_creds, now, tenant_id))
+
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception:
+        pass
+
+    webhook_info = build_webhook_info(request, tenant_id, "")
+    database.record_audit(user["username"], "ROTATE_WEBHOOK_SECRET", {}, tenant_id)
+    return {"status": "ok", "webhook_secret": new_secret, "webhook_url": webhook_info["webhook_url"]}
+
 @app.get("/api/audit-logs")
 async def api_audit_logs(limit: int = 100, user: dict = Depends(require_api_auth)):
     with closing(database.get_db_connection()) as conn:

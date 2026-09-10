@@ -29,15 +29,75 @@ export const GlobalOrdersView: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const [isBulkCancelling, setIsBulkCancelling] = useState(false);
+
   const handleCancelOrder = async (clientId: string, appOrderId: string) => {
-    if (!confirm(`Cancel order ${appOrderId} for client ${clientId}?`)) return;
+    toast.info(`Cancelling order ${appOrderId}...`);
     try {
       await api.cancelOrder(clientId, appOrderId);
-      toast.success(`Cancellation requested for ${appOrderId}`);
+      toast.success(`Order ${appOrderId} cancelled successfully`);
       fetchOrders();
     } catch (err: any) {
       toast.error(`Cancel failed: ${err.message}`);
     }
+  };
+
+  const openOrdersCount = useMemo(() => {
+    return orders.filter((o) => ['OPEN', 'PENDING', 'TRIGGER_PENDING'].includes(o.status.toUpperCase())).length;
+  }, [orders]);
+
+  const handleBulkCancel = async () => {
+    if (openOrdersCount === 0) {
+      toast.info('No open orders to cancel');
+      return;
+    }
+    setIsBulkCancelling(true);
+    toast.info(`Cancelling all ${openOrdersCount} open orders across all accounts...`);
+    try {
+      await api.bulkCancelOrders();
+      toast.success('Bulk cancellation request dispatched successfully');
+      fetchOrders();
+    } catch (err: any) {
+      toast.error(`Bulk cancel failed: ${err.message}`);
+    } finally {
+      setIsBulkCancelling(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (filteredOrders.length === 0) {
+      toast.error('No orders available to export');
+      return;
+    }
+
+    const headers = ['Client Name', 'Client ID', 'App Order ID', 'Time (Placed)', 'Symbol', 'Side', 'Quantity', 'Price', 'Status', 'Product', 'Exchange Segment', 'Reject / Status Message'];
+    const rows = filteredOrders.map((o) => [
+      `"${(o.client_name || o.client_id || '').replace(/"/g, '""')}"`,
+      `"${(o.client_id || '').replace(/"/g, '""')}"`,
+      `"${(o.app_order_id || '').replace(/"/g, '""')}"`,
+      `"${(o.placed_at || '').replace(/"/g, '""')}"`,
+      `"${(o.symbol || '').replace(/"/g, '""')}"`,
+      `"${(o.side || '').replace(/"/g, '""')}"`,
+      o.quantity || 0,
+      o.price || 0,
+      `"${(o.status || '').replace(/"/g, '""')}"`,
+      `"${(o.product_type || '').replace(/"/g, '""')}"`,
+      `"${(o.exchange_segment || '').replace(/"/g, '""')}"`,
+      `"${(o.status_message || '').replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const nowStr = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+    link.href = url;
+    link.setAttribute('download', `orders_${nowStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${filteredOrders.length} orders to orders_${nowStr}.csv`);
   };
 
   const filteredOrders = useMemo(() => {
@@ -82,6 +142,31 @@ export const GlobalOrdersView: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Export CSV */}
+          <button
+            type="button"
+            onClick={handleExportCSV}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-bordercolor font-semibold text-xs flex items-center space-x-1.5 transition"
+            title="Export Orders as CSV"
+          >
+            <Download className="w-3.5 h-3.5 text-brand-400" />
+            <span>Export CSV</span>
+          </button>
+
+          {/* Cancel All Open Orders */}
+          {openOrdersCount > 0 && (
+            <button
+              type="button"
+              onClick={handleBulkCancel}
+              disabled={isBulkCancelling}
+              className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-xl font-semibold text-xs flex items-center space-x-1.5 transition"
+              title="Cancel all open orders across accounts"
+            >
+              <XCircle className="w-3.5 h-3.5" />
+              <span>Cancel All Open ({openOrdersCount})</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={fetchOrders}

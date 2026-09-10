@@ -139,3 +139,26 @@ export interface DashboardTelemetry {
   };
   clients: ClientSummary[];
 }
+
+export interface ClientSettings {
+  name: string;
+  credentials: {
+    api_key: string;
+    api_secret: string;
+    broker_client_id: string;
+    execution_mode: 'LIVE' | 'PAPER';
+  };
+  risk_limits: {
+    max_lots_limit: number;
+    max_order_value_inr: number;
+    daily_notional_cap_inr: number;
+    max_daily_loss_inr: number;
+    slippage_buffer_pct: number;
+    min_days_before_expiry_mcx: number;
+  };
+  webhook: {
+    webhook_url: string;
+    webhook_secret: string;
+  };
+}
+

@@ -1,4 +1,4 @@
-import { DashboardTelemetry, ClientSummary, PositionItem, OrderItem, TradeItem, StrategyItem, MarginInfo, CandleData, ChartMarker } from '../types/telemetry';
+import { DashboardTelemetry, ClientSummary, PositionItem, OrderItem, TradeItem, StrategyItem, MarginInfo, CandleData, ChartMarker, ClientSettings } from '../types/telemetry';
 
 const BASE_URL = '';
 
@@ -87,9 +87,29 @@ export const api = {
     }),
 
   updateClientCredentials: (clientId: string, payload: any) =>
-    request<{ status: string }>(`/api/clients/${clientId}/credentials`, {
+    request<{ status: string; message?: string }>(`/api/clients/${clientId}/credentials`, {
       method: 'PUT',
       body: JSON.stringify(payload),
+    }),
+
+  getClientSettings: (clientId: string) =>
+    request<ClientSettings>(`/api/clients/${clientId}/settings`),
+
+  updateClientRiskLimits: (clientId: string, payload: any) =>
+    request<{ status: string; message?: string }>(`/api/clients/${clientId}/risk-limits`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  rotateWebhookSecret: (clientId: string) =>
+    request<{ status: string; webhook_secret: string; webhook_url: string }>(`/api/clients/${clientId}/webhook-secret/rotate`, {
+      method: 'POST',
+    }),
+
+  squareOffPosition: (clientId: string, symbol: string, quantity?: number, side?: string, productType?: string) =>
+    request<{ status: string; result?: any; message?: string }>(`/api/clients/${clientId}/positions/square-off`, {
+      method: 'POST',
+      body: JSON.stringify({ symbol, quantity, side, product_type: productType }),
     }),
 
   deleteClient: (clientId: string) =>
@@ -104,7 +124,14 @@ export const api = {
   },
 
   cancelOrder: (clientId: string, appOrderId: string) =>
-    request<{ status: string }>(`/api/clients/${clientId}/orders/${appOrderId}/cancel`, { method: 'POST' }),
+    request<{ status: string; result?: any }>(`/api/clients/${clientId}/orders/${appOrderId}/cancel`, { method: 'POST' }),
+
+  bulkCancelOrders: (tenantId?: string) =>
+    request<{ status: string; cancelled_clients?: number; results?: any }>(`/api/orders/bulk-cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ tenant_id: tenantId }),
+    }),
+
 
   // Strategies & Charting
   getStrategies: (clientId: string) =>

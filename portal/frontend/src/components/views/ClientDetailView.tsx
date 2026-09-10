@@ -7,11 +7,14 @@ import {
   StrategyItem, 
   MarginInfo, 
   CandleData, 
-  ChartMarker 
+  ChartMarker,
+  ClientSettings
 } from '../../types/telemetry';
 import { api } from '../../services/api';
 import { TradingViewChart } from '../trading/TradingViewChart';
 import { StrategyRibbon } from '../trading/StrategyRibbon';
+import { DeleteClientModal } from '../modals/DeleteClientModal';
+import { ClientPanicModal } from '../modals/ClientPanicModal';
 import { 
   Layers, 
   LineChart, 
@@ -26,7 +29,15 @@ import {
   Check, 
   AlertTriangle,
   X,
-  Plus
+  Plus,
+  Eye,
+  EyeOff,
+  Trash2,
+  Lock,
+  RefreshCw,
+  XCircle,
+  ShieldAlert,
+  Key
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -51,6 +62,10 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
     strategies: StrategyItem[];
     margin: MarginInfo;
   } | null>(null);
+
+  // Modals
+  const [showPanicModal, setShowPanicModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   // Charting state
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyItem | null>(null);
@@ -79,6 +94,31 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 
   // Copied state
   const [hasCopiedWebhook, setHasCopiedWebhook] = useState(false);
+  const [hasCopiedSecret, setHasCopiedSecret] = useState(false);
+
+  // Settings state
+  const [settings, setSettings] = useState<ClientSettings | null>(null);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [showApiSecret, setShowApiSecret] = useState(false);
+  const [showWebhookSecret, setShowWebhookSecret] = useState(false);
+  const [isSavingCreds, setIsSavingCreds] = useState(false);
+  const [isSavingRisk, setIsSavingRisk] = useState(false);
+  const [isRotatingSecret, setIsRotatingSecret] = useState(false);
+
+  // Form states
+  const [formName, setFormName] = useState('');
+  const [formApiKey, setFormApiKey] = useState('');
+  const [formApiSecret, setFormApiSecret] = useState('');
+  const [formBrokerClientId, setFormBrokerClientId] = useState('');
+  const [formExecMode, setFormExecMode] = useState<'LIVE' | 'PAPER'>('LIVE');
+
+  const [formMaxLots, setFormMaxLots] = useState(100);
+  const [formMaxOrderVal, setFormMaxOrderVal] = useState(5000000);
+  const [formDailyNotional, setFormDailyNotional] = useState(10000000);
+  const [formMaxDailyLoss, setFormMaxDailyLoss] = useState(50000);
+  const [formSlippageBuf, setFormSlippageBuf] = useState(0.005);
+  const [formMinDaysMcx, setFormMinDaysMcx] = useState(7);
 
   // Load client detail data
   const loadClientDetails = async () => {
@@ -96,11 +136,41 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
     }
   };
 
+  const loadSettings = async () => {
+    setIsLoadingSettings(true);
+    try {
+      const data = await api.getClientSettings(clientId);
+      setSettings(data);
+      setFormName(data.name || '');
+      setFormApiKey(data.credentials?.api_key || '');
+      setFormApiSecret(data.credentials?.api_secret || '');
+      setFormBrokerClientId(data.credentials?.broker_client_id || '');
+      setFormExecMode(data.credentials?.execution_mode || 'LIVE');
+
+      setFormMaxLots(data.risk_limits?.max_lots_limit || 100);
+      setFormMaxOrderVal(data.risk_limits?.max_order_value_inr || 5000000);
+      setFormDailyNotional(data.risk_limits?.daily_notional_cap_inr || 10000000);
+      setFormMaxDailyLoss(data.risk_limits?.max_daily_loss_inr || 50000);
+      setFormSlippageBuf(data.risk_limits?.slippage_buffer_pct || 0.005);
+      setFormMinDaysMcx(data.risk_limits?.min_days_before_expiry_mcx || 7);
+    } catch (err: any) {
+      toast.error(`Failed to load client settings: ${err.message}`);
+    } finally {
+      setIsLoadingSettings(false);
+    }
+  };
+
   useEffect(() => {
     loadClientDetails();
     const interval = setInterval(loadClientDetails, 5000);
     return () => clearInterval(interval);
   }, [clientId]);
+
+  useEffect(() => {
+    if (activeSubTab === 'settings') {
+      loadSettings();
+    }
+  }, [activeSubTab, clientId]);
 
   // Load chart data
   const loadChartData = async (symbol: string, tf: string, stratId?: string) => {
@@ -140,14 +210,86 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
     }
   };
 
-  const handlePanicClient = async () => {
-    if (!confirm(`🚨 PANIC: Immediately square off all positions and cancel orders for ${clientName || clientId}?`)) return;
+  const handleSquareOffPosition = async (pos: PositionItem) => {
+    toast.info(`Sending square-off order for ${pos.symbol}...`);
     try {
-      await api.panicClient(clientId);
-      toast.success(`Panic square-off completed for ${clientName || clientId}`);
+      const res = await api.squareOffPosition(
+        clientId,
+        pos.symbol,
+        Math.abs(pos.quantity),
+        pos.quantity > 0 ? 'SELL' : 'BUY',
+        pos.product_type
+      );
+      toast.success(`Square-off completed for ${pos.symbol}`);
       loadClientDetails();
     } catch (err: any) {
-      toast.error(`Panic failed: ${err.message}`);
+      toast.error(`Square-off failed: ${err.message}`);
+    }
+  };
+
+  const handleCancelOrder = async (appOrderId: string) => {
+    toast.info(`Cancelling order ${appOrderId}...`);
+    try {
+      await api.cancelOrder(clientId, appOrderId);
+      toast.success(`Order ${appOrderId} cancelled successfully`);
+      loadClientDetails();
+    } catch (err: any) {
+      toast.error(`Cancel failed: ${err.message}`);
+    }
+  };
+
+  const handleSaveCredentials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingCreds(true);
+    try {
+      await api.updateClientCredentials(clientId, {
+        name: formName,
+        api_key: formApiKey,
+        api_secret: formApiSecret,
+        broker_client_id: formBrokerClientId,
+        execution_mode: formExecMode,
+      });
+      toast.success('Credentials saved and container re-initialized');
+      loadSettings();
+      loadClientDetails();
+    } catch (err: any) {
+      toast.error(`Failed to save credentials: ${err.message}`);
+    } finally {
+      setIsSavingCreds(false);
+    }
+  };
+
+  const handleSaveRiskLimits = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingRisk(true);
+    try {
+      await api.updateClientRiskLimits(clientId, {
+        max_lots_limit: Number(formMaxLots),
+        max_order_value_inr: Number(formMaxOrderVal),
+        daily_notional_cap_inr: Number(formDailyNotional),
+        max_daily_loss_inr: Number(formMaxDailyLoss),
+        slippage_buffer_pct: Number(formSlippageBuf),
+        min_days_before_expiry_mcx: Number(formMinDaysMcx),
+      });
+      toast.success('Risk parameters saved and configuration reloaded');
+      loadSettings();
+    } catch (err: any) {
+      toast.error(`Failed to save risk limits: ${err.message}`);
+    } finally {
+      setIsSavingRisk(false);
+    }
+  };
+
+  const handleRotateWebhookSecret = async () => {
+    setIsRotatingSecret(true);
+    try {
+      await api.rotateWebhookSecret(clientId);
+      toast.success('Webhook secret rotated successfully');
+      loadSettings();
+    } catch (err: any) {
+      toast.error(`Failed to rotate secret: ${err.message}`);
+    } finally {
+      setIsRotatingSecret(false);
     }
   };
 
@@ -295,7 +437,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             {/* Client Panic Button */}
             <button
               type="button"
-              onClick={handlePanicClient}
+              onClick={() => setShowPanicModal(true)}
               className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-xl font-semibold text-xs flex items-center space-x-1.5 transition"
             >
               <Flame className="w-3.5 h-3.5" />
@@ -367,8 +509,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
             }`}
           >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>Credentials & Webhook</span>
+            <ShieldAlert className="w-3.5 h-3.5" />
+            <span>Risk & Credentials</span>
           </button>
         </div>
       </div>
@@ -424,18 +566,20 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                     <th className="p-3 text-right">Sell Avg</th>
                     <th className="p-3 text-right">LTP</th>
                     <th className="p-3 text-right">PnL</th>
+                    <th className="p-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-bordercolor/50 text-slate-200">
                   {(!clientData?.positions || clientData.positions.length === 0) ? (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-500 italic">
+                      <td colSpan={8} className="p-8 text-center text-slate-500 italic">
                         No open market positions for this client.
                       </td>
                     </tr>
                   ) : (
                     clientData.positions.map((pos, idx) => {
                       const posProfit = (pos.pnl || 0) >= 0;
+                      const isOpen = pos.quantity !== 0;
                       return (
                         <tr key={idx} className="hover:bg-slate-800/40 transition">
                           <td className="p-3 font-bold text-slate-100">{pos.symbol}</td>
@@ -448,6 +592,19 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                           <td className="p-3 text-right font-bold text-slate-100">{pos.ltp || '0.00'}</td>
                           <td className={`p-3 text-right font-bold ${posProfit ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {posProfit ? '+' : ''}{formatINR(pos.pnl)}
+                          </td>
+                          <td className="p-3 text-right">
+                            {isOpen && (
+                              <button
+                                type="button"
+                                onClick={() => handleSquareOffPosition(pos)}
+                                className="px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-lg font-semibold text-[11px] transition flex items-center space-x-1 ml-auto"
+                                title="Square off position immediately"
+                              >
+                                <XCircle className="w-3.5 h-3.5" />
+                                <span>Square Off</span>
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -474,44 +631,60 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                     <th className="p-3 text-right">Price</th>
                     <th className="p-3">Status</th>
                     <th className="p-3">Message</th>
+                    <th className="p-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-bordercolor/50 text-slate-200">
                   {(!clientData?.orders || clientData.orders.length === 0) ? (
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-500 italic">
+                      <td colSpan={9} className="p-8 text-center text-slate-500 italic">
                         No orders recorded for this client session.
                       </td>
                     </tr>
                   ) : (
-                    clientData.orders.map((ord, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/40 transition">
-                        <td className="p-3 font-semibold text-slate-300">{ord.app_order_id}</td>
-                        <td className="p-3 text-slate-400">{ord.placed_at || '--:--:--'}</td>
-                        <td className="p-3 font-bold text-slate-100">{ord.symbol}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            ord.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
-                          }`}>
-                            {ord.side}
-                          </span>
-                        </td>
-                        <td className="p-3 text-right text-slate-100">{ord.quantity}</td>
-                        <td className="p-3 text-right text-slate-300">{ord.price || 'MARKET'}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            ord.status === 'COMPLETE'
-                              ? 'bg-emerald-500/10 text-emerald-400'
-                              : ord.status === 'REJECTED'
-                              ? 'bg-rose-500/10 text-rose-400'
-                              : 'bg-amber-500/10 text-amber-400'
-                          }`}>
-                            {ord.status}
-                          </span>
-                        </td>
-                        <td className="p-3 text-slate-400 truncate max-w-xs">{ord.status_message || '-'}</td>
-                      </tr>
-                    ))
+                    clientData.orders.map((ord, idx) => {
+                      const isOpen = ['OPEN', 'PENDING', 'TRIGGER_PENDING'].includes(ord.status.toUpperCase());
+                      return (
+                        <tr key={idx} className="hover:bg-slate-800/40 transition">
+                          <td className="p-3 font-semibold text-slate-300">{ord.app_order_id}</td>
+                          <td className="p-3 text-slate-400">{ord.placed_at || '--:--:--'}</td>
+                          <td className="p-3 font-bold text-slate-100">{ord.symbol}</td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              ord.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                            }`}>
+                              {ord.side}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right text-slate-100">{ord.quantity}</td>
+                          <td className="p-3 text-right text-slate-300">{ord.price || 'MARKET'}</td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              ord.status === 'COMPLETE'
+                                ? 'bg-emerald-500/10 text-emerald-400'
+                                : ord.status === 'REJECTED'
+                                ? 'bg-rose-500/10 text-rose-400'
+                                : 'bg-amber-500/10 text-amber-400'
+                            }`}>
+                              {ord.status}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-400 truncate max-w-xs">{ord.status_message || '-'}</td>
+                          <td className="p-3 text-right">
+                            {isOpen && (
+                              <button
+                                type="button"
+                                onClick={() => handleCancelOrder(ord.app_order_id)}
+                                className="px-2 py-0.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 rounded font-semibold text-[10px] transition"
+                                title="Cancel Order"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -567,81 +740,349 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
           </div>
         )}
 
-        {/* TAB 5: Credentials & Webhook Settings */}
+        {/* TAB 5: Risk & Credentials */}
         {activeSubTab === 'settings' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Webhook Configuration Box */}
-            <div className="bg-cardbg border border-bordercolor rounded-2xl p-5 space-y-4">
-              <h3 className="text-sm font-bold text-slate-100 flex items-center space-x-2">
-                <span>TradingView Webhook Integration</span>
-              </h3>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Connect external TradingView alert triggers to route execution directly to this client container.
-              </p>
-
-              <div className="space-y-2">
-                <label className="text-xs font-mono text-slate-400">Webhook URL Endpoint</label>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={client?.webhook_url || `http://139.59.20.239/webhook/${clientId}`}
-                    className="flex-1 px-3 py-2 bg-obsidian border border-bordercolor rounded-xl text-xs font-mono text-slate-300 select-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(client?.webhook_url || `http://139.59.20.239/webhook/${clientId}`);
-                      setHasCopiedWebhook(true);
-                      setTimeout(() => setHasCopiedWebhook(false), 2000);
-                      toast.success('Webhook URL copied to clipboard');
-                    }}
-                    className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition"
-                  >
-                    {hasCopiedWebhook ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* CARD 1: Broker API Credentials */}
+              <div className="bg-cardbg border border-bordercolor rounded-2xl p-5 space-y-4">
+                <div className="flex items-center space-x-2 text-slate-100 border-b border-bordercolor/60 pb-3">
+                  <Key className="w-4 h-4 text-brand-400" />
+                  <h3 className="text-sm font-bold">Broker API Credentials</h3>
                 </div>
+
+                <form onSubmit={handleSaveCredentials} className="space-y-3.5 text-xs font-mono">
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Account Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={formName}
+                      onChange={(e) => setFormName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Broker Client ID</label>
+                    <input
+                      type="text"
+                      required
+                      value={formBrokerClientId}
+                      onChange={(e) => setFormBrokerClientId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+
+                  {/* API Key with Eye Toggle */}
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Interactive API Key (App Key)</label>
+                    <div className="relative">
+                      <input
+                        type={showApiKey ? 'text' : 'password'}
+                        required
+                        value={formApiKey}
+                        onChange={(e) => setFormApiKey(e.target.value)}
+                        className="w-full pl-3 pr-10 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* API Secret with Eye Toggle */}
+                  <div className="space-y-1">
+                    <label className="text-slate-400">Interactive Secret Key</label>
+                    <div className="relative">
+                      <input
+                        type={showApiSecret ? 'text' : 'password'}
+                        required
+                        value={formApiSecret}
+                        onChange={(e) => setFormApiSecret(e.target.value)}
+                        className="w-full pl-3 pr-10 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiSecret(!showApiSecret)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                      >
+                        {showApiSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Execution Mode Selector */}
+                  <div className="space-y-1 pt-1">
+                    <label className="text-slate-400">Execution Mode</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFormExecMode('LIVE')}
+                        className={`py-2 rounded-xl font-bold border transition ${
+                          formExecMode === 'LIVE'
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            : 'bg-obsidian text-slate-400 border-bordercolor hover:text-slate-200'
+                        }`}
+                      >
+                        LIVE BROKER
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormExecMode('PAPER')}
+                        className={`py-2 rounded-xl font-bold border transition ${
+                          formExecMode === 'PAPER'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            : 'bg-obsidian text-slate-400 border-bordercolor hover:text-slate-200'
+                        }`}
+                      >
+                        PAPER SIMULATED
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={isSavingCreds}
+                      className="w-full py-2.5 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl flex items-center justify-center space-x-1.5 transition"
+                    >
+                      {isSavingCreds ? <RotateCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                      <span>Save Credentials & Re-Initialize</span>
+                    </button>
+                  </div>
+                </form>
               </div>
 
-              <div className="space-y-2 pt-2">
-                <label className="text-xs font-mono text-slate-400">Sample Alert Message Payload (JSON)</label>
-                <pre className="p-3 bg-obsidian border border-bordercolor rounded-xl text-[11px] font-mono text-brand-300 overflow-x-auto">
+              {/* CARD 2: Institutional Risk Limits */}
+              <div className="bg-cardbg border border-bordercolor rounded-2xl p-5 space-y-4">
+                <div className="flex items-center space-x-2 text-slate-100 border-b border-bordercolor/60 pb-3">
+                  <ShieldAlert className="w-4 h-4 text-amber-400" />
+                  <h3 className="text-sm font-bold">Capital & Risk Controls</h3>
+                </div>
+
+                <form onSubmit={handleSaveRiskLimits} className="space-y-3.5 text-xs font-mono">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Max Daily Loss (INR)</label>
+                      <input
+                        type="number"
+                        required
+                        min="500"
+                        step="500"
+                        value={formMaxDailyLoss}
+                        onChange={(e) => setFormMaxDailyLoss(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Daily Notional Cap (INR)</label>
+                      <input
+                        type="number"
+                        required
+                        min="1000"
+                        step="10000"
+                        value={formDailyNotional}
+                        onChange={(e) => setFormDailyNotional(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Max Lots Limit (Per Strategy)</label>
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        value={formMaxLots}
+                        onChange={(e) => setFormMaxLots(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Max Single Order Value (INR)</label>
+                      <input
+                        type="number"
+                        required
+                        min="1000"
+                        step="10000"
+                        value={formMaxOrderVal}
+                        onChange={(e) => setFormMaxOrderVal(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-slate-400">Slippage Buffer Rate (%)</label>
+                      <input
+                        type="number"
+                        required
+                        min="0.01"
+                        max="5"
+                        step="0.05"
+                        value={Math.round(formSlippageBuf * 10000) / 100}
+                        onChange={(e) => setFormSlippageBuf(Number(e.target.value) / 100)}
+                        className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-slate-400">MCX Rollover Threshold (Days)</label>
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        max="30"
+                        value={formMinDaysMcx}
+                        onChange={(e) => setFormMinDaysMcx(Number(e.target.value))}
+                        className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={isSavingRisk}
+                      className="w-full py-2.5 bg-amber-600/90 hover:bg-amber-500 text-white font-bold rounded-xl flex items-center justify-center space-x-1.5 transition"
+                    >
+                      {isSavingRisk ? <RotateCw className="w-4 h-4 animate-spin" /> : <Sliders className="w-4 h-4" />}
+                      <span>Save Live Risk Limits</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* CARD 3: Webhook Integration & Secret Rotator */}
+              <div className="bg-cardbg border border-bordercolor rounded-2xl p-5 space-y-4">
+                <div className="flex items-center space-x-2 text-slate-100 border-b border-bordercolor/60 pb-3">
+                  <Sliders className="w-4 h-4 text-brand-400" />
+                  <h3 className="text-sm font-bold">TradingView Webhook Integration</h3>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-mono text-slate-400">Webhook URL Endpoint</label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={settings?.webhook?.webhook_url || client?.webhook_url || `http://139.59.20.239/webhook/${clientId}`}
+                      className="flex-1 px-3 py-2 bg-obsidian border border-bordercolor rounded-xl text-xs font-mono text-slate-300 select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(settings?.webhook?.webhook_url || client?.webhook_url || `http://139.59.20.239/webhook/${clientId}`);
+                        setHasCopiedWebhook(true);
+                        setTimeout(() => setHasCopiedWebhook(false), 2000);
+                        toast.success('Webhook URL copied');
+                      }}
+                      className="p-2.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl transition"
+                    >
+                      {hasCopiedWebhook ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-mono text-slate-400">Webhook Secret Key</label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type={showWebhookSecret ? 'text' : 'password'}
+                      readOnly
+                      value={settings?.webhook?.webhook_secret || '••••••••••••••••••••••••••••••••'}
+                      className="flex-1 px-3 py-2 bg-obsidian border border-bordercolor rounded-xl text-xs font-mono text-slate-300"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowWebhookSecret(!showWebhookSecret)}
+                      className="p-2.5 bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-slate-200 rounded-xl transition"
+                      title={showWebhookSecret ? 'Hide secret' : 'Show secret'}
+                    >
+                      {showWebhookSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (settings?.webhook?.webhook_secret) {
+                          navigator.clipboard.writeText(settings.webhook.webhook_secret);
+                          setHasCopiedSecret(true);
+                          setTimeout(() => setHasCopiedSecret(false), 2000);
+                          toast.success('Webhook secret copied');
+                        }
+                      }}
+                      className="p-2.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl transition"
+                      title="Copy Secret"
+                    >
+                      {hasCopiedSecret ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRotateWebhookSecret}
+                      disabled={isRotatingSecret}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-brand-400 rounded-xl border border-bordercolor font-semibold text-xs flex items-center space-x-1 transition"
+                      title="Rotate Secret"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isRotatingSecret ? 'animate-spin' : ''}`} />
+                      <span>Rotate</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  <label className="text-xs font-mono text-slate-400">Sample TradingView Alert Message</label>
+                  <pre className="p-3 bg-obsidian border border-bordercolor rounded-xl text-[11px] font-mono text-brand-300 overflow-x-auto">
 {`{
-  "secret": "YOUR_WEBHOOK_SECRET",
+  "secret": "${settings?.webhook?.webhook_secret || 'YOUR_SECRET'}",
   "action": "{{strategy.order.action}}",
   "symbol": "{{ticker}}",
   "quantity": {{strategy.order.contracts}},
   "price": {{close}}
 }`}
-                </pre>
+                  </pre>
+                </div>
               </div>
-            </div>
 
-            {/* Account Credentials Info */}
-            <div className="bg-cardbg border border-bordercolor rounded-2xl p-5 space-y-4">
-              <h3 className="text-sm font-bold text-slate-100">Broker Account Details</h3>
-              <div className="space-y-3 text-xs font-mono text-slate-300">
-                <div className="flex justify-between py-2 border-b border-bordercolor/60">
-                  <span className="text-slate-400">Tenant Container:</span>
-                  <span className="font-semibold text-slate-100">{clientId}</span>
+              {/* CARD 4: Danger Zone */}
+              <div className="bg-cardbg border border-rose-500/30 rounded-2xl p-5 space-y-4 flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2 text-rose-400 border-b border-rose-500/20 pb-3">
+                    <AlertTriangle className="w-4 h-4" />
+                    <h3 className="text-sm font-bold">Account Danger Zone</h3>
+                  </div>
+
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Terminates the client container instance, purges all associated SuperTrend algorithmic models, and deletes encrypted broker secrets.
+                  </p>
+
+                  <div className="p-3 bg-rose-950/20 border border-rose-500/20 rounded-xl text-xs text-rose-300/80 space-y-1 font-mono">
+                    <div>• Container: xts_client_{clientId}</div>
+                    <div>• Requires typing client ID to verify deletion</div>
+                    <div>• Action cannot be reverted</div>
+                  </div>
                 </div>
-                <div className="flex justify-between py-2 border-b border-bordercolor/60">
-                  <span className="text-slate-400">Broker Client ID:</span>
-                  <span className="font-semibold text-slate-100">{client?.broker_client_id}</span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-bordercolor/60">
-                  <span className="text-slate-400">Execution Mode:</span>
-                  <span className={`font-bold ${client?.execution_mode === 'LIVE' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {client?.execution_mode}
-                  </span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-bordercolor/60">
-                  <span className="text-slate-400">Total Collateral:</span>
-                  <span>{formatINR(clientData?.margin?.total_collateral)}</span>
-                </div>
-                <div className="flex justify-between py-2">
-                  <span className="text-slate-400">Account Value:</span>
-                  <span>{formatINR(clientData?.margin?.total_account_value)}</span>
+
+                <div className="pt-4 border-t border-rose-500/20">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteModal(true)}
+                    className="w-full py-2.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-xl font-bold text-xs flex items-center justify-center space-x-2 transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete Client Account Permanently</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -754,6 +1195,34 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Emergency Client Panic Modal */}
+      {showPanicModal && (
+        <ClientPanicModal
+          isOpen={showPanicModal}
+          clientId={clientId}
+          clientName={client?.name || clientId}
+          onClose={() => setShowPanicModal(false)}
+          onSuccess={() => {
+            setShowPanicModal(false);
+            loadClientDetails();
+          }}
+        />
+      )}
+
+      {/* 2-Step Verification Delete Client Modal */}
+      {showDeleteModal && (
+        <DeleteClientModal
+          isOpen={showDeleteModal}
+          clientId={clientId}
+          clientName={client?.name || clientId}
+          onClose={() => setShowDeleteModal(false)}
+          onSuccess={() => {
+            setShowDeleteModal(false);
+            if (onCloseTab) onCloseTab();
+          }}
+        />
       )}
     </div>
   );

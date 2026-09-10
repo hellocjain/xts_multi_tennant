@@ -21,6 +21,7 @@ import {
   Plus
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ClientPanicModal } from '../modals/ClientPanicModal';
 
 interface DashboardViewProps {
   telemetry?: DashboardTelemetry;
@@ -45,6 +46,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [activeFilter, setActiveFilter] = useState<'all' | 'live' | 'paper' | 'profit' | 'loss' | 'paused'>('all');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [panicClientTarget, setPanicClientTarget] = useState<ClientSummary | null>(null);
 
   const clients = telemetry?.clients || [];
 
@@ -84,19 +86,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
-  const handlePanic = async (client: ClientSummary) => {
-    if (!confirm(`🚨 PANIC CONFIRMATION: Square off all positions and cancel orders for ${client.name || client.id}?`)) {
-      return;
-    }
-    setActionLoadingId(client.id);
-    try {
-      await onPanicClient(client.id);
-      toast.success(`Panic square-off completed for ${client.name || client.id}`);
-    } catch (err: any) {
-      toast.error(`Panic failed: ${err.message}`);
-    } finally {
-      setActionLoadingId(null);
-    }
+  const handlePanic = (client: ClientSummary) => {
+    setPanicClientTarget(client);
   };
 
   const formatINR = (val: number = 0) => {
@@ -465,6 +456,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </table>
           </div>
         </div>
+      )}
+
+      {panicClientTarget && (
+        <ClientPanicModal
+          isOpen={!!panicClientTarget}
+          clientId={panicClientTarget.id}
+          clientName={panicClientTarget.name || panicClientTarget.id}
+          onClose={() => setPanicClientTarget(null)}
+          onSuccess={() => {
+            setPanicClientTarget(null);
+            onRefresh();
+          }}
+        />
       )}
     </div>
   );
