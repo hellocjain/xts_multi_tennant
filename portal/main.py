@@ -73,12 +73,6 @@ def require_auth(request: Request) -> dict:
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": "/admin/login"}
         )
-    path = request.url.path
-    if not user.get("is_2fa_enabled") and path not in ("/admin/2fa-setup", "/admin/2fa-confirm", "/admin/logout"):
-        raise HTTPException(
-            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-            headers={"Location": "/admin/2fa-setup"}
-        )
     return user
 
 @asynccontextmanager
@@ -114,6 +108,31 @@ app = FastAPI(title="XTS Multi-Tenant Admin Portal", lifespan=lifespan)
 # AUTHENTICATION ROUTES
 # =====================================================================
 
+# In-memory brute-force rate limiter for admin login
+LOGIN_ATTEMPTS: Dict[str, List[float]] = {}
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_WINDOW_SECONDS = 900  # 15 minutes
+
+def check_login_rate_limit(ip: str) -> Optional[int]:
+    """Returns remaining lockout seconds if IP is locked out, or None if allowed."""
+    now = time.time()
+    attempts = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t < LOCKOUT_WINDOW_SECONDS]
+    LOGIN_ATTEMPTS[ip] = attempts
+    if len(attempts) >= MAX_LOGIN_ATTEMPTS:
+        oldest_in_window = attempts[0]
+        remaining = int(LOCKOUT_WINDOW_SECONDS - (now - oldest_in_window))
+        return max(1, remaining)
+    return None
+
+def record_failed_login(ip: str):
+    now = time.time()
+    attempts = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t < LOCKOUT_WINDOW_SECONDS]
+    attempts.append(now)
+    LOGIN_ATTEMPTS[ip] = attempts
+
+def clear_failed_logins(ip: str):
+    LOGIN_ATTEMPTS.pop(ip, None)
+
 @app.get("/admin/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):
     if get_current_user(request):
@@ -130,96 +149,52 @@ async def login_action(
     ip = request.client.host or "127.0.0.1"
     ua = request.headers.get("user-agent", "")
 
+    # Brute-force rate limit guard
+    lockout_sec = check_login_rate_limit(ip)
+    if lockout_sec:
+        minutes = max(1, (lockout_sec + 59) // 60)
+        database.record_audit(username.strip() or "unknown", "LOCKED_OUT_RATE_LIMIT", {"ip": ip, "lockout_sec": lockout_sec})
+        return templates.TemplateResponse(request=request, name="login.html", context={
+            "error": f"Too many failed login attempts. Temporarily locked out. Please try again in {minutes} minute(s).",
+            "current_user": None
+        })
+
     with closing(database.get_db_connection()) as conn:
         user = conn.execute("SELECT * FROM admin_users WHERE username=?", (username.strip(),)).fetchone()
 
     if not user or not security.verify_password(password, user["password_hash"]):
-        database.record_audit(username, "FAILED_LOGIN_PASSWORD", {"ip": ip})
+        record_failed_login(ip)
+        remaining_attempts = max(0, MAX_LOGIN_ATTEMPTS - len(LOGIN_ATTEMPTS.get(ip, [])))
+        database.record_audit(username, "FAILED_LOGIN_PASSWORD", {"ip": ip, "attempts_remaining": remaining_attempts})
+        err_msg = "Invalid username or password"
+        if remaining_attempts in (1, 2):
+            err_msg += f" ({remaining_attempts} attempt{'s' if remaining_attempts > 1 else ''} remaining before temporary 15-min lockout)"
         return templates.TemplateResponse(request=request, name="login.html", context={
-            "error": "Invalid username or password", "current_user": None
+            "error": err_msg, "current_user": None
         })
 
-    if not user["is_2fa_enabled"]:
-        session_token = security.create_session(user["id"], ip, ua, lifetime_seconds=1800)
-        resp = RedirectResponse(url="/admin/2fa-setup", status_code=303)
-        resp.set_cookie(key="admin_session", value=session_token, httponly=True, samesite="strict")
-        return resp
+    # Clear failed attempt counter on successful login
+    clear_failed_logins(ip)
 
-    input_code = totp_or_recovery.strip()
-    totp_secret = security.decrypt_credentials(user["totp_secret_enc"]).get("secret") if user["totp_secret_enc"] else ""
-    
-    is_totp_valid = security.verify_totp(totp_secret, input_code)
-    is_recovery_valid = False
-    if not is_totp_valid:
-        is_recovery_valid = security.verify_and_consume_recovery_code(user["id"], input_code)
-
-    if not (is_totp_valid or is_recovery_valid):
-        database.record_audit(username, "FAILED_LOGIN_2FA", {"ip": ip})
-        return templates.TemplateResponse(request=request, name="login.html", context={
-            "error": "Invalid 2FA or Recovery Code", "current_user": None
-        })
-
-    session_token = security.create_session(user["id"], ip, ua, lifetime_seconds=43200)
+    # 30-day persistent session (2,592,000 seconds)
+    session_lifetime = 2592000
+    session_token = security.create_session(user["id"], ip, ua, lifetime_seconds=session_lifetime)
     database.record_audit(username, "SUCCESSFUL_LOGIN", {
-        "ip": ip, "method": "RECOVERY_CODE" if is_recovery_valid else "TOTP"
+        "ip": ip, "method": "PASSWORD", "session_lifetime": "30d"
     })
 
     resp = RedirectResponse(url="/admin/dashboard", status_code=303)
-    resp.set_cookie(key="admin_session", value=session_token, httponly=True, samesite="strict")
+    resp.set_cookie(key="admin_session", value=session_token, max_age=session_lifetime, httponly=True, samesite="strict")
     return resp
 
-@app.get("/admin/2fa-setup", response_class=HTMLResponse)
-async def setup_2fa_page(request: Request, user: dict = Depends(require_auth)):
-    secret = security.generate_totp_secret()
-    uri = security.get_totp_uri(secret, user["username"])
-    qr_b64 = security.generate_qr_base64(uri)
-    recovery_codes = security.generate_recovery_codes(10)
-    recovery_codes_str = ",".join(recovery_codes)
-
-    return templates.TemplateResponse(request=request, name="setup_2fa.html", context={
-        "username": user["username"],
-        "totp_secret": secret,
-        "qr_code_base64": qr_b64,
-        "recovery_codes": recovery_codes,
-        "recovery_codes_str": recovery_codes_str,
-        "current_user": user,
-        "error": None
-    })
+@app.get("/admin/2fa-setup")
+async def setup_2fa_page(request: Request):
+    """Legacy route: gracefully redirect to dashboard."""
+    return RedirectResponse(url="/admin/dashboard", status_code=303)
 
 @app.post("/admin/2fa-confirm")
-async def confirm_2fa_action(
-    request: Request,
-    totp_secret: str = Form(...),
-    recovery_codes_str: str = Form(""),
-    confirmation_code: str = Form(...),
-    user: dict = Depends(require_auth)
-):
-    codes_list = [c.strip() for c in recovery_codes_str.split(",") if c.strip()]
-    if not codes_list:
-        codes_list = security.generate_recovery_codes(10)
-
-    if not security.verify_totp(totp_secret, confirmation_code):
-        return templates.TemplateResponse(request=request, name="setup_2fa.html", context={
-            "username": user["username"],
-            "totp_secret": totp_secret,
-            "qr_code_base64": security.generate_qr_base64(security.get_totp_uri(totp_secret, user["username"])),
-            "recovery_codes": codes_list,
-            "recovery_codes_str": ",".join(codes_list),
-            "current_user": user,
-            "error": "Confirmation code was invalid. Please try again."
-        })
-
-    hashed_codes = security.hash_recovery_codes(codes_list)
-    encrypted_secret = security.encrypt_credentials({"secret": totp_secret})
-
-    with closing(database.get_db_connection()) as conn:
-        with conn:
-            conn.execute(
-                "UPDATE admin_users SET totp_secret_enc=?, is_2fa_enabled=1, recovery_codes_hash_json=? WHERE id=?",
-                (encrypted_secret, json.dumps(hashed_codes), user["user_id"])
-            )
-
-    database.record_audit(user["username"], "ENABLE_2FA", {"ip": request.client.host or "127.0.0.1"})
+async def confirm_2fa_action(request: Request):
+    """Legacy route: gracefully redirect to dashboard."""
     return RedirectResponse(url="/admin/dashboard", status_code=303)
 
 @app.get("/admin/logout")

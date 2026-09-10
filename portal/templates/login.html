@@ -10,7 +10,7 @@
                 <i data-lucide="shield" class="w-6 h-6"></i>
             </div>
             <h1 class="text-xl font-bold text-slate-100">Institutional Admin Gateway</h1>
-            <p class="text-xs text-slate-400">Multi-Factor Authenticated Access &bull; Symphony XTS Portal</p>
+            <p class="text-xs text-slate-400">Institutional Access &bull; Symphony XTS Portal</p>
         </div>
 
         {% if error %}
@@ -43,23 +43,9 @@
                 </div>
             </div>
 
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                    2FA Code / Recovery Token
-                </label>
-                <div class="relative">
-                    <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500 pointer-events-none">
-                        <i data-lucide="key" class="w-4 h-4"></i>
-                    </span>
-                    <input type="text" name="totp_or_recovery" placeholder="6-digit TOTP or AB12-CD34" autocomplete="one-time-code"
-                        class="w-full bg-slate-950 border border-bordercolor rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-brand-500 font-mono text-center tracking-widest">
-                </div>
-                <p class="text-[11px] text-slate-500 mt-1.5">Leave empty on first login to enroll multi-factor authentication.</p>
-            </div>
-
             <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 rounded-xl transition duration-150 shadow-lg shadow-brand-600/30 text-xs flex items-center justify-center gap-2">
                 <i data-lucide="log-in" class="w-4 h-4"></i>
-                <span>Authenticate Securely</span>
+                <span>Sign In to Admin Portal</span>
             </button>
         </form>
     </div>

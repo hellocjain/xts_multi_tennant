@@ -150,39 +150,56 @@ def test_session_lifecycle():
     security.destroy_session(token)
     assert security.validate_session(token, "127.0.0.1", "TestAgent") is None
 
+def test_login_rate_limiting_lockout():
+    from main import clear_failed_logins, MAX_LOGIN_ATTEMPTS
+    clear_failed_logins("testclient")
+    with TestClient(app) as client:
+        # 5 consecutive failed attempts
+        for i in range(MAX_LOGIN_ATTEMPTS):
+            res = client.post("/admin/login", data={"username": "admin", "password": "WrongPassword!"})
+            assert res.status_code == 200
+            assert "Invalid username or password" in res.text
+
+        # 6th attempt should be locked out
+        res_locked = client.post("/admin/login", data={"username": "admin", "password": "AdminPass123!"})
+        assert res_locked.status_code == 200
+        assert "Too many failed login attempts" in res_locked.text
+
+        # Clear lockout
+        clear_failed_logins("testclient")
+
+        # Now login should succeed immediately
+        res_ok = client.post("/admin/login", data={"username": "admin", "password": "AdminPass123!"}, follow_redirects=False)
+        assert res_ok.status_code == 303
+        assert "/admin/dashboard" in res_ok.headers["Location"]
+
 def test_portal_flow():
+    from main import clear_failed_logins
+    clear_failed_logins("testclient")
     with TestClient(app) as client:
         # 1. Access login
         res = client.get("/admin/login")
         assert res.status_code == 200
 
-        # 2. Login with default admin
+        # 2. Login directly with master password (no 2FA required)
         res = client.post("/admin/login", data={
             "username": "admin",
             "password": "AdminPass123!",
-            "totp_or_recovery": ""
         }, follow_redirects=False)
         assert res.status_code == 303
-        assert "/admin/2fa-setup" in res.headers["Location"]
+        assert "/admin/dashboard" in res.headers["Location"]
 
         cookie = res.cookies.get("admin_session")
+        assert cookie is not None
 
-        # 3. Setup 2FA
-        res_setup = client.get("/admin/2fa-setup", cookies={"admin_session": cookie})
-        assert res_setup.status_code == 200
+        # 3. Legacy 2FA endpoints should gracefully redirect to dashboard
+        res_setup = client.get("/admin/2fa-setup", cookies={"admin_session": cookie}, follow_redirects=False)
+        assert res_setup.status_code == 303
+        assert "/admin/dashboard" in res_setup.headers["Location"]
 
-        secret = security.generate_totp_secret()
-        import pyotp
-        totp = pyotp.TOTP(secret)
-        current_code = totp.now()
-        rec_codes = security.generate_recovery_codes(10)
-
-        res_confirm = client.post("/admin/2fa-confirm", data={
-            "totp_secret": secret,
-            "recovery_codes_str": ",".join(rec_codes),
-            "confirmation_code": current_code
-        }, cookies={"admin_session": cookie}, follow_redirects=False)
+        res_confirm = client.post("/admin/2fa-confirm", cookies={"admin_session": cookie}, follow_redirects=False)
         assert res_confirm.status_code == 303
+        assert "/admin/dashboard" in res_confirm.headers["Location"]
 
         # 4. Access Dashboard
         res_dash = client.get("/admin/dashboard", cookies={"admin_session": cookie})
