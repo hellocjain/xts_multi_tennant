@@ -133,12 +133,13 @@ def get_contract_multiplier(symbol: str, exch_seg: str = "") -> float:
     if exch_seg and exch_seg not in ("MCXFO", "NCDEX"):
         return 1.0
     clean = resolve_symbol_smart(symbol)
+    norm = ALPHANUM_ONLY.sub('', clean.upper())
     # Match longest root first so variants (GOLDPETAL, GOLDM, CRUDEOILM, SILVERMIC, ZINCMINI, LEADMINI) are not shadowed by base roots
     for root in sorted(COMMODITY_MULTIPLIERS.keys(), key=len, reverse=True):
-        if clean.startswith(root):
+        if norm.startswith(root):
             return COMMODITY_MULTIPLIERS[root]
     for root in sorted(COMMODITY_MULTIPLIERS.keys(), key=len, reverse=True):
-        if root in clean:
+        if root in norm:
             return COMMODITY_MULTIPLIERS[root]
     return 1.0
 
@@ -152,6 +153,18 @@ COMMON_ALIASES = {
     "SILVERMINI": "SILVERM",
     "SILVERMICRO": "SILVERMIC",
     "ALUMINIUMMINI": "ALUMINI",
+    "GOLDPETAL": "GOLDPETAL",
+    "GOLD PETAL": "GOLDPETAL",
+    "GOLD MINI": "GOLDM",
+    "SILVER MINI": "SILVERM",
+    "SILVER MICRO": "SILVERMIC",
+    "CRUDE OIL MINI": "CRUDEOILM",
+    "CRUDE OIL": "CRUDEOIL",
+    "NATURAL GAS": "NATURALGAS",
+    "NATURAL GAS MINI": "NATURALGASM",
+    "ZINC MINI": "ZINCMINI",
+    "LEAD MINI": "LEADMINI",
+    "ALUMINIUM MINI": "ALUMINI",
 }
 
 NO_EXPIRY = datetime.date.max
@@ -679,6 +692,11 @@ def resolve_symbol_smart(raw_symbol):
         return user_map[clean_sym]
     if clean_sym in COMMON_ALIASES:
         return COMMON_ALIASES[clean_sym]
+    norm_sym = ALPHANUM_ONLY.sub('', clean_sym)
+    if norm_sym in user_map:
+        return user_map[norm_sym]
+    if norm_sym in COMMON_ALIASES:
+        return COMMON_ALIASES[norm_sym]
     return clean_sym
 
 def _apply_aliases(name):
@@ -1793,6 +1811,36 @@ def get_positions_telemetry():
     except Exception as e:
         logger.error(f"Error fetching position telemetry: {e}")
         return {"error": str(e), "positions": [], "all_positions": []}
+
+def get_broker_positions_net(symbol: str = "", inst_id: int = 0) -> dict:
+    """
+    Returns a mapping of {instrument_id: signed_net_lots} from the live broker NetWise portfolio.
+    Also returns matched net lot quantity if inst_id or symbol is provided.
+    """
+    res = get_positions_telemetry()
+    all_pos = res.get("all_positions", []) or res.get("positions", [])
+    lot_map = {}
+    clean_sym = ALPHANUM_ONLY.sub('', str(symbol).upper()) if symbol else ""
+
+    matched_qty = 0
+    for p in all_pos:
+        p_id = int(p.get("instrument_id") or 0)
+        p_sym = str(p.get("symbol") or "").upper()
+        p_clean_sym = ALPHANUM_ONLY.sub('', p_sym)
+        p_qty = int(p.get("quantity", 0) or 0)
+        if p_id > 0:
+            lot_map[p_id] = p_qty
+        if inst_id and p_id == inst_id:
+            matched_qty = p_qty
+        elif clean_sym and (clean_sym in p_clean_sym or p_clean_sym.startswith(clean_sym)):
+            matched_qty = p_qty
+
+    return {
+        "net_map": lot_map,
+        "matched_qty": matched_qty,
+        "all_positions": all_pos,
+        "is_paper_trade": res.get("is_paper_trade", False)
+    }
 
 def get_holdings_telemetry():
     """Fetches Demat CNC Equity Holdings and computes real-time valuation and P&L."""

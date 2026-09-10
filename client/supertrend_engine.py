@@ -1379,6 +1379,7 @@ class MultiSuperTrendEngine:
         
         self._running: bool = False
         self._task: Optional[asyncio.Task] = None
+        self.last_reconcile_ts: float = 0.0
 
     @property
     def primary_runner(self) -> Optional[SingleSuperTrendRunner]:
@@ -1844,16 +1845,198 @@ class MultiSuperTrendEngine:
             return {"status": "ERROR", "error": f"Strategy '{strategy_id}' not found"}
         return await runner.reset_to_flat(square_off_broker, xts_api_module, main_module)
 
+    async def reconcile_portfolio_drift(self, xts_api_module, main_module, symbol_filter: Optional[str] = None) -> dict:
+        """
+        Closed-Loop Position Reconciliation & Auto-Healing Watchdog:
+        Compares expected aggregate strategy targets against live broker NetWise positions.
+        If a drift is detected during market hours, automatically dispatches an adjustment order
+        within strict safety limits and triggers Ops Alert.
+        """
+        if not xts_api_module or not main_module:
+            return {"status": "SKIPPED", "reason": "Modules unconfigured"}
+
+        is_market_open_fn = getattr(config, "is_market_open_ist", None)
+        if is_market_open_fn and not is_market_open_fn("MCXFO"):
+            return {"status": "SKIPPED", "reason": "Market closed"}
+
+        targets = self.get_portfolio_target_positions()
+        if symbol_filter:
+            targets = {k: v for k, v in targets.items() if k == symbol_filter}
+
+        if not targets:
+            return {"status": "IN_SYNC", "drift_count": 0, "actions": []}
+
+        # Fetch live broker net positions
+        broker_data = await asyncio.to_thread(xts_api_module.get_broker_positions_net)
+        if broker_data.get("is_paper_trade", False):
+            return {"status": "IN_SYNC", "drift_count": 0, "actions": ["PAPER_MODE"]}
+
+        all_pos = broker_data.get("all_positions", [])
+        actions_taken = []
+        drift_count = 0
+
+        for target_sym, target_lots in targets.items():
+            runners_for_sym = [r for r in self.strategies.values() if r.is_enabled and r.symbol == target_sym]
+            if not runners_for_sym:
+                continue
+
+            primary_r = runners_for_sym[0]
+            total_configured_lots = sum(r.quantity for r in runners_for_sym)
+
+            inst = xts_api_module.resolve_contract(target_sym)
+            if not inst:
+                continue
+
+            try:
+                inst_id = int(inst.get("inst_id") or 0)
+            except Exception:
+                inst_id = 0
+
+            if not inst_id:
+                continue
+
+            try:
+                lot_size = int(inst.get("lot_size") or 1)
+            except Exception:
+                lot_size = 1
+            if lot_size <= 0:
+                lot_size = 1
+
+            actual_raw_qty = 0
+            for p in all_pos:
+                p_id = int(p.get("instrument_id") or 0)
+                if p_id == inst_id:
+                    actual_raw_qty = int(p.get("quantity", 0) or 0)
+                    break
+
+            actual_broker_lots = (actual_raw_qty // lot_size) if (lot_size > 1 and actual_raw_qty % lot_size == 0) else actual_raw_qty
+            drift_lots = actual_broker_lots - target_lots
+
+            if drift_lots != 0:
+                drift_count += 1
+                adj_delta = target_lots - actual_broker_lots  # positive = need to BUY, negative = need to SELL
+                logger.warning(
+                    f"⚠️ CLOSED-LOOP DRIFT DETECTED on {target_sym}: "
+                    f"Broker={actual_broker_lots} lots, Target={target_lots} lots | Drift={drift_lots:+d} lots (Need adjustment: {adj_delta:+d} lots)"
+                )
+
+                # Strict Safety Cap: Max allowable drift is 2x total configured size (or min 10 lots)
+                max_allowed_drift = max(total_configured_lots * 2, 10)
+                if abs(drift_lots) > max_allowed_drift:
+                    err_msg = (
+                        f"🚨 DRIFT SAFETY CAP EXCEEDED on {target_sym}: "
+                        f"Drift {drift_lots:+d} lots exceeds max allowable safety limit ({max_allowed_drift} lots). "
+                        f"Auto-heal halted to prevent runaway order sizing; immediate manual admin review required!"
+                    )
+                    logger.critical(err_msg)
+                    if hasattr(xts_api_module, "send_ops_alert"):
+                        xts_api_module.send_ops_alert(err_msg)
+                    actions_taken.append({
+                        "symbol": target_sym,
+                        "status": "SAFETY_CAP_EXCEEDED",
+                        "drift": drift_lots,
+                        "max_allowed": max_allowed_drift
+                    })
+                    continue
+
+                action = "BUY" if adj_delta > 0 else "SELL"
+                abs_adj_lots = abs(adj_delta)
+                now_ts = int(time.time())
+                order_ref = f"ST_AUTO_HEAL_{target_sym}_{action}_{now_ts}"
+                sig_id = f"st_autoheal_{str(uuid.uuid4())[:8]}"
+
+                logger.info(f"🛡️ AUTO-HEAL: Dispatching corrective {action} {abs_adj_lots} lots on {target_sym}...")
+                is_paper = any(r.execution_mode == "PAPER" for r in runners_for_sym)
+                freeze_limit = getattr(config, "FREEZE_QTY_LIMIT", 100000)
+                chunks = slice_quantity_for_freeze(abs_adj_lots, freeze_limit)
+
+                for chunk_idx, chunk_qty in enumerate(chunks, start=1):
+                    chunk_ref = f"{order_ref}_{chunk_idx}" if len(chunks) > 1 else order_ref
+                    payload = {
+                        "action": action,
+                        "symbol": target_sym,
+                        "quantity": chunk_qty,
+                        "price": 0.0,
+                        "product_type": primary_r.product_type,
+                        "order_ref": chunk_ref,
+                        "source": "auto_heal_watchdog",
+                        "is_paper": is_paper,
+                    }
+
+                    res = None
+                    if hasattr(main_module, "_dispatch_and_record"):
+                        res = await asyncio.to_thread(
+                            main_module._dispatch_and_record,
+                            f"{sig_id}_{chunk_idx}",
+                            action,
+                            target_sym,
+                            chunk_qty,
+                            0.0,
+                            chunk_ref,
+                            is_paper,
+                        )
+                    elif hasattr(xts_api_module, "place_order"):
+                        res = await asyncio.to_thread(
+                            xts_api_module.place_order,
+                            action,
+                            target_sym,
+                            chunk_qty,
+                            0.0,
+                            chunk_ref,
+                            is_paper,
+                        )
+
+                    order_ok = (
+                        res is None or 
+                        (isinstance(res, dict) and (res.get("status") in ("done", "paper_done", "partial_failure") or res.get("type") == "success"))
+                    )
+
+                    if order_ok:
+                        succ_msg = (
+                            f"✅ AUTO-HEAL EXECUTED: Dispatched {action} {chunk_qty} lots on {target_sym}. "
+                            f"Broker position brought into alignment with strategy target ({target_lots} lots)."
+                        )
+                        logger.info(succ_msg)
+                        if hasattr(xts_api_module, "send_ops_alert"):
+                            xts_api_module.send_ops_alert(succ_msg)
+                        actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "FILLED"})
+                    else:
+                        fail_msg = (
+                            f"❌ AUTO-HEAL ORDER REJECTED on {target_sym} ({action} {chunk_qty} lots): {res}. "
+                            f"Check broker margin, RMS limits, or instrument status!"
+                        )
+                        logger.error(fail_msg)
+                        if hasattr(xts_api_module, "send_ops_alert"):
+                            xts_api_module.send_ops_alert(fail_msg)
+                        actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "REJECTED", "details": res})
+                        break
+
+                    if chunk_idx < len(chunks):
+                        await asyncio.sleep(0.2)
+
+        return {
+            "status": "RECONCILED" if drift_count > 0 else "IN_SYNC",
+            "drift_count": drift_count,
+            "actions": actions_taken
+        }
+
     async def evaluate_cycle(self, xts_api_module, main_module) -> None:
-        """Evaluates active strategies concurrently across all registered runners."""
+        """Evaluates active strategies concurrently across all registered runners with pre-cycle drift check."""
         runners = [r for r in self.strategies.values() if r.is_enabled and r.is_configured]
         if not runners:
             return
+
+        # Pre-cycle Closed-Loop Position Reconciliation
+        try:
+            await self.reconcile_portfolio_drift(xts_api_module, main_module)
+        except Exception as ex:
+            logger.warning(f"Pre-cycle drift check warning: {ex}")
+
         tasks = [runner.evaluate_cycle(xts_api_module, main_module) for runner in runners]
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def run_loop(self, xts_api_module, main_module) -> None:
-        """Master background loop evaluating all active runners on their respective candle closes."""
+        """Master background loop evaluating all active runners on their respective candle closes and running 60s auto-heal watchdog."""
         self._running = True
         logger.info(f"MultiSuperTrendEngine background loop started (Max strategies: {self.max_strategies}).")
         
@@ -1869,6 +2052,15 @@ class MultiSuperTrendEngine:
                 runners = [r for r in self.strategies.values() if r.is_enabled and r.is_configured]
                 if runners:
                     now_ts = int(time.time())
+
+                    # Periodic 60-second Auto-Heal Watchdog during market hours
+                    if now_ts - self.last_reconcile_ts >= 60:
+                        self.last_reconcile_ts = now_ts
+                        try:
+                            await self.reconcile_portfolio_drift(xts_api_module, main_module)
+                        except Exception as ex:
+                            logger.error(f"Auto-Heal Watchdog periodic error: {ex}")
+
                     eval_tasks = []
                     for r in runners:
                         tf_sec = parse_timeframe_seconds(r.timeframe)

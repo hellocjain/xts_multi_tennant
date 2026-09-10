@@ -11,6 +11,7 @@ import datetime
 import uuid
 import asyncio
 import httpx
+import re
 
 import database
 import security
@@ -749,8 +750,7 @@ async def validate_supertrend_symbol(
     symbol: str = "",
     user: dict = Depends(require_auth)
 ):
-    """HTMX endpoint validating a symbol against client container's contract master."""
-    clean_sym = symbol.strip().upper()
+    clean_sym = re.sub(r'[\s\-_]+', '', symbol.strip().upper())
     if not clean_sym:
         return HTMLResponse('<div class="text-[11px] text-slate-500 font-mono italic">Type a symbol (e.g. SILVER1001!, CRUDEOIL1!, RELIANCE) to validate.</div>')
 
@@ -877,8 +877,15 @@ async def save_supertrend_strategy_action(
     user: dict = Depends(require_auth)
 ):
     """Saves or updates a symbol strategy for a client account (Max 6 concurrent strategies)."""
-    clean_sym = symbol.strip().upper()
+    clean_sym = re.sub(r'[\s\-_]+', '', symbol.strip().upper())
     clean_seg = exchange_segment.strip().upper() or "MCXFO"
+    if clean_seg == "MCXFO":
+        if clean_sym in ("GOLDPETAL", "GOLD"):
+            clean_sym = f"{clean_sym}1!"
+        elif clean_sym in ("SILVER100", "SILVERM", "SILVERMIC", "SILVER"):
+            clean_sym = f"{clean_sym}1!"
+        elif clean_sym in ("CRUDEOIL", "CRUDEOILM", "NATURALGAS", "NATURALGASM", "COPPER", "ZINC", "LEAD", "ALUMINIUM"):
+            clean_sym = f"{clean_sym}1!"
     clean_prod = product_type.strip().upper() or "NRML"
     clean_qty = max(1, quantity)
     clean_atr = max(2, atr_period)
