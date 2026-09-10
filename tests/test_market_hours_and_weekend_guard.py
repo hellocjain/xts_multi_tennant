@@ -349,3 +349,14 @@ def test_fetch_ohlc_candles_filters_weekend_bars(monkeypatch):
     assert len(candles) == 1
     assert candles[0]["time"] == 1788543900
 
+
+def test_is_market_open_ist_default_time():
+    """
+    Verifies that config.is_market_open_ist executes cleanly when now_ts is None
+    (using real system time.time() without mocking) and does not throw NameError.
+    """
+    import config
+    # Must not raise NameError or any exception
+    result = config.is_market_open_ist("MCXFO", now_ts=None, force_check=True)
+    assert isinstance(result, bool)
+
