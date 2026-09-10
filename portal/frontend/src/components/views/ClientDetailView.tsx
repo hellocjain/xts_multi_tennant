@@ -311,7 +311,9 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
         pos.symbol,
         Math.abs(pos.quantity),
         pos.quantity > 0 ? 'SELL' : 'BUY',
-        pos.product_type
+        pos.product_type,
+        pos.instrument_id,
+        pos.exchange_segment
       );
       toast.success(`Square-off completed for ${pos.symbol}`);
       loadClientDetails();
@@ -565,9 +567,11 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
         </div>
 
         {/* Sub-Tab Navigation Bar */}
-        <div className="flex items-center space-x-2 mt-4 pt-2 border-t border-bordercolor/60 overflow-x-auto no-scrollbar text-xs">
+        <div role="tablist" aria-label="Client detail views" className="flex items-center space-x-2 mt-4 pt-2 border-t border-bordercolor/60 overflow-x-auto no-scrollbar text-xs">
           <button
             type="button"
+            role="tab"
+            aria-selected={activeSubTab === 'chart'}
             onClick={() => setActiveSubTab('chart')}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-medium transition ${
               activeSubTab === 'chart'
@@ -581,6 +585,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={activeSubTab === 'positions'}
             onClick={() => setActiveSubTab('positions')}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-medium transition ${
               activeSubTab === 'positions'
@@ -594,6 +600,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={activeSubTab === 'orders'}
             onClick={() => setActiveSubTab('orders')}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-medium transition ${
               activeSubTab === 'orders'
@@ -607,6 +615,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={activeSubTab === 'trades'}
             onClick={() => setActiveSubTab('trades')}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-medium transition ${
               activeSubTab === 'trades'
@@ -620,6 +630,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 
           <button
             type="button"
+            role="tab"
+            aria-selected={activeSubTab === 'settings'}
             onClick={() => setActiveSubTab('settings')}
             className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg font-medium transition ${
               activeSubTab === 'settings'

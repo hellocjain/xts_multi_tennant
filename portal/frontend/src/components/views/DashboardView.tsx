@@ -181,6 +181,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={onRefresh}
               disabled={isLoading}
               title="Refresh Telemetry"
+              aria-label="Refresh Telemetry"
               className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl border border-bordercolor transition cursor-pointer"
             >
               <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-brand-400' : ''}`} />
@@ -208,6 +209,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={() => setSearchQuery('')}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-800 transition cursor-pointer"
               title="Clear search"
+              aria-label="Clear search"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -238,6 +240,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             type="button"
             onClick={() => setViewMode('cards')}
             title="Card Matrix View"
+            aria-label="Card Matrix View"
             className={`p-1.5 rounded-lg transition ${
               viewMode === 'cards' ? 'bg-slate-800 text-brand-400' : 'text-slate-400 hover:text-slate-200'
             }`}
@@ -248,6 +251,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             type="button"
             onClick={() => setViewMode('table')}
             title="Dense Table View"
+            aria-label="Dense Table View"
             className={`p-1.5 rounded-lg transition ${
               viewMode === 'table' ? 'bg-slate-800 text-brand-400' : 'text-slate-400 hover:text-slate-200'
             }`}
@@ -364,6 +368,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       onClick={() => handleTogglePause(client)}
                       disabled={isLoadingThis}
                       title={isPaused ? 'Resume Trading' : 'Pause Trading'}
+                      aria-label={isPaused ? `Resume trading for ${client.name || client.id}` : `Pause trading for ${client.name || client.id}`}
                       className={`p-1.5 rounded-xl border transition cursor-pointer ${
                         isPaused
                           ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
@@ -384,6 +389,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       onClick={() => handlePanic(client)}
                       disabled={isLoadingThis}
                       title="Panic Square Off Client"
+                      aria-label={`Panic square off for ${client.name || client.id}`}
                       className="p-1.5 rounded-xl bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30 transition cursor-pointer"
                     >
                       <Flame className="w-4 h-4" />
@@ -461,6 +467,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           disabled={isLoadingThis}
                           onClick={() => handleTogglePause(client)}
                           title={isPaused ? 'Resume Trading' : 'Pause Trading'}
+                          aria-label={isPaused ? `Resume trading for ${client.name || client.id}` : `Pause trading for ${client.name || client.id}`}
                           className={`p-1 rounded-lg border transition cursor-pointer ${
                             isPaused
                               ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
@@ -481,6 +488,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           disabled={isLoadingThis}
                           className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 rounded-lg transition cursor-pointer"
                           title="Panic Square Off"
+                          aria-label={`Panic square off for ${client.name || client.id}`}
                         >
                           <Flame className="w-3.5 h-3.5 inline" />
                         </button>

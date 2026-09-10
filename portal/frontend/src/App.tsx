@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Header } from './components/layout/Header';
 import { WorkspaceTabs } from './components/layout/WorkspaceTabs';
@@ -41,16 +41,6 @@ function TerminalApp() {
 
   const { telemetry, isLoading, refetch, isWsConnected } = useTelemetry(isAuthenticated === true);
 
-  // Check auth session
-  const checkAuth = useCallback(async () => {
-    try {
-      const res = await api.getMe();
-      setIsAuthenticated(res.authenticated);
-    } catch {
-      setIsAuthenticated(false);
-    }
-  }, []);
-
   useEffect(() => {
     let isMounted = true;
     api.getMe().then((res) => {
@@ -64,6 +54,7 @@ function TerminalApp() {
     });
 
     const handleUnauthorized = () => {
+      queryClient.clear();
       setIsAuthenticated(false);
     };
 
@@ -87,7 +78,7 @@ function TerminalApp() {
       window.removeEventListener('auth:unauthorized', handleUnauthorized);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [checkAuth]);
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -95,6 +86,7 @@ function TerminalApp() {
     } catch {
       // ignore
     } finally {
+      queryClient.clear();
       setIsAuthenticated(false);
       toast.success('Logged out successfully');
     }

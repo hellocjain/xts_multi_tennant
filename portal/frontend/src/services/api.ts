@@ -106,10 +106,25 @@ export const api = {
       method: 'POST',
     }),
 
-  squareOffPosition: (clientId: string, symbol: string, quantity?: number, side?: string, productType?: string) =>
+  squareOffPosition: (
+    clientId: string,
+    symbol: string,
+    quantity?: number,
+    side?: string,
+    productType?: string,
+    instrumentId?: number,
+    exchangeSegment?: string
+  ) =>
     request<{ status: string; result?: any; message?: string }>(`/api/clients/${clientId}/positions/square-off`, {
       method: 'POST',
-      body: JSON.stringify({ symbol, quantity, side, product_type: productType }),
+      body: JSON.stringify({
+        symbol,
+        quantity,
+        side,
+        product_type: productType,
+        instrument_id: instrumentId,
+        exchange_segment: exchangeSegment,
+      }),
     }),
 
   deleteClient: (clientId: string) =>

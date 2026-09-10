@@ -2132,7 +2132,7 @@ async def api_auth_logout(request: Request):
     if token:
         security.destroy_session(token)
     resp = JSONResponse({"status": "ok"})
-    resp.delete_cookie(key="admin_session")
+    resp.delete_cookie(key="admin_session", path="/", httponly=True, samesite="lax")
     return resp
 
 @app.get("/api/dashboard")
@@ -2917,6 +2917,7 @@ async def websocket_telemetry_endpoint(websocket: WebSocket):
                     "margin_used": float(c.get("margin_used", 0.0)),
                     "strategies_count": c.get("supertrend", {}).get("total_strategies", 0),
                     "active_strategies_count": c.get("supertrend", {}).get("active_strategies_count", 0),
+                    "webhook_url": build_webhook_info(websocket, c.get("id"), "")["webhook_url"],
                 })
 
             telemetry_payload = {

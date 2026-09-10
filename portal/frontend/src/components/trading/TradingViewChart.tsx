@@ -291,8 +291,9 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
               type="button"
               onClick={onRefresh}
               title="Reload Chart Data"
+              aria-label="Reload Chart Data"
               disabled={isLoading}
-              className="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition"
+              className="p-1 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded transition cursor-pointer"
             >
               <RotateCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-brand-400' : ''}`} />
             </button>
