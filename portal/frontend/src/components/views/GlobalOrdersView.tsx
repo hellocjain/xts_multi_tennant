@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { OrderItem } from '../../types/telemetry';
 import { api } from '../../services/api';
-import { Search, RotateCw, Download, XCircle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Search, RotateCw, Download, XCircle, ArrowUpRight, ArrowDownRight, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 export const GlobalOrdersView: React.FC = () => {
@@ -10,6 +10,7 @@ export const GlobalOrdersView: React.FC = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [sideFilter, setSideFilter] = useState<string>('ALL');
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
 
   const fetchOrders = async () => {
     setIsLoading(true);
@@ -32,6 +33,8 @@ export const GlobalOrdersView: React.FC = () => {
   const [isBulkCancelling, setIsBulkCancelling] = useState(false);
 
   const handleCancelOrder = async (clientId: string, appOrderId: string) => {
+    if (cancellingOrderId) return;
+    setCancellingOrderId(appOrderId);
     toast.info(`Cancelling order ${appOrderId}...`);
     try {
       await api.cancelOrder(clientId, appOrderId);
@@ -39,6 +42,8 @@ export const GlobalOrdersView: React.FC = () => {
       fetchOrders();
     } catch (err: any) {
       toast.error(`Cancel failed: ${err.message}`);
+    } finally {
+      setCancellingOrderId(null);
     }
   };
 
@@ -185,11 +190,22 @@ export const GlobalOrdersView: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
+            data-search="true"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by symbol, order ID, or client..."
-            className="w-full pl-9 pr-4 py-2 rounded-xl bg-obsidian border border-bordercolor text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
+            placeholder="Search by symbol, order ID, or client... (Cmd+K)"
+            className="w-full pl-9 pr-9 py-2 rounded-xl bg-obsidian border border-bordercolor text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-800 transition cursor-pointer"
+              title="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Status Filters */}
@@ -306,11 +322,18 @@ export const GlobalOrdersView: React.FC = () => {
                         {isOpen && ord.client_id && (
                           <button
                             type="button"
+                            disabled={cancellingOrderId === ord.app_order_id}
                             onClick={() => handleCancelOrder(ord.client_id!, ord.app_order_id)}
-                            className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition"
+                            className={`p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition cursor-pointer inline-flex items-center space-x-1 ${
+                              cancellingOrderId === ord.app_order_id ? 'opacity-60 cursor-not-allowed' : ''
+                            }`}
                             title="Cancel Order"
                           >
-                            <XCircle className="w-4 h-4 inline" />
+                            {cancellingOrderId === ord.app_order_id ? (
+                              <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <XCircle className="w-4 h-4 inline" />
+                            )}
                           </button>
                         )}
                       </td>

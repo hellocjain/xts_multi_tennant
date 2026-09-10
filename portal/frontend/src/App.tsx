@@ -14,6 +14,7 @@ import { useWorkspaceTabs } from './hooks/useWorkspaceTabs';
 import { useTelemetry } from './hooks/useTelemetry';
 import { api } from './services/api';
 import { Toaster, toast } from 'sonner';
+import { ErrorBoundary } from './components/layout/ErrorBoundary';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -57,8 +58,26 @@ function TerminalApp() {
       setIsAuthenticated(false);
     };
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsPanicModalOpen(false);
+        setIsAddClientModalOpen(false);
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>('input[data-search="true"], input[placeholder*="Search"]');
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+      }
+    };
+
     window.addEventListener('auth:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -187,8 +206,10 @@ function TerminalApp() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TerminalApp />
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TerminalApp />
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

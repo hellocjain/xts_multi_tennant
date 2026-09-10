@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StrategyItem } from '../../types/telemetry';
 import { 
   Plus, 
@@ -7,9 +7,7 @@ import {
   RefreshCw, 
   Power, 
   Trash2, 
-  CheckCircle2, 
-  AlertCircle,
-  Sliders
+  RotateCw
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,7 +37,22 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [isToggling, setIsToggling] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [showSyncDropdown, setShowSyncDropdown] = useState(false);
+  const syncDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (syncDropdownRef.current && !syncDropdownRef.current.contains(event.target as Node)) {
+        setShowSyncDropdown(false);
+      }
+    };
+    if (showSyncDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showSyncDropdown]);
 
   const selectedStrat = strategies.find((s) => s.id === selectedStrategyId) || strategies[0];
 
@@ -177,7 +190,7 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
           {/* Quick Actions */}
           <div className="flex items-center space-x-2">
             {/* Sync Trend Dropdown */}
-            <div className="relative">
+            <div className="relative" ref={syncDropdownRef}>
               <button
                 type="button"
                 onClick={() => setShowSyncDropdown(!showSyncDropdown)}
@@ -185,33 +198,33 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
                 title="Override and Synchronize Strategy Trend"
                 className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200 font-medium transition"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-brand-400' : ''}`} />
                 <span>Sync Trend</span>
               </button>
 
               {showSyncDropdown && (
-                <div className="absolute right-0 mt-1.5 w-40 bg-obsidian border border-bordercolor rounded-xl shadow-2xl p-1.5 z-30 space-y-1 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 mt-1.5 w-44 bg-obsidian border border-bordercolor rounded-xl shadow-2xl p-1.5 z-30 space-y-1 animate-in fade-in zoom-in-95 duration-100">
                   <div className="px-2 py-1 text-[10px] font-mono text-slate-400 uppercase tracking-wider">
-                    Target Trend
+                    Target Trend Override
                   </div>
                   <button
                     type="button"
                     onClick={() => handleSync('BUY')}
-                    className="w-full text-left px-2 py-1 text-xs font-mono text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition"
+                    className="w-full text-left px-2.5 py-1.5 text-xs font-mono text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition font-semibold"
                   >
                     Force BUY (+LONG)
                   </button>
                   <button
                     type="button"
                     onClick={() => handleSync('SELL')}
-                    className="w-full text-left px-2 py-1 text-xs font-mono text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                    className="w-full text-left px-2.5 py-1.5 text-xs font-mono text-rose-400 hover:bg-rose-500/10 rounded-lg transition font-semibold"
                   >
                     Force SELL (-SHORT)
                   </button>
                   <button
                     type="button"
                     onClick={() => handleSync('FLAT')}
-                    className="w-full text-left px-2 py-1 text-xs font-mono text-slate-300 hover:bg-slate-800 rounded-lg transition"
+                    className="w-full text-left px-2.5 py-1.5 text-xs font-mono text-slate-300 hover:bg-slate-800 rounded-lg transition"
                   >
                     Force FLAT (0)
                   </button>
@@ -246,7 +259,15 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
             {/* Enable/Disable Toggle */}
             <button
               type="button"
-              onClick={() => onToggleStrategy(selectedStrat.id)}
+              disabled={isToggling}
+              onClick={async () => {
+                setIsToggling(true);
+                try {
+                  await onToggleStrategy(selectedStrat.id);
+                } finally {
+                  setIsToggling(false);
+                }
+              }}
               title={selectedStrat.is_enabled ? 'Disable Strategy' : 'Enable Strategy'}
               className={`p-1.5 rounded-lg border transition ${
                 selectedStrat.is_enabled
@@ -254,20 +275,26 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
                   : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Power className="w-3.5 h-3.5" />
+              {isToggling ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
             </button>
 
             {/* Delete Strategy */}
             <button
               type="button"
-              onClick={() => {
-                onDeleteStrategy(selectedStrat.id);
-                toast.success(`Removed strategy ${selectedStrat.symbol} (${selectedStrat.timeframe})`);
+              disabled={isDeleting}
+              onClick={async () => {
+                setIsDeleting(true);
+                try {
+                  await onDeleteStrategy(selectedStrat.id);
+                  toast.success(`Removed strategy ${selectedStrat.symbol} (${selectedStrat.timeframe})`);
+                } finally {
+                  setIsDeleting(false);
+                }
               }}
               title="Delete Strategy"
               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              {isDeleting ? <RotateCw className="w-3.5 h-3.5 animate-spin text-rose-400" /> : <Trash2 className="w-3.5 h-3.5" />}
             </button>
           </div>
         </div>

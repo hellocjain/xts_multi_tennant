@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
-import { ShieldCheck, Search, RotateCw, ChevronRight, ChevronDown } from 'lucide-react';
+import { ShieldCheck, Search, RotateCw, ChevronRight, ChevronDown, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 export const AuditLogsView: React.FC = () => {
@@ -51,7 +51,7 @@ export const AuditLogsView: React.FC = () => {
           type="button"
           onClick={fetchLogs}
           disabled={isLoading}
-          className="p-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl border border-bordercolor transition"
+          className="p-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl border border-bordercolor transition cursor-pointer"
           title="Refresh Logs"
         >
           <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-brand-400' : ''}`} />
@@ -64,11 +64,22 @@ export const AuditLogsView: React.FC = () => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
+            data-search="true"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by action, actor, or tenant..."
-            className="w-full pl-9 pr-4 py-2 rounded-xl bg-obsidian border border-bordercolor text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
+            placeholder="Search by action, actor, or tenant... (Cmd+K)"
+            className="w-full pl-9 pr-9 py-2 rounded-xl bg-obsidian border border-bordercolor text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-800 transition cursor-pointer"
+              title="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

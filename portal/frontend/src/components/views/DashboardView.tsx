@@ -18,7 +18,8 @@ import {
   Activity, 
   Layers, 
   RotateCw,
-  Plus
+  Plus,
+  X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ClientPanicModal } from '../modals/ClientPanicModal';
@@ -173,7 +174,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               type="button"
               onClick={onOpenAddClient}
-              className="flex-1 py-2 px-3 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow-sm"
+              className="flex-1 py-2 px-3 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow-sm cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Add Client</span>
@@ -183,7 +184,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={onRefresh}
               disabled={isLoading}
               title="Refresh Telemetry"
-              className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl border border-bordercolor transition"
+              className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl border border-bordercolor transition cursor-pointer"
             >
               <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-brand-400' : ''}`} />
             </button>
@@ -193,16 +194,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-cardbg/70 border border-bordercolor p-3 rounded-2xl">
-        {/* Search */}
+        {/* Search with 1-Click Clear */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
+            data-search="true"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search clients by name, tenant ID, or broker ID..."
-            className="w-full pl-9 pr-4 py-2 rounded-xl bg-obsidian border border-bordercolor text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
+            placeholder="Search clients by name, tenant ID, or broker ID... (Cmd+K)"
+            className="w-full pl-9 pr-9 py-2 rounded-xl bg-obsidian border border-bordercolor text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-800 transition cursor-pointer"
+              title="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Filter Pills */}
@@ -355,13 +367,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       onClick={() => handleTogglePause(client)}
                       disabled={isLoadingThis}
                       title={isPaused ? 'Resume Trading' : 'Pause Trading'}
-                      className={`p-1.5 rounded-xl border transition ${
+                      className={`p-1.5 rounded-xl border transition cursor-pointer ${
                         isPaused
                           ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
                           : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-                      }`}
+                      } ${isLoadingThis ? 'opacity-60 cursor-not-allowed' : ''}`}
                     >
-                      {isPaused ? <Play className="w-4 h-4 fill-current" /> : <Pause className="w-4 h-4" />}
+                      {isLoadingThis ? (
+                        <RotateCw className="w-4 h-4 animate-spin text-brand-400" />
+                      ) : isPaused ? (
+                        <Play className="w-4 h-4 fill-current" />
+                      ) : (
+                        <Pause className="w-4 h-4" />
+                      )}
                     </button>
 
                     <button
@@ -369,7 +387,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       onClick={() => handlePanic(client)}
                       disabled={isLoadingThis}
                       title="Panic Square Off Client"
-                      className="p-1.5 rounded-xl bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30 transition"
+                      className="p-1.5 rounded-xl bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30 transition cursor-pointer"
                     >
                       <Flame className="w-4 h-4" />
                     </button>
@@ -400,6 +418,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {filteredClients.map((client) => {
                   const isProfit = client.net_mtm >= 0;
                   const isPaused = client.trading_paused || client.status === 'PAUSED';
+                  const isLoadingThis = actionLoadingId === client.id;
 
                   return (
                     <tr key={client.id} className="hover:bg-slate-800/40 transition">
@@ -432,18 +451,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <td className="p-3 text-right text-slate-300">{formatINR(client.available_margin)}</td>
                       <td className="p-3 text-center">{client.open_positions_count || 0}</td>
                       <td className="p-3 text-center text-brand-400">{client.active_strategies_count || 0}</td>
-                      <td className="p-3 text-right space-x-2">
+                      <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
                         <button
                           type="button"
                           onClick={() => onOpenClientTab(client.id, client.name || client.id)}
-                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] transition"
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] transition cursor-pointer font-semibold"
                         >
                           Open
                         </button>
                         <button
                           type="button"
+                          disabled={isLoadingThis}
+                          onClick={() => handleTogglePause(client)}
+                          title={isPaused ? 'Resume Trading' : 'Pause Trading'}
+                          className={`p-1 rounded-lg border transition cursor-pointer ${
+                            isPaused
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                              : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                          } ${isLoadingThis ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        >
+                          {isLoadingThis ? (
+                            <RotateCw className="w-3.5 h-3.5 animate-spin text-brand-400" />
+                          ) : isPaused ? (
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                          ) : (
+                            <Pause className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handlePanic(client)}
-                          className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition"
+                          disabled={isLoadingThis}
+                          className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 rounded-lg transition cursor-pointer"
                           title="Panic Square Off"
                         >
                           <Flame className="w-3.5 h-3.5 inline" />

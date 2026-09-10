@@ -67,6 +67,11 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   const [showPanicModal, setShowPanicModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
+  // Per-action debouncing & loading states
+  const [squaringOffSymbol, setSquaringOffSymbol] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [isTogglingTrading, setIsTogglingTrading] = useState(false);
+
   // Charting state
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyItem | null>(null);
   const [timeframe, setTimeframe] = useState<string>('5m');
@@ -173,7 +178,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   }, [activeSubTab, clientId]);
 
   // Load chart data
-  const loadChartData = async (symbol: string, tf: string, stratId?: string) => {
+  const loadChartData = async (symbol: string, tf: string, _stratId?: string) => {
     if (!symbol) return;
     setIsChartLoading(true);
     try {
@@ -185,7 +190,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
         lower_band: res.lower_band || [],
         markers: res.markers || [],
       });
-    } catch (err: any) {
+    } catch (_err: any) {
       // chart error non-blocking
     } finally {
       setIsChartLoading(false);
@@ -199,21 +204,26 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   }, [selectedStrategy, timeframe]);
 
   const handleToggleTrading = async () => {
-    if (!clientData) return;
+    if (!clientData || isTogglingTrading) return;
     const newPause = !clientData.client.trading_paused && clientData.client.status !== 'PAUSED';
+    setIsTogglingTrading(true);
     try {
       await api.toggleClientTrading(clientId, newPause);
       toast.success(`Trading ${newPause ? 'PAUSED' : 'RESUMED'}`);
       loadClientDetails();
     } catch (err: any) {
       toast.error(`Error toggling trading: ${err.message}`);
+    } finally {
+      setIsTogglingTrading(false);
     }
   };
 
   const handleSquareOffPosition = async (pos: PositionItem) => {
+    if (squaringOffSymbol) return;
+    setSquaringOffSymbol(pos.symbol);
     toast.info(`Sending square-off order for ${pos.symbol}...`);
     try {
-      const res = await api.squareOffPosition(
+      await api.squareOffPosition(
         clientId,
         pos.symbol,
         Math.abs(pos.quantity),
@@ -224,10 +234,14 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
       loadClientDetails();
     } catch (err: any) {
       toast.error(`Square-off failed: ${err.message}`);
+    } finally {
+      setSquaringOffSymbol(null);
     }
   };
 
   const handleCancelOrder = async (appOrderId: string) => {
+    if (cancellingOrderId) return;
+    setCancellingOrderId(appOrderId);
     toast.info(`Cancelling order ${appOrderId}...`);
     try {
       await api.cancelOrder(clientId, appOrderId);
@@ -235,6 +249,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
       loadClientDetails();
     } catch (err: any) {
       toast.error(`Cancel failed: ${err.message}`);
+    } finally {
+      setCancellingOrderId(null);
     }
   };
 
@@ -382,7 +398,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="font-bold text-base text-slate-100">{client?.name || clientId}</h2>
+                <h2 className="font-bold text-base text-slate-100">{client?.name || clientName || clientId}</h2>
                 <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
                   {clientId}
                 </span>
@@ -423,15 +439,22 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             {/* Trading Toggle */}
             <button
               type="button"
+              disabled={isTogglingTrading}
               onClick={handleToggleTrading}
               className={`px-3 py-1.5 rounded-xl font-semibold text-xs flex items-center space-x-1.5 border transition ${
                 isPaused
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
                   : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-750'
-              }`}
+              } ${isTogglingTrading ? 'opacity-60 cursor-not-allowed' : ''}`}
             >
-              {isPaused ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
-              <span>{isPaused ? 'Resume Trading' : 'Pause Trading'}</span>
+              {isTogglingTrading ? (
+                <RotateCw className="w-3.5 h-3.5 animate-spin" />
+              ) : isPaused ? (
+                <Play className="w-3.5 h-3.5 fill-current" />
+              ) : (
+                <Pause className="w-3.5 h-3.5" />
+              )}
+              <span>{isTogglingTrading ? 'Updating...' : isPaused ? 'Resume Trading' : 'Pause Trading'}</span>
             </button>
 
             {/* Client Panic Button */}
@@ -597,12 +620,19 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                             {isOpen && (
                               <button
                                 type="button"
+                                disabled={squaringOffSymbol === pos.symbol}
                                 onClick={() => handleSquareOffPosition(pos)}
-                                className="px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-lg font-semibold text-[11px] transition flex items-center space-x-1 ml-auto"
+                                className={`px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-lg font-semibold text-[11px] transition flex items-center space-x-1 ml-auto ${
+                                  squaringOffSymbol === pos.symbol ? 'opacity-60 cursor-not-allowed' : ''
+                                }`}
                                 title="Square off position immediately"
                               >
-                                <XCircle className="w-3.5 h-3.5" />
-                                <span>Square Off</span>
+                                {squaringOffSymbol === pos.symbol ? (
+                                  <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <XCircle className="w-3.5 h-3.5" />
+                                )}
+                                <span>{squaringOffSymbol === pos.symbol ? 'Exiting...' : 'Square Off'}</span>
                               </button>
                             )}
                           </td>
@@ -674,11 +704,17 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                             {isOpen && (
                               <button
                                 type="button"
+                                disabled={cancellingOrderId === ord.app_order_id}
                                 onClick={() => handleCancelOrder(ord.app_order_id)}
-                                className="px-2 py-0.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 rounded font-semibold text-[10px] transition"
+                                className={`px-2.5 py-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 rounded font-semibold text-[10px] transition flex items-center space-x-1 ml-auto ${
+                                  cancellingOrderId === ord.app_order_id ? 'opacity-60 cursor-not-allowed' : ''
+                                }`}
                                 title="Cancel Order"
                               >
-                                Cancel
+                                {cancellingOrderId === ord.app_order_id ? (
+                                  <RotateCw className="w-3 h-3 animate-spin" />
+                                ) : null}
+                                <span>{cancellingOrderId === ord.app_order_id ? 'Cancelling...' : 'Cancel'}</span>
                               </button>
                             )}
                           </td>
@@ -746,9 +782,12 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* CARD 1: Broker API Credentials */}
               <div className="bg-cardbg border border-bordercolor rounded-2xl p-5 space-y-4">
-                <div className="flex items-center space-x-2 text-slate-100 border-b border-bordercolor/60 pb-3">
-                  <Key className="w-4 h-4 text-brand-400" />
-                  <h3 className="text-sm font-bold">Broker API Credentials</h3>
+                <div className="flex items-center justify-between border-b border-bordercolor/60 pb-3">
+                  <div className="flex items-center space-x-2 text-slate-100">
+                    <Key className="w-4 h-4 text-brand-400" />
+                    <h3 className="text-sm font-bold">Broker API Credentials</h3>
+                  </div>
+                  {isLoadingSettings && <RotateCw className="w-3.5 h-3.5 animate-spin text-brand-400" />}
                 </div>
 
                 <form onSubmit={handleSaveCredentials} className="space-y-3.5 text-xs font-mono">
@@ -1115,6 +1154,23 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                   onChange={(e) => setNewStratSymbol(e.target.value.toUpperCase())}
                   className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
                 />
+                {/* 1-Click Symbol Presets */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {['CRUDEOIL1!', 'GOLD1!', 'GOLDPETAL1!', 'SILVER1!', 'SILVER100', 'NATURALGAS1!', 'COPPER1!'].map((sym) => (
+                    <button
+                      key={sym}
+                      type="button"
+                      onClick={() => setNewStratSymbol(sym)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono border transition cursor-pointer ${
+                        newStratSymbol === sym
+                          ? 'bg-brand-600/30 border-brand-500 text-brand-300 font-bold'
+                          : 'bg-obsidian border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                      }`}
+                    >
+                      {sym}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
