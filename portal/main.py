@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager, closing
 from typing import Optional, List, Dict, Any
@@ -72,6 +73,15 @@ def require_auth(request: Request) -> dict:
         raise HTTPException(
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": "/admin/login"}
+        )
+    return user
+
+def require_api_auth(request: Request) -> dict:
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: session expired or authentication required"
         )
     return user
 
@@ -2030,3 +2040,643 @@ async def get_system_health_api(user: dict = Depends(require_auth)):
 
 
 
+
+# =====================================================================
+# REACT SPA & JSON API EXTENSION (v10.0-PRO)
+# =====================================================================
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return {"authenticated": False}
+    return {"authenticated": True, "user": {"username": user.get("username", "admin")}}
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request):
+    ip = request.client.host or "127.0.0.1"
+    ua = request.headers.get("user-agent", "")
+
+    lockout_sec = check_login_rate_limit(ip)
+    if lockout_sec:
+        minutes = max(1, (lockout_sec + 59) // 60)
+        database.record_audit("unknown", "LOCKED_OUT_RATE_LIMIT", {"ip": ip, "lockout_sec": lockout_sec})
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Temporarily locked out. Please try again in {minutes} minute(s)."
+        )
+
+    body = {}
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    else:
+        form = await request.form()
+        body = dict(form)
+
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", "")).strip()
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+
+    with closing(database.get_db_connection()) as conn:
+        user = conn.execute("SELECT * FROM admin_users WHERE username=?", (username,)).fetchone()
+
+    if not user or not security.verify_password(password, user["password_hash"]):
+        record_failed_login(ip)
+        remaining = max(0, MAX_LOGIN_ATTEMPTS - len(LOGIN_ATTEMPTS.get(ip, [])))
+        database.record_audit(username, "FAILED_LOGIN_PASSWORD", {"ip": ip, "attempts_remaining": remaining})
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    clear_failed_logins(ip)
+    session_lifetime = 2592000
+    session_token = security.create_session(user["id"], ip, ua, lifetime_seconds=session_lifetime)
+    database.record_audit(username, "SUCCESSFUL_LOGIN", {"ip": ip, "method": "API_PASSWORD"})
+
+    resp = JSONResponse({"status": "ok", "user": {"username": username}})
+    resp.set_cookie(key="admin_session", value=session_token, max_age=session_lifetime, httponly=True, samesite="lax")
+    return resp
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(request: Request):
+    token = request.cookies.get("admin_session")
+    if token:
+        security.destroy_session(token)
+    resp = JSONResponse({"status": "ok"})
+    resp.delete_cookie(key="admin_session")
+    return resp
+
+@app.get("/api/dashboard")
+async def api_dashboard(request: Request, user: dict = Depends(require_api_auth)):
+    data = await telemetry_service.aggregate_all_telemetry()
+    summary = data.get("summary", {})
+    clients = data.get("clients", [])
+
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_ist = datetime.datetime.now(IST)
+    weekday = now_ist.weekday()
+    is_weekday = weekday < 5
+    current_time_str = now_ist.strftime("%H:%M:%S")
+
+    mcx_open = is_weekday and (datetime.time(9, 0) <= now_ist.time() <= datetime.time(23, 55))
+    nse_open = is_weekday and (datetime.time(9, 15) <= now_ist.time() <= datetime.time(15, 30))
+
+    formatted_clients = []
+    paper_count = 0
+    live_count = 0
+    total_positions = 0
+
+    for c in clients:
+        is_paper = bool(c.get("paper_mode", False))
+        if is_paper:
+            paper_count += 1
+        else:
+            live_count += 1
+
+        c_positions = c.get("positions", [])
+        total_positions += len(c_positions)
+
+        formatted_clients.append({
+            "id": c.get("id"),
+            "name": c.get("name") or c.get("id"),
+            "broker_client_id": c.get("client_id") or c.get("id"),
+            "status": "PAUSED" if c.get("status") == "PAUSED" else ("ACTIVE" if c.get("healthy") else c.get("status", "UNKNOWN")),
+            "trading_paused": c.get("status") == "PAUSED",
+            "container_status": c.get("docker_status", "RUNNING"),
+            "execution_mode": "PAPER" if is_paper else "LIVE",
+            "net_mtm": float(c.get("net_mtm", 0.0)),
+            "realized_pnl": float(c.get("realized_pnl", 0.0)),
+            "unrealized_mtm": float(c.get("unrealized_mtm", 0.0)),
+            "open_positions_count": len(c_positions),
+            "orders_count": len(c.get("broker_orders", [])),
+            "available_margin": float(c.get("available_margin", 0.0)),
+            "margin_used": float(c.get("margin_used", 0.0)),
+            "strategies_count": c.get("supertrend", {}).get("total_strategies", 0),
+            "active_strategies_count": c.get("supertrend", {}).get("active_strategies_count", 0),
+            "webhook_url": build_webhook_info(request, c.get("id"), "")["webhook_url"]
+        })
+
+    return {
+        "aggregate_net_mtm": float(summary.get("total_net_mtm", 0.0)),
+        "aggregate_realized_pnl": float(summary.get("total_realized_pnl", 0.0)),
+        "aggregate_unrealized_mtm": float(summary.get("total_unrealized_mtm", 0.0)),
+        "total_clients_count": len(clients),
+        "active_clients_count": summary.get("active_clients", 0),
+        "paper_clients_count": paper_count,
+        "live_clients_count": live_count,
+        "open_positions_total": total_positions,
+        "market_status": {
+            "mcx_open": mcx_open,
+            "nse_open": nse_open,
+            "current_time_ist": current_time_str
+        },
+        "clients": formatted_clients
+    }
+
+@app.get("/api/clients/{tenant_id}")
+async def api_client_detail(tenant_id: str, request: Request, user: dict = Depends(require_api_auth)):
+    c = await telemetry_service.get_single_client_telemetry(tenant_id)
+    if c.get("status") == "NOT_FOUND":
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    is_paper = bool(c.get("paper_mode", False))
+    positions = c.get("positions", [])
+    orders = c.get("broker_orders", [])
+    trades = c.get("broker_trades", [])
+    strategies = c.get("supertrend", {}).get("strategies", [])
+
+    formatted_strategies = []
+    for s in strategies:
+        formatted_strategies.append({
+            "id": str(s.get("id")),
+            "tenant_id": tenant_id,
+            "symbol": s.get("symbol"),
+            "exchange_segment": s.get("exchange_segment", "MCXFO"),
+            "timeframe": s.get("timeframe", "5m"),
+            "quantity": s.get("quantity", 1),
+            "product_type": s.get("product_type", "MIS"),
+            "atr_period": s.get("atr_period", 7),
+            "multiplier": float(s.get("multiplier", 3.0)),
+            "execution_mode": s.get("execution_mode", "LIVE"),
+            "is_enabled": bool(s.get("is_enabled", True)),
+            "virtual_position": s.get("virtual_position", 0),
+            "active_contract_id": s.get("active_contract_id", ""),
+            "active_contract_desc": s.get("active_contract_desc", s.get("symbol")),
+            "current_trend": s.get("current_trend", "INITIALIZING"),
+            "last_eval_time": s.get("last_eval_time", "")
+        })
+
+    client_summary = {
+        "id": c.get("id"),
+        "name": c.get("name") or c.get("id"),
+        "broker_client_id": c.get("client_id") or c.get("id"),
+        "status": "PAUSED" if c.get("status") == "PAUSED" else ("ACTIVE" if c.get("healthy") else c.get("status", "UNKNOWN")),
+        "trading_paused": c.get("status") == "PAUSED",
+        "container_status": c.get("docker_status", "RUNNING"),
+        "execution_mode": "PAPER" if is_paper else "LIVE",
+        "net_mtm": float(c.get("net_mtm", 0.0)),
+        "realized_pnl": float(c.get("realized_pnl", 0.0)),
+        "unrealized_mtm": float(c.get("unrealized_mtm", 0.0)),
+        "open_positions_count": len(positions),
+        "orders_count": len(orders),
+        "available_margin": float(c.get("available_margin", 0.0)),
+        "margin_used": float(c.get("margin_used", 0.0)),
+        "strategies_count": len(strategies),
+        "active_strategies_count": sum(1 for s in strategies if s.get("is_enabled")),
+        "webhook_url": build_webhook_info(request, tenant_id, "")["webhook_url"]
+    }
+
+    margin_info = {
+        "available_margin": float(c.get("available_margin", 0.0)),
+        "margin_used": float(c.get("margin_used", 0.0)),
+        "total_collateral": float(c.get("total_collateral", 0.0)),
+        "net_margin_available": float(c.get("net_margin_available", 0.0)),
+        "cash_available": float(c.get("mcx_margin", {}).get("cash_available", 0.0)),
+        "pay_in_amount": float(c.get("mcx_margin", {}).get("pay_in_amount", 0.0)),
+        "total_account_value": float(c.get("total_account_value", 0.0)),
+    }
+
+    return {
+        "client": client_summary,
+        "positions": positions,
+        "orders": orders,
+        "trades": trades,
+        "strategies": formatted_strategies,
+        "margin": margin_info
+    }
+
+@app.post("/admin/clients/{tenant_id}/toggle-trading")
+async def toggle_trading_action(
+    tenant_id: str,
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    pause = bool(body.get("pause", False))
+    target_status = "PAUSED" if pause else "ACTIVE"
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("UPDATE tenants SET status=?, updated_at=? WHERE id=?", (target_status, time.time(), tenant_id))
+
+    if pause:
+        docker_manager.stop_client_container(tenant_id)
+        action_name = "PAUSE_CLIENT"
+    else:
+        docker_manager.restart_client_container(tenant_id)
+        action_name = "RESUME_CLIENT"
+
+    caddy_manager.sync_caddy_config()
+    database.record_audit(user["username"], action_name, {"status": target_status}, tenant_id)
+    return {"status": "ok", "trading_paused": pause}
+
+@app.post("/api/clients")
+async def api_provision_client(request: Request, user: dict = Depends(require_api_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    clean_id = str(body.get("tenant_id", "")).strip().lower()
+    name = str(body.get("name", "")).strip()
+    if not clean_id or not name:
+        raise HTTPException(status_code=400, detail="Tenant ID and Name are required")
+
+    api_key = str(body.get("app_key", "")).strip()
+    api_secret = str(body.get("secret_key", "")).strip()
+    client_id = str(body.get("broker_client_id", clean_id)).strip()
+    is_paper = 1 if str(body.get("execution_mode", "LIVE")).upper() == "PAPER" else 0
+    now = time.time()
+
+    creds_payload = {
+        "API_KEY": api_key,
+        "API_SECRET": api_secret,
+        "MD_API_KEY": api_key,
+        "MD_API_SECRET": api_secret,
+        "CLIENT_ID": client_id,
+        "WEBHOOK_SECRET": str(uuid.uuid4()).replace("-", ""),
+        "XTS_API_BASE_URL": "https://symphony.acagarwal.com:3000/interactive"
+    }
+    enc_creds = security.encrypt_credentials(creds_payload)
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            existing = conn.execute("SELECT id FROM tenants WHERE id=?", (clean_id,)).fetchone()
+            if existing:
+                raise HTTPException(status_code=400, detail=f"Client ID '{clean_id}' already exists")
+
+            conn.execute(
+                "INSERT INTO tenants (id, name, status, created_at, updated_at) VALUES (?, ?, 'ACTIVE', ?, ?)",
+                (clean_id, name, now, now)
+            )
+            conn.execute(
+                "INSERT INTO tenant_credentials (tenant_id, encrypted_payload, updated_at) VALUES (?, ?, ?)",
+                (clean_id, enc_creds, now)
+            )
+            conn.execute("""
+                INSERT INTO tenant_risk_limits (
+                    tenant_id, max_lots_limit, max_order_value_inr, daily_notional_cap_inr,
+                    max_daily_loss_inr, slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, updated_at
+                ) VALUES (?, 100, 5000000.0, 10000000.0, 50000.0, 0.005, 7, ?, ?)
+            """, (clean_id, is_paper, now))
+
+    docker_manager.provision_client_container(clean_id)
+    caddy_manager.sync_caddy_config()
+    database.record_audit(user["username"], "PROVISION_CLIENT", {"name": name, "paper_mode": bool(is_paper)}, clean_id)
+    return {"status": "ok", "client_id": clean_id}
+
+@app.delete("/api/clients/{tenant_id}")
+async def api_delete_client(tenant_id: str, user: dict = Depends(require_api_auth)):
+    docker_manager.remove_client_container(tenant_id)
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("DELETE FROM tenants WHERE id=?", (tenant_id,))
+    caddy_manager.sync_caddy_config()
+    database.record_audit(user["username"], "DELETE_CLIENT", {}, tenant_id)
+    return {"status": "ok"}
+
+@app.get("/api/clients/{tenant_id}/strategies")
+async def api_get_strategies(tenant_id: str, user: dict = Depends(require_api_auth)):
+    c = await telemetry_service.get_single_client_telemetry(tenant_id)
+    return {"strategies": c.get("supertrend", {}).get("strategies", [])}
+
+@app.post("/api/clients/{tenant_id}/strategies")
+async def api_save_strategy(tenant_id: str, request: Request, user: dict = Depends(require_api_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    clean_sym = re.sub(r'[\s\-_]+', '', str(body.get("symbol", "")).strip().upper())
+    if not clean_sym:
+        raise HTTPException(status_code=400, detail="Symbol is required")
+
+    if clean_sym in ("GOLDPETAL", "GOLD", "SILVER100", "SILVERM", "SILVERMIC", "SILVER", "CRUDEOIL", "CRUDEOILM", "NATURALGAS", "NATURALGASM", "COPPER", "ZINC", "LEAD", "ALUMINIUM"):
+        clean_sym = f"{clean_sym}1!"
+
+    clean_tf = str(body.get("timeframe", "5m")).strip().lower()
+    clean_qty = max(1, int(body.get("quantity", 1)))
+    clean_atr = max(2, int(body.get("atr_period", 7)))
+    clean_mult = max(0.1, float(body.get("multiplier", 3.0)))
+    clean_mode = "PAPER" if str(body.get("execution_mode", "")).upper() == "PAPER" else "LIVE"
+    clean_prod = str(body.get("product_type", "MIS")).upper()
+    now = time.time()
+
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            existing = conn.execute("SELECT id FROM tenant_supertrend_strategies WHERE tenant_id=? AND symbol=? AND timeframe=?", (tenant_id, clean_sym, clean_tf)).fetchone()
+            if existing:
+                strat_id = existing["id"]
+            else:
+                strat_id = f"st_{tenant_id}_{clean_sym.lower()}_{clean_tf}"
+                cur_count = conn.execute("SELECT COUNT(*) FROM tenant_supertrend_strategies WHERE tenant_id=?", (tenant_id,)).fetchone()[0]
+                if cur_count >= 6:
+                    raise HTTPException(status_code=400, detail="Maximum 6 strategies allowed per account.")
+
+            conn.execute("""
+                INSERT INTO tenant_supertrend_strategies (
+                    id, tenant_id, symbol, exchange_segment, timeframe, quantity,
+                    product_type, atr_period, multiplier, execution_mode, is_enabled,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, 'MCXFO', ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ON CONFLICT(tenant_id, symbol, timeframe) DO UPDATE SET
+                    quantity=excluded.quantity,
+                    product_type=excluded.product_type,
+                    atr_period=excluded.atr_period,
+                    multiplier=excluded.multiplier,
+                    execution_mode=excluded.execution_mode,
+                    is_enabled=1,
+                    updated_at=excluded.updated_at
+            """, (strat_id, tenant_id, clean_sym, clean_tf, clean_qty, clean_prod, clean_atr, clean_mult, clean_mode, now, now))
+
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception:
+        pass
+
+    database.record_audit(user["username"], "SAVE_SUPERTREND_STRATEGY", {"symbol": clean_sym, "timeframe": clean_tf, "quantity": clean_qty}, tenant_id)
+    return {"status": "ok", "strategy_id": strat_id}
+
+@app.post("/api/clients/{tenant_id}/strategies/{strategy_id}/toggle")
+async def api_toggle_strategy(tenant_id: str, strategy_id: str, request: Request, user: dict = Depends(require_api_auth)):
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            row = conn.execute("SELECT * FROM tenant_supertrend_strategies WHERE tenant_id=? AND id=?", (tenant_id, strategy_id)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            new_state = 0 if row["is_enabled"] else 1
+            conn.execute("UPDATE tenant_supertrend_strategies SET is_enabled=?, updated_at=? WHERE id=?", (new_state, time.time(), strategy_id))
+
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception:
+        pass
+
+    port = docker_manager.get_tenant_port(tenant_id)
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    for target_url in [
+        f"http://127.0.0.1:{port}/internal/supertrend/strategy/{strategy_id}/toggle",
+        f"http://xts_client_{tenant_id}:8000/internal/supertrend/strategy/{strategy_id}/toggle",
+        f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/supertrend/strategy/{strategy_id}/toggle"
+    ]:
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(target_url, headers=headers, json={"is_enabled": bool(new_state)}, timeout=5.0)
+                if resp.status_code == 200:
+                    break
+        except Exception:
+            pass
+
+    database.record_audit(user["username"], "TOGGLE_SUPERTREND_STRATEGY", {"strategy_id": strategy_id, "is_enabled": bool(new_state)}, tenant_id)
+    return {"status": "ok", "is_enabled": bool(new_state)}
+
+@app.delete("/api/clients/{tenant_id}/strategies/{strategy_id}")
+async def api_delete_strategy(tenant_id: str, strategy_id: str, user: dict = Depends(require_api_auth)):
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("DELETE FROM tenant_supertrend_strategies WHERE tenant_id=? AND id=?", (tenant_id, strategy_id))
+
+    try:
+        docker_manager.write_client_config(tenant_id)
+    except Exception:
+        pass
+
+    database.record_audit(user["username"], "DELETE_SUPERTREND_STRATEGY", {"strategy_id": strategy_id}, tenant_id)
+    return {"status": "ok"}
+
+@app.post("/api/clients/{tenant_id}/strategies/evaluate-now")
+async def api_evaluate_strategy_now(tenant_id: str, request: Request, user: dict = Depends(require_api_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    res = await evaluate_supertrend_now_portal(
+        tenant_id=tenant_id,
+        symbol=body.get("symbol"),
+        strategy_id=body.get("strategy_id"),
+        user=user
+    )
+    return {"status": "ok", "result": res}
+
+@app.post("/api/clients/{tenant_id}/strategies/sync-trend")
+async def api_sync_strategy_trend(tenant_id: str, request: Request, user: dict = Depends(require_api_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    res = await sync_supertrend_trend_portal(
+        tenant_id=tenant_id,
+        strategy_id=body.get("strategy_id"),
+        user=user
+    )
+    return {"status": "ok", "message": "Trend synchronization triggered", "result": res}
+
+@app.post("/api/clients/{tenant_id}/strategies/reset-flat")
+async def api_reset_strategy_flat(tenant_id: str, request: Request, user: dict = Depends(require_api_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    res = await reset_supertrend_strategy_flat_portal(
+        tenant_id=tenant_id,
+        strategy_id=body.get("strategy_id"),
+        square_off_broker=1 if body.get("square_off_broker") else 0,
+        request=request,
+        user=user
+    )
+    return {"status": "ok", "message": "Reset flat executed", "result": res}
+
+@app.get("/api/clients/{tenant_id}/candles")
+async def api_client_candles(
+    tenant_id: str,
+    symbol: str,
+    timeframe: str = "5m",
+    limit: int = 300,
+    strategy_id: Optional[str] = None,
+    user: dict = Depends(require_api_auth)
+):
+    chart_data = await get_supertrend_chart_data(
+        tenant_id=tenant_id,
+        timeframe=timeframe,
+        symbol=symbol,
+        strategy_id=strategy_id,
+        user=user
+    )
+    return {
+        "candles": chart_data.get("candlestick", []),
+        "supertrend_line": chart_data.get("supertrend_line", []),
+        "upper_band": chart_data.get("upper_band", []),
+        "lower_band": chart_data.get("lower_band", []),
+        "markers": chart_data.get("markers", []),
+        "symbol": chart_data.get("symbol", symbol),
+        "timeframe": chart_data.get("timeframe", timeframe)
+    }
+
+@app.get("/api/orders")
+async def api_global_orders(
+    request: Request,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    user: dict = Depends(require_api_auth)
+):
+    data = await telemetry_service.aggregate_all_telemetry()
+    all_orders = []
+
+    for c in data.get("clients", []):
+        cid = c.get("id")
+        cname = c.get("name") or cid
+        for ord_item in c.get("broker_orders", []):
+            order_dict = dict(ord_item)
+            order_dict["client_id"] = cid
+            order_dict["client_name"] = cname
+            all_orders.append(order_dict)
+
+    return {"orders": all_orders}
+
+@app.post("/api/clients/{tenant_id}/orders/{app_order_id}/cancel")
+async def api_cancel_order(
+    tenant_id: str,
+    app_order_id: str,
+    request: Request,
+    user: dict = Depends(require_api_auth)
+):
+    port = docker_manager.get_tenant_port(tenant_id)
+    url_caddy = f"{telemetry_service.CADDY_PROXY_BASE}/{tenant_id}/internal/orders/{app_order_id}/cancel"
+    url_docker = f"http://xts_client_{tenant_id}:8000/internal/orders/{app_order_id}/cancel"
+    url_local = f"http://127.0.0.1:{port}/internal/orders/{app_order_id}/cancel"
+
+    headers = {}
+    internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+    if internal_token:
+        headers["X-Internal-Token"] = internal_token
+
+    async with httpx.AsyncClient() as client:
+        for target_url in [url_local, url_caddy, url_docker]:
+            try:
+                resp = await client.post(target_url, headers=headers, timeout=5.0)
+                if resp.status_code in (200, 202):
+                    database.record_audit(user["username"], "CANCEL_ORDER", {"app_order_id": app_order_id}, tenant_id)
+                    return {"status": "ok", "result": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else "Order cancellation sent"}
+            except Exception:
+                pass
+
+    return {"status": "error", "message": "Failed to reach client container"}
+
+@app.get("/api/audit-logs")
+async def api_audit_logs(limit: int = 100, user: dict = Depends(require_api_auth)):
+    with closing(database.get_db_connection()) as conn:
+        rows = conn.execute("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
+
+    logs = []
+    for r in rows:
+        d = dict(r)
+        d["formatted_time"] = format_epoch_to_ist(d.get("timestamp"))
+        logs.append(d)
+    return {"logs": logs}
+
+# WebSocket Telemetry Streaming Endpoint
+@app.websocket("/ws/telemetry")
+async def websocket_telemetry_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    await websocket.send_json({"type": "connection_status", "connected": True})
+
+    try:
+        while True:
+            data = await telemetry_service.aggregate_all_telemetry()
+            summary = data.get("summary", {})
+            clients = data.get("clients", [])
+
+            IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+            now_ist = datetime.datetime.now(IST)
+            weekday = now_ist.weekday()
+            is_weekday = weekday < 5
+
+            mcx_open = is_weekday and (datetime.time(9, 0) <= now_ist.time() <= datetime.time(23, 55))
+            nse_open = is_weekday and (datetime.time(9, 15) <= now_ist.time() <= datetime.time(15, 30))
+
+            paper_count = sum(1 for c in clients if c.get("paper_mode"))
+            live_count = len(clients) - paper_count
+            total_positions = sum(len(c.get("positions", [])) for c in clients)
+
+            formatted_clients = []
+            for c in clients:
+                formatted_clients.append({
+                    "id": c.get("id"),
+                    "name": c.get("name") or c.get("id"),
+                    "broker_client_id": c.get("client_id") or c.get("id"),
+                    "status": "PAUSED" if c.get("status") == "PAUSED" else ("ACTIVE" if c.get("healthy") else c.get("status", "UNKNOWN")),
+                    "trading_paused": c.get("status") == "PAUSED",
+                    "container_status": c.get("docker_status", "RUNNING"),
+                    "execution_mode": "PAPER" if c.get("paper_mode") else "LIVE",
+                    "net_mtm": float(c.get("net_mtm", 0.0)),
+                    "realized_pnl": float(c.get("realized_pnl", 0.0)),
+                    "unrealized_mtm": float(c.get("unrealized_mtm", 0.0)),
+                    "open_positions_count": len(c.get("positions", [])),
+                    "orders_count": len(c.get("broker_orders", [])),
+                    "available_margin": float(c.get("available_margin", 0.0)),
+                    "margin_used": float(c.get("margin_used", 0.0)),
+                    "strategies_count": c.get("supertrend", {}).get("total_strategies", 0),
+                    "active_strategies_count": c.get("supertrend", {}).get("active_strategies_count", 0),
+                })
+
+            telemetry_payload = {
+                "type": "telemetry_update",
+                "aggregate_net_mtm": float(summary.get("total_net_mtm", 0.0)),
+                "aggregate_realized_pnl": float(summary.get("total_realized_pnl", 0.0)),
+                "aggregate_unrealized_mtm": float(summary.get("total_unrealized_mtm", 0.0)),
+                "total_clients_count": len(clients),
+                "active_clients_count": summary.get("active_clients", 0),
+                "paper_clients_count": paper_count,
+                "live_clients_count": live_count,
+                "open_positions_total": total_positions,
+                "market_status": {
+                    "mcx_open": mcx_open,
+                    "nse_open": nse_open,
+                    "current_time_ist": now_ist.strftime("%H:%M:%S")
+                },
+                "clients": formatted_clients
+            }
+
+            await websocket.send_json(telemetry_payload)
+            await asyncio.sleep(2.5)
+    except (WebSocketDisconnect, Exception):
+        pass
+
+# =====================================================================
+# SPA STATIC ASSETS & HTML CATCH-ALL ROUTING
+# =====================================================================
+FRONTEND_DIST = os.path.join(PORTAL_DIR, "frontend", "dist")
+if not os.path.exists(FRONTEND_DIST):
+    FRONTEND_DIST = "/app/frontend/dist"
+
+if os.path.exists(FRONTEND_DIST):
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/")
+    async def serve_spa_root(request: Request):
+        index_path = os.path.join(FRONTEND_DIST, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        return RedirectResponse(url="/admin/dashboard", status_code=303)
+
+    @app.get("/{full_path:path}")
+    async def serve_spa_catchall(full_path: str, request: Request):
+        if full_path.startswith("admin") or full_path.startswith("api") or full_path.startswith("ws") or full_path.startswith("webhook"):
+            raise HTTPException(status_code=404, detail="Endpoint not found")
+        index_path = os.path.join(FRONTEND_DIST, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+        return RedirectResponse(url="/admin/dashboard", status_code=303)

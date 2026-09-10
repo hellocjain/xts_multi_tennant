@@ -524,3 +524,160 @@ def test_admin_panic_single_client_endpoint(monkeypatch):
 
 
 
+
+def test_api_auth_me_unauthenticated_and_authenticated():
+    """Verifies GET /api/auth/me returns unauthenticated vs authenticated status."""
+    raw_client = TestClient(app)
+    # Unauthenticated
+    res = raw_client.get("/api/auth/me")
+    assert res.status_code == 200
+    assert res.json() == {"authenticated": False}
+
+    # Authenticated
+    auth_client = get_auth_client()
+    res_auth = auth_client.get("/api/auth/me")
+    assert res_auth.status_code == 200
+    assert res_auth.json()["authenticated"] is True
+    assert res_auth.json()["user"]["username"] == "admin"
+
+
+def test_api_auth_login_and_logout():
+    """Verifies POST /api/auth/login and POST /api/auth/logout with JSON payloads."""
+    raw_client = TestClient(app)
+    # Invalid login
+    res_invalid = raw_client.post("/api/auth/login", json={"username": "admin", "password": "WrongPassword"})
+    assert res_invalid.status_code == 401
+
+    # Valid login
+    res_valid = raw_client.post("/api/auth/login", json={"username": "admin", "password": "AdminPass123!"})
+    assert res_valid.status_code == 200
+    assert res_valid.json()["status"] == "ok"
+    assert "admin_session" in res_valid.cookies
+
+    # Me with cookie
+    res_me = raw_client.get("/api/auth/me", cookies=res_valid.cookies)
+    assert res_me.json()["authenticated"] is True
+
+    # Logout
+    res_logout = raw_client.post("/api/auth/logout", cookies=res_valid.cookies)
+    assert res_logout.status_code == 200
+    assert res_logout.json()["status"] == "ok"
+
+
+def test_api_dashboard_telemetry_schema(monkeypatch):
+    """Verifies GET /api/dashboard returns complete structured JSON for React frontend."""
+    async def mock_telemetry():
+        return {
+            "summary": {
+                "total_clients": 2,
+                "active_clients": 2,
+                "healthy_clients": 2,
+                "total_net_mtm": 12500.50,
+                "total_realized_pnl": 5000.00,
+                "total_unrealized_mtm": 7500.50,
+            },
+            "clients": [
+                {
+                    "id": "t_live_profit",
+                    "name": "Live Trader Pro",
+                    "client_id": "ABK001",
+                    "status": "ACTIVE",
+                    "healthy": True,
+                    "paper_mode": False,
+                    "net_mtm": 12500.50,
+                    "realized_pnl": 5000.00,
+                    "unrealized_mtm": 7500.50,
+                    "positions": [{"symbol": "CRUDEOIL1!", "quantity": 1}],
+                    "broker_orders": [],
+                    "available_margin": 250000.0,
+                    "margin_used": 50000.0,
+                    "supertrend": {"total_strategies": 1, "active_strategies_count": 1}
+                }
+            ]
+        }
+    monkeypatch.setattr(telemetry_service, "aggregate_all_telemetry", mock_telemetry)
+
+    client = get_auth_client()
+    res = client.get("/api/dashboard")
+    assert res.status_code == 200
+    data = res.json()
+    assert "aggregate_net_mtm" in data
+    assert data["aggregate_net_mtm"] == 12500.50
+    assert "market_status" in data
+    assert "clients" in data
+    assert len(data["clients"]) == 1
+    assert data["clients"][0]["id"] == "t_live_profit"
+    assert data["clients"][0]["execution_mode"] == "LIVE"
+
+
+def test_api_client_detail_and_toggle_trading(monkeypatch):
+    """Verifies GET /api/clients/{tenant_id} and POST /admin/clients/{tenant_id}/toggle-trading."""
+    async def mock_single(t_id):
+        return {
+            "id": t_id,
+            "name": "Live Trader Pro",
+            "client_id": "ABK001",
+            "status": "ACTIVE",
+            "healthy": True,
+            "paper_mode": False,
+            "net_mtm": 12500.50,
+            "realized_pnl": 5000.00,
+            "unrealized_mtm": 7500.50,
+            "positions": [{"symbol": "CRUDEOIL1!", "quantity": 1, "pnl": 7500.50}],
+            "broker_orders": [{"app_order_id": "ORD001", "symbol": "CRUDEOIL1!", "side": "BUY", "quantity": 1, "status": "COMPLETE"}],
+            "broker_trades": [],
+            "available_margin": 250000.0,
+            "margin_used": 50000.0,
+            "supertrend": {"strategies": []},
+            "mcx_margin": {"cash_available": 200000.0, "pay_in_amount": 0.0}
+        }
+    monkeypatch.setattr(telemetry_service, "get_single_client_telemetry", mock_single)
+    monkeypatch.setattr(docker_manager, "stop_client_container", lambda cid: True)
+    monkeypatch.setattr(docker_manager, "restart_client_container", lambda cid: True)
+    monkeypatch.setattr(caddy_manager, "sync_caddy_config", lambda: True)
+
+    client = get_auth_client()
+    res = client.get("/api/clients/t_live_profit")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["client"]["id"] == "t_live_profit"
+    assert len(data["positions"]) == 1
+    assert len(data["orders"]) == 1
+
+    # Toggle trading to PAUSE
+    res_pause = client.post("/admin/clients/t_live_profit/toggle-trading", json={"pause": True})
+    assert res_pause.status_code == 200
+    assert res_pause.json()["trading_paused"] is True
+
+    # Toggle trading to RESUME
+    res_resume = client.post("/admin/clients/t_live_profit/toggle-trading", json={"pause": False})
+    assert res_resume.status_code == 200
+    assert res_resume.json()["trading_paused"] is False
+
+
+def test_api_orders_and_audit_logs(monkeypatch):
+    """Verifies GET /api/orders and GET /api/audit-logs."""
+    async def mock_telemetry():
+        return {
+            "summary": {"total_net_mtm": 0},
+            "clients": [
+                {
+                    "id": "t_live_profit",
+                    "name": "Live Trader Pro",
+                    "broker_orders": [
+                        {"app_order_id": "ORD999", "symbol": "SILVER1001!", "side": "BUY", "quantity": 1, "status": "COMPLETE"}
+                    ]
+                }
+            ]
+        }
+    monkeypatch.setattr(telemetry_service, "aggregate_all_telemetry", mock_telemetry)
+
+    client = get_auth_client()
+    res_orders = client.get("/api/orders")
+    assert res_orders.status_code == 200
+    assert len(res_orders.json()["orders"]) == 1
+    assert res_orders.json()["orders"][0]["app_order_id"] == "ORD999"
+
+    res_logs = client.get("/api/audit-logs")
+    assert res_logs.status_code == 200
+    assert "logs" in res_logs.json()
