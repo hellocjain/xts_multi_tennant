@@ -721,7 +721,8 @@ def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
     search_queues = [(FUT_MASTER, FUT_NORM_MAP), (CASH_MASTER, CASH_NORM_MAP)] if is_future_intent \
         else [(CASH_MASTER, CASH_NORM_MAP), (FUT_MASTER, FUT_NORM_MAP)]
 
-    today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date()
+    now_ist = datetime.datetime.now(getattr(config, "IST_TIMEZONE", datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+    today = now_ist.date()
 
     with CACHE_LOCK:
         for cache, norm_map in search_queues:
@@ -736,12 +737,21 @@ def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
                     if exp_date == NO_EXPIRY:
                         valid_contracts.append(c)
                         continue
-                    days_left = (exp_date - today).days
-                    min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 7) if exch_seg in ("MCXFO", "NCDEX") \
-                        else getattr(config, "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES", 0)
-                    
-                    if days_left > min_days:
-                        valid_contracts.append(c)
+
+                    if exch_seg in ("MCXFO", "NCDEX"):
+                        # Use 14:00 PM 8th-day schedule with holiday/weekend fallback & 7-day fail-safe
+                        if hasattr(config, "is_commodity_past_rollover"):
+                            is_expired = config.is_commodity_past_rollover(exp_date, exch_seg, now_ist)
+                        else:
+                            days_left = (exp_date - today).days
+                            is_expired = (days_left <= getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 7))
+                        if not is_expired:
+                            valid_contracts.append(c)
+                    else:
+                        days_left = (exp_date - today).days
+                        min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES", 0)
+                        if days_left > min_days:
+                            valid_contracts.append(c)
 
                 candidates = valid_contracts if valid_contracts else available_contracts
                 idx = min(max(0, depth - 1), len(candidates) - 1)

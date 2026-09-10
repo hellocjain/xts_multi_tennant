@@ -359,7 +359,7 @@ def test_setup_2fa_page_qr_generation():
     assert res.headers["location"] == "/admin/dashboard"
 
 def test_custom_jinja_filters():
-    from main import format_inr
+    format_inr = getattr(portal_main, "format_inr")
     assert format_inr(1234567.89) == "1,234,567.89"
     assert format_inr(1234567.89, decimals=0) == "1,234,568"
     assert format_inr(None) == "0.00"

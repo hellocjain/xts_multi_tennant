@@ -92,9 +92,19 @@ def db_init():
                     symbol TEXT NOT NULL,
                     timeframe TEXT NOT NULL,
                     virtual_position INTEGER NOT NULL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    active_contract_id TEXT,
+                    active_contract_desc TEXT
                 )
             """)
+            try:
+                cols = [c[1] for c in conn.execute("PRAGMA table_info(strategy_virtual_positions)").fetchall()]
+                if "active_contract_id" not in cols:
+                    conn.execute("ALTER TABLE strategy_virtual_positions ADD COLUMN active_contract_id TEXT")
+                if "active_contract_desc" not in cols:
+                    conn.execute("ALTER TABLE strategy_virtual_positions ADD COLUMN active_contract_desc TEXT")
+            except Exception:
+                pass
             conn.commit()
 
 # Ensure database tables exist on module load
@@ -200,16 +210,39 @@ def db_get_virtual_position(strategy_key: str) -> int:
         logger.warning(f"Error fetching virtual position for {strategy_key}: {e}")
         return 0
 
-def db_set_virtual_position(strategy_key: str, symbol: str, timeframe: str, virtual_position: int):
+def db_get_virtual_position_record(strategy_key: str) -> dict:
+    try:
+        with _DB_LOCK:
+            with closing(_db_conn()) as conn:
+                row = conn.execute(
+                    "SELECT virtual_position, active_contract_id, active_contract_desc FROM strategy_virtual_positions WHERE strategy_key=?",
+                    (strategy_key,)
+                ).fetchone()
+                if row:
+                    return {
+                        "virtual_position": int(row[0]),
+                        "active_contract_id": row[1],
+                        "active_contract_desc": row[2]
+                    }
+                return {"virtual_position": 0, "active_contract_id": None, "active_contract_desc": None}
+    except Exception as e:
+        logger.warning(f"Error fetching virtual position record for {strategy_key}: {e}")
+        return {"virtual_position": 0, "active_contract_id": None, "active_contract_desc": None}
+
+def db_set_virtual_position(strategy_key: str, symbol: str, timeframe: str, virtual_position: int, active_contract_id=None, active_contract_desc=None):
     try:
         with _DB_LOCK:
             with closing(_db_conn()) as conn:
                 now = time.time()
                 conn.execute(
-                    "INSERT INTO strategy_virtual_positions (strategy_key, symbol, timeframe, virtual_position, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT(strategy_key) DO UPDATE SET virtual_position=excluded.virtual_position, updated_at=excluded.updated_at",
-                    (strategy_key, symbol, timeframe, virtual_position, now)
+                    "INSERT INTO strategy_virtual_positions (strategy_key, symbol, timeframe, virtual_position, updated_at, active_contract_id, active_contract_desc) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(strategy_key) DO UPDATE SET "
+                    "virtual_position=excluded.virtual_position, "
+                    "updated_at=excluded.updated_at, "
+                    "active_contract_id=COALESCE(excluded.active_contract_id, strategy_virtual_positions.active_contract_id), "
+                    "active_contract_desc=COALESCE(excluded.active_contract_desc, strategy_virtual_positions.active_contract_desc)",
+                    (strategy_key, symbol, timeframe, virtual_position, now, active_contract_id, active_contract_desc)
                 )
                 conn.commit()
     except Exception as e:
@@ -220,6 +253,14 @@ def send_execution_notification(action: str, symbol: str, quantity: int, price: 
     Asynchronously dispatches Telegram & Discord alerts on trade execution, fill, or rejection.
     Runs non-blocking in a background daemon thread so it never delays order processing.
     """
+    # Silent Rollover Guard: suppress notifications if order is part of an autonomous contract rollover
+    audit_dict = (result.get("_audit") or {}) if isinstance(result, dict) else {}
+    res_obj = (result.get("result") or {}) if isinstance(result, dict) else {}
+    order_ref_str = str(res_obj.get("OrderUniqueIdentifier") or audit_dict.get("order_ref") or "").upper()
+    if "ROLL_" in order_ref_str or "ROLLOVER" in order_ref_str:
+        logger.info(f"SILENT ROLLOVER: Suppressing external trade notification for {action} {quantity}x {symbol} (ref={order_ref_str})")
+        return
+
     bot_token = str(getattr(config, "TELEGRAM_BOT_TOKEN", "") or "").strip()
     chat_id = str(getattr(config, "TELEGRAM_CHAT_ID", "") or "").strip()
     discord_url = str(getattr(config, "DISCORD_WEBHOOK_URL", "") or "").strip()

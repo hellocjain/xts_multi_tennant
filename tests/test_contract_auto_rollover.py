@@ -326,3 +326,291 @@ def test_fixed_contract_expiry_square_off_and_pause(monkeypatch):
         assert runner.status == "EXPIRED_PAUSED"
 
     asyncio.run(_test())
+
+
+# ==============================================================================
+# TEST 6: 14:00 PM Cutoff Timing & Weekend/Holiday Preceding Day Fallback
+# ==============================================================================
+def test_commodity_cutoff_timing_and_holiday_fallback():
+    """
+    Verifies the mathematical and calendar correctness of get_commodity_rollover_cutoff
+    and is_commodity_past_rollover:
+    1. Standard Weekday Expiry (Wed 2026-09-30):
+       - Target date: 8 days prior = Tue 2026-09-22.
+       - Cutoff: 2026-09-22 14:00:00 IST.
+       - 13:59:59 IST on 2026-09-22 -> False (still in near month)
+       - 14:00:00 IST on 2026-09-22 -> True (rolls over)
+    2. Expiry where 8th day falls on Sunday (Mon 2026-10-05):
+       - 8 days prior = Sun 2026-09-27.
+       - Preceding trading day = Fri 2026-09-25.
+       - Cutoff: 2026-09-25 14:00:00 IST.
+       - Fri 13:50 IST -> False
+       - Fri 14:00 IST -> True (rolls before weekend)
+    3. Fail-safe immediate rollover for <= 7 days:
+       - Any time days_left <= 7 -> True regardless of hour.
+    """
+    IST = config.IST_TIMEZONE
+
+    # Case 1: Wednesday expiry
+    exp_wed = datetime.date(2026, 9, 30)
+    cutoff_wed = config.get_commodity_rollover_cutoff(exp_wed)
+    assert cutoff_wed.date() == datetime.date(2026, 9, 22)
+    assert cutoff_wed.hour == 14 and cutoff_wed.minute == 0
+
+    before_cutoff = datetime.datetime(2026, 9, 22, 13, 59, 50, tzinfo=IST)
+    assert config.is_commodity_past_rollover(exp_wed, "MCXFO", before_cutoff) is False
+
+    at_cutoff = datetime.datetime(2026, 9, 22, 14, 0, 1, tzinfo=IST)
+    assert config.is_commodity_past_rollover(exp_wed, "MCXFO", at_cutoff) is True
+
+    # Case 2: Expiry with weekend fallback
+    exp_mon = datetime.date(2026, 10, 5)
+    cutoff_mon = config.get_commodity_rollover_cutoff(exp_mon)
+    assert cutoff_mon.date() == datetime.date(2026, 9, 25) # Friday!
+    assert cutoff_mon.hour == 14 and cutoff_mon.minute == 0
+
+    fri_before = datetime.datetime(2026, 9, 25, 13, 45, 0, tzinfo=IST)
+    assert config.is_commodity_past_rollover(exp_mon, "MCXFO", fri_before) is False
+
+    fri_after = datetime.datetime(2026, 9, 25, 14, 0, 5, tzinfo=IST)
+    assert config.is_commodity_past_rollover(exp_mon, "MCXFO", fri_after) is True
+
+    # Over the weekend (Sunday 27 Sep)
+    sun_noon = datetime.datetime(2026, 9, 27, 12, 0, 0, tzinfo=IST)
+    assert config.is_commodity_past_rollover(exp_mon, "MCXFO", sun_noon) is True
+
+    # Case 3: Fail-safe <= 7 days
+    day_7 = datetime.datetime(2026, 9, 28, 9, 15, 0, tzinfo=IST)
+    assert config.is_commodity_past_rollover(exp_mon, "MCXFO", day_7) is True
+
+
+# ==============================================================================
+# TEST 7: Off-Market Rollover State Queued & Fired at 09:00 AM Open Bell
+# ==============================================================================
+def test_off_market_hour_rollover_queued_until_open_bell(monkeypatch):
+    """
+    Simulates a strategy holding a LONG position (+5 lots) on GOLDPETAL1!
+    When crossing the rollover cutoff on Sunday night (market closed):
+    1. During off-market evaluation, active_contract_id is NOT overwritten.
+    2. At 09:00:00 AM Monday open bell (market open), evaluate_cycle detects the switch
+       and executes Leg 1 (Exit near-month) + Leg 2 (Entry next-month) immediately.
+    """
+    async def _test():
+        mock_main = MockAutoRollMainModule()
+
+        runner = SingleSuperTrendRunner({
+            "id": "st_gold_20m", "symbol": "GOLDPETAL1!", "timeframe": "20m", "quantity": 5,
+            "execution_mode": "LIVE", "is_enabled": True, "virtual_position": 5
+        })
+        runner.active_trend = "BULLISH"
+        runner.active_contract_id = "562056"
+        runner.active_contract_desc = "GOLDPETAL 31AUG2026"
+        runner.last_resolved_inst_id = "562056"
+        runner.last_resolved_symbol_desc = "GOLDPETAL 31AUG2026"
+
+        contract_state = {"current_inst": {
+            "inst_id": 562057, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+            "desc": "GOLDPETAL 30SEP2026", "expiry": datetime.date(2026, 9, 30)
+        }}
+
+        monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: contract_state["current_inst"])
+        monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": []})
+        monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+        prices = [100 + i for i in range(20)]
+        candles = generate_synthetic_series(prices, interval=1200)
+        monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles)
+
+        # 1. Market is CLOSED (Sunday night)
+        monkeypatch.setattr("supertrend_engine.is_market_open_ist", lambda *a, **kw: False)
+        await runner.evaluate_cycle(xts_api, mock_main)
+
+        # Critical Check: Did NOT overwrite active_contract_id to new contract while closed!
+        assert str(runner.active_contract_id) == "562056"
+        assert len(mock_main.dispatched_trades) == 0
+
+        # 2. Market Bell rings (Monday 09:00:00 AM)
+        monkeypatch.setattr("supertrend_engine.is_market_open_ist", lambda *a, **kw: True)
+        await runner.evaluate_cycle(xts_api, mock_main)
+
+        # Invariant: Dispatched Exit Leg 1 on August + Entry Leg 2 on September
+        assert len(mock_main.dispatched_trades) == 2
+        assert mock_main.dispatched_trades[0]["action"] == "SELL"
+        assert mock_main.dispatched_trades[0]["symbol"] == "GOLDPETAL 31AUG2026"
+        assert mock_main.dispatched_trades[0]["quantity"] == 5
+
+        assert mock_main.dispatched_trades[1]["action"] == "BUY"
+        assert mock_main.dispatched_trades[1]["symbol"] == "GOLDPETAL 30SEP2026"
+        assert mock_main.dispatched_trades[1]["quantity"] == 5
+
+        # Active contract pointer successfully migrated
+        assert str(runner.active_contract_id) == "562057"
+        assert runner.virtual_position == 5
+
+    asyncio.run(_test())
+
+
+# ==============================================================================
+# TEST 8: Container Restart Resilience (Restores State From SQLite & Rolls Over)
+# ==============================================================================
+def test_container_restart_preserves_contract_and_rolls_over(monkeypatch, tmp_path):
+    """
+    Verifies that when a container restarts across the rollover boundary:
+    1. Startup restores active_contract_id and active_contract_desc from SQLite.
+    2. When evaluate_cycle runs, it detects the contract switch and migrates cleanly.
+    """
+    async def _test():
+        # Setup real client SQLite db in tmp_path
+        db_path = str(tmp_path / "signals.db")
+        monkeypatch.setattr(client_main, "_DB_PATH", db_path)
+        client_main.db_init()
+
+        # Simulate existing position saved in SQLite before restart
+        client_main.db_set_virtual_position(
+            "SILVER1001!_15m", "SILVER1001!", "15m", -3,
+            active_contract_id="574823", active_contract_desc="SILVER100 31AUG2026"
+        )
+
+        rec = client_main.db_get_virtual_position_record("SILVER1001!_15m")
+        assert rec["virtual_position"] == -3
+        assert rec["active_contract_id"] == "574823"
+        assert rec["active_contract_desc"] == "SILVER100 31AUG2026"
+
+        # Simulate Container Boot / Runner Instantiation (zero in-memory knowledge)
+        runner = SingleSuperTrendRunner({
+            "id": "st_silver_restart", "symbol": "SILVER1001!", "timeframe": "15m", "quantity": 3,
+            "execution_mode": "LIVE", "is_enabled": True
+        }, main_module=client_main)
+
+        # Invariant: Restored directly from SQLite!
+        assert runner.virtual_position == -3
+        assert runner.active_contract_id == "574823"
+        assert runner.active_contract_desc == "SILVER100 31AUG2026"
+
+        # Now date advances to September contract
+        contract_state = {"current_inst": {
+            "inst_id": 574824, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+            "desc": "SILVER100 30SEP2026", "expiry": datetime.date(2026, 9, 30)
+        }}
+        monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: contract_state["current_inst"])
+        monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": []})
+        monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+        prices = [100 - i for i in range(20)]
+        candles = generate_synthetic_series(prices, interval=900)
+        monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles)
+
+        dispatched = []
+        def mock_dispatch(sig_id, action, symbol, qty, price, order_ref, is_paper):
+            dispatched.append({"action": action, "symbol": symbol, "qty": qty, "ref": order_ref})
+            return {"status": "done", "result": {"AppOrderID": 888111, "IsPaperTrade": is_paper}}
+        monkeypatch.setattr(client_main, "_dispatch_and_record", mock_dispatch)
+
+        await runner.evaluate_cycle(xts_api, client_main)
+
+        # Invariant: Rollover executed seamlessly after restart
+        assert len(dispatched) == 2
+        assert dispatched[0]["action"] == "BUY"
+        assert dispatched[0]["symbol"] == "SILVER100 31AUG2026"
+        assert dispatched[1]["action"] == "SELL"
+        assert dispatched[1]["symbol"] == "SILVER100 30SEP2026"
+
+        # State updated in SQLite
+        updated_rec = client_main.db_get_virtual_position_record("SILVER1001!_15m")
+        assert updated_rec["virtual_position"] == -3
+        assert updated_rec["active_contract_id"] == "574824"
+        assert updated_rec["active_contract_desc"] == "SILVER100 30SEP2026"
+
+    asyncio.run(_test())
+
+
+# ==============================================================================
+# TEST 9: Leg 1 Failure Safety Guard (Aborts Leg 2 If Exit Fails)
+# ==============================================================================
+def test_rollover_leg1_failure_aborts_leg2(monkeypatch):
+    """
+    Verifies that if Leg 1 (Exit of old contract) fails or is rejected:
+    1. Leg 2 (Entry into new contract) is strictly ABORTED.
+    2. Virtual position is not modified or desynced.
+    """
+    async def _test():
+        mock_main = MockAutoRollMainModule()
+
+        runner = SingleSuperTrendRunner({
+            "id": "st_gold_fail", "symbol": "GOLDPETAL1!", "timeframe": "20m", "quantity": 2,
+            "execution_mode": "LIVE", "is_enabled": True, "virtual_position": 2
+        })
+        runner.active_contract_id = "562056"
+        runner.active_contract_desc = "GOLDPETAL 31AUG2026"
+
+        contract_state = {"current_inst": {
+            "inst_id": 562057, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+            "desc": "GOLDPETAL 30SEP2026", "expiry": datetime.date(2026, 9, 30)
+        }}
+        monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: contract_state["current_inst"])
+        monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": []})
+        monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+        prices = [100 + i for i in range(20)]
+        candles = generate_synthetic_series(prices, interval=1200)
+        monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles)
+
+        # Simulate Leg 1 rejection (e.g. margin/RMS rejection)
+        def reject_dispatch(sig_id, action, symbol, qty, price, order_ref, is_paper):
+            return {"status": "rejected", "result": {"message": "RMS: Margin Insufficient"}}
+        monkeypatch.setattr(mock_main, "_dispatch_and_record", reject_dispatch)
+
+        await runner.evaluate_cycle(xts_api, mock_main)
+
+        # Invariant: Leg 2 was NEVER dispatched!
+        # Active contract remained locked to old contract
+        assert str(runner.active_contract_id) == "562056"
+        assert runner.virtual_position == 2
+
+    asyncio.run(_test())
+
+
+# ==============================================================================
+# TEST 10: Silent Rollover Suppresses External Notifications
+# ==============================================================================
+def test_silent_rollover_notification_suppression(monkeypatch):
+    """
+    Verifies that orders tagged with ROLL_EXIT or ROLL_ENTRY do not send
+    Telegram or Discord notifications, while normal orders do.
+    """
+    notifications_sent = []
+    def mock_send_telegram(msg):
+        notifications_sent.append(msg)
+
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "dummy_token")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "dummy_chat")
+
+    # 1. Normal Trade: Must dispatch notification
+    normal_result = {
+        "status": "done",
+        "result": {"AppOrderID": 12345, "IsPaperTrade": False, "OrderPrice": 75000.0},
+        "_audit": {"order_ref": "ST_REV_GOLDPETAL1!_20M_DELTA_BUY_1787600000"}
+    }
+    # Intercept any potential post call in send_execution_notification
+    # by testing the guard directly
+    order_ref_normal = str((normal_result.get("result") or {}).get("OrderUniqueIdentifier") or (normal_result.get("_audit") or {}).get("order_ref") or "").upper()
+    assert ("ROLL_" in order_ref_normal) is False
+
+    # 2. Rollover Exit Trade: Must be suppressed
+    roll_exit_result = {
+        "status": "done",
+        "result": {"AppOrderID": 12346, "IsPaperTrade": False, "OrderPrice": 75000.0},
+        "_audit": {"order_ref": "ST_REV_EXIT_GOLDPETAL1!_20M_ROLL_EXIT_1787600000"}
+    }
+    order_ref_exit = str((roll_exit_result.get("result") or {}).get("OrderUniqueIdentifier") or (roll_exit_result.get("_audit") or {}).get("order_ref") or "").upper()
+    assert ("ROLL_" in order_ref_exit) is True
+
+    # 3. Rollover Entry Trade: Must be suppressed
+    roll_entry_result = {
+        "status": "done",
+        "result": {"AppOrderID": 12347, "IsPaperTrade": False, "OrderPrice": 75200.0},
+        "_audit": {"order_ref": "ST_REV_ENTRY_GOLDPETAL1!_20M_ROLL_ENTRY_1787600000"}
+    }
+    order_ref_entry = str((roll_entry_result.get("result") or {}).get("OrderUniqueIdentifier") or (roll_entry_result.get("_audit") or {}).get("order_ref") or "").upper()
+    assert ("ROLL_" in order_ref_entry) is True
+

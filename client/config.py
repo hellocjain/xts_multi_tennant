@@ -119,6 +119,85 @@ def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: float = None, force_chec
         # Default Indian broad trading hours (09:00:00 to 23:55:00 IST)
         return (9, 0, 0) <= cur_hms <= (23, 55, 0)
 
+# Standard Indian Exchange Trading Holidays (MCX/NSE/NCDEX)
+MCX_HOLIDAYS = {
+    # 2026
+    datetime.date(2026, 1, 26),   # Republic Day
+    datetime.date(2026, 2, 17),   # Mahashivratri
+    datetime.date(2026, 3, 6),    # Holi
+    datetime.date(2026, 3, 20),   # Id-Ul-Fitr
+    datetime.date(2026, 4, 3),    # Good Friday
+    datetime.date(2026, 4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
+    datetime.date(2026, 5, 1),    # Maharashtra Day
+    datetime.date(2026, 5, 27),   # Bakri Id / Eid ul-Adha
+    datetime.date(2026, 6, 26),   # Muharram
+    datetime.date(2026, 8, 15),   # Independence Day
+    datetime.date(2026, 10, 2),   # Mahatma Gandhi Jayanti
+    datetime.date(2026, 10, 20),  # Dussehra
+    datetime.date(2026, 11, 8),   # Diwali-Laxmi Pujan
+    datetime.date(2026, 11, 24),  # Gurunanak Jayanti
+    datetime.date(2026, 12, 25),  # Christmas
+    # 2027
+    datetime.date(2027, 1, 26),   # Republic Day
+    datetime.date(2027, 3, 22),   # Holi
+    datetime.date(2027, 3, 26),   # Good Friday
+    datetime.date(2027, 4, 14),   # Ambedkar Jayanti
+    datetime.date(2027, 5, 1),    # Maharashtra Day
+    datetime.date(2027, 8, 15),   # Independence Day
+    datetime.date(2027, 10, 2),   # Gandhi Jayanti
+    datetime.date(2027, 12, 25),  # Christmas
+}
+
+def get_commodity_rollover_cutoff(exp_date, exch_seg: str = "MCXFO") -> datetime.datetime:
+    """
+    Computes the exact timestamp when a commodity futures contract must roll over:
+    - 8 days prior to expiry date at 14:00:00 IST.
+    - If the 8th day falls on a weekend (Saturday/Sunday) or an exchange holiday,
+      it rolls back to the preceding active trading day at 14:00:00 IST.
+    """
+    if exp_date is None:
+        return datetime.datetime.max.replace(tzinfo=IST_TIMEZONE)
+    if isinstance(exp_date, datetime.datetime):
+        exp_date = exp_date.date()
+
+    # Target date: 8 calendar days before expiry
+    target_date = exp_date - datetime.timedelta(days=8)
+
+    # Step backward until an active trading weekday is reached
+    while target_date.weekday() >= 5 or target_date in MCX_HOLIDAYS:
+        target_date -= datetime.timedelta(days=1)
+
+    return datetime.datetime.combine(
+        target_date,
+        datetime.time(14, 0, 0),
+        tzinfo=IST_TIMEZONE
+    )
+
+def is_commodity_past_rollover(exp_date, exch_seg: str = "MCXFO", now_dt: datetime.datetime = None) -> bool:
+    """
+    Determines if a commodity contract has crossed its rollover cutoff:
+    1. Returns True if now_dt >= get_commodity_rollover_cutoff(exp_date, exch_seg).
+    2. Fail-safe immediate rollover: returns True if (exp_date - now_date).days <= 7.
+    """
+    if exp_date is None:
+        return False
+    if isinstance(exp_date, datetime.datetime):
+        exp_date = exp_date.date()
+
+    if now_dt is None:
+        now_dt = datetime.datetime.now(IST_TIMEZONE)
+    elif now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=IST_TIMEZONE)
+
+    # Fail-safe: <= 7 calendar days remaining to expiry is always past rollover
+    days_left = (exp_date - now_dt.date()).days
+    if days_left <= 7:
+        return True
+
+    cutoff_dt = get_commodity_rollover_cutoff(exp_date, exch_seg)
+    return now_dt >= cutoff_dt
+
+
 # Load mounted config overrides if present
 _mounted_config = os.path.join(DATA_DIR, "config.json")
 if os.path.exists(_mounted_config):

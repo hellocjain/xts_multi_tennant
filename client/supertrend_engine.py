@@ -354,21 +354,31 @@ class SingleSuperTrendRunner:
         self.is_enabled: bool = bool(config_dict.get("is_enabled", False)) and self.is_configured
         self.strategy_key: str = f"{self.symbol}_{self.timeframe}"
 
-        # Virtual Position Tracking (Signed Lots: +Q for LONG, -Q for SHORT, 0 for FLAT)
+        # Virtual Position & Active Contract Tracking
+        self.active_contract_id: Optional[Any] = None
+        self.active_contract_desc: Optional[str] = None
+
         if "virtual_position" in config_dict and config_dict.get("virtual_position") is not None:
             self._virtual_position: int = int(config_dict.get("virtual_position", 0))
+            self.active_contract_id = config_dict.get("active_contract_id")
+            self.active_contract_desc = config_dict.get("active_contract_desc")
         else:
             try:
                 main_mod = main_module
                 if not main_mod:
                     for mod_name in ("main", "client.main", "__main__"):
                         m = sys.modules.get(mod_name)
-                        if m and hasattr(m, "db_get_virtual_position"):
+                        if m and (hasattr(m, "db_get_virtual_position") or hasattr(m, "db_get_virtual_position_record")):
                             main_mod = m
                             break
                 if not main_mod:
                     import main as main_mod
-                if hasattr(main_mod, "db_get_virtual_position"):
+                if hasattr(main_mod, "db_get_virtual_position_record"):
+                    pos_rec = main_mod.db_get_virtual_position_record(self.strategy_key)
+                    self._virtual_position = int(pos_rec.get("virtual_position", 0))
+                    self.active_contract_id = pos_rec.get("active_contract_id")
+                    self.active_contract_desc = pos_rec.get("active_contract_desc")
+                elif hasattr(main_mod, "db_get_virtual_position"):
                     self._virtual_position = int(main_mod.db_get_virtual_position(self.strategy_key))
                 else:
                     self._virtual_position = 0
@@ -398,8 +408,8 @@ class SingleSuperTrendRunner:
         self.pending_order_first_seen: Dict[str, float] = {}
 
         # Resolved Contract Tracking (Autonomous Rollover)
-        self.last_resolved_inst_id: Optional[int] = None
-        self.last_resolved_symbol_desc: Optional[str] = None
+        self.last_resolved_inst_id: Optional[Any] = self.active_contract_id
+        self.last_resolved_symbol_desc: Optional[str] = self.active_contract_desc
 
     @property
     def virtual_position(self) -> int:
@@ -426,6 +436,20 @@ class SingleSuperTrendRunner:
             self._virtual_position = -self.quantity if self._virtual_position >= 0 else self._virtual_position
         elif v in ("FLAT", "INITIALIZING"):
             self._virtual_position = 0
+
+    def _save_virtual_position(self, main_module, qty: int, active_contract_id=None, active_contract_desc=None):
+        """Persists virtual position and active contract info to SQLite with graceful fallback for legacy mocks."""
+        if not main_module or not hasattr(main_module, "db_set_virtual_position"):
+            return
+        cid = str(active_contract_id) if active_contract_id else (str(self.active_contract_id) if self.active_contract_id else None)
+        cdesc = str(active_contract_desc) if active_contract_desc else (str(self.active_contract_desc) if self.active_contract_desc else None)
+        try:
+            main_module.db_set_virtual_position(
+                self.strategy_key, self.symbol, self.timeframe, qty,
+                active_contract_id=cid, active_contract_desc=cdesc
+            )
+        except TypeError:
+            main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, qty)
 
     def update_config(self, config_dict: dict):
         """Updates parameters for this single runner safely."""
@@ -880,61 +904,109 @@ class SingleSuperTrendRunner:
             now_ts = time.time()
             market_open = is_market_open_ist(exch_seg, now_ts=now_ts)
 
-            # 1.5 Autonomous Contract Rollover Check for Continuous Symbols (Only during market hours)
-            if market_open and is_continuous:
-                if self.last_resolved_inst_id is not None and self.last_resolved_inst_id != inst_id:
-                    old_desc = self.last_resolved_symbol_desc or self.symbol
-                    logger.warning(
-                        f"🔄 SuperTrend [{self.symbol} ({self.timeframe})]: Autonomous Rollover Detected! "
-                        f"Contract switched from {old_desc} (ID: {self.last_resolved_inst_id}) -> {inst_desc} (ID: {inst_id})."
-                    )
-                    if self.virtual_position != 0:
-                        current_pos_side = self.strategy_position
-                        roll_qty = abs(self.virtual_position)
-                        roll_ts = int(time.time())
-                        logger.info(
-                            f"🔄 SuperTrend [{self.symbol}]: Auto-rolling active position of {roll_qty} lots ({current_pos_side}) "
-                            f"from {old_desc} to {inst_desc}."
-                        )
-                        # 1. Exit expiring near-month contract
-                        await self._execute_exit(
-                            current_pos_side,
-                            roll_qty,
-                            f"ROLL_EXIT_{roll_ts}",
-                            main_module,
-                            freeze_limit,
-                            target_symbol=old_desc
-                        )
-                        await asyncio.sleep(0.5)
-                        # 2. Enter new next-month contract in same direction
-                        entry_action = "BUY" if current_pos_side == "LONG" else "SELL"
-                        await self._execute_entry(
-                            entry_action,
-                            roll_qty,
-                            f"ROLL_ENTRY_{roll_ts}",
-                            main_module,
-                            freeze_limit,
-                            target_symbol=inst_desc
-                        )
-                        logger.info(
-                            f"✅ SuperTrend [{self.symbol}]: Position auto-roll complete! "
-                            f"Current virtual position: {self.virtual_position} lots on {inst_desc}."
-                        )
-                    else:
-                        logger.info(f"SuperTrend [{self.symbol}]: Auto-rolled contract from {old_desc} to {inst_desc} while FLAT (0 lots).")
+            # 1.5 Autonomous Contract Rollover Check for Continuous Symbols
+            if is_continuous:
+                if self.active_contract_id is None:
+                    self.active_contract_id = inst_id
+                    self.active_contract_desc = inst_desc
+                    self.last_resolved_inst_id = inst_id
+                    self.last_resolved_symbol_desc = inst_desc
+                    self._save_virtual_position(main_module, self.virtual_position, active_contract_id=inst_id, active_contract_desc=inst_desc)
 
-                self.last_resolved_inst_id = inst_id
-                self.last_resolved_symbol_desc = inst_desc
-            else:
-                self.last_resolved_inst_id = inst_id
-                self.last_resolved_symbol_desc = inst_desc
+                # Check if resolved contract differs from active position contract
+                contract_switched = (str(self.active_contract_id) != str(inst_id))
+
+                if contract_switched:
+                    old_desc = self.active_contract_desc or self.last_resolved_symbol_desc or self.symbol
+                    old_id = self.active_contract_id
+
+                    if self.virtual_position != 0:
+                        if market_open:
+                            current_pos_side = self.strategy_position
+                            roll_qty = abs(self.virtual_position)
+                            roll_ts = int(time.time())
+                            logger.warning(
+                                f"🔄 SuperTrend [{self.symbol} ({self.timeframe})]: Autonomous Rollover Triggered! "
+                                f"Active position ({self.virtual_position} lots {current_pos_side}) switching from "
+                                f"{old_desc} (ID: {old_id}) -> {inst_desc} (ID: {inst_id})."
+                            )
+                            # Leg 1: Square off expiring near-month contract
+                            exit_ok = await self._execute_exit(
+                                current_pos_side,
+                                roll_qty,
+                                f"ROLL_EXIT_{roll_ts}",
+                                main_module,
+                                freeze_limit,
+                                target_symbol=old_desc
+                            )
+                            if not exit_ok:
+                                logger.critical(
+                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 1 (Exit) on {old_desc} failed! "
+                                    f"Aborting Leg 2 to prevent duplicate/unhedged exposure."
+                                )
+                                return
+
+                            # Brief safety pause for margin release
+                            await asyncio.sleep(0.5)
+
+                            # Leg 2: Enter new next-month contract in same direction
+                            entry_action = "BUY" if current_pos_side == "LONG" else "SELL"
+                            entry_ok = await self._execute_entry(
+                                entry_action,
+                                roll_qty,
+                                f"ROLL_ENTRY_{roll_ts}",
+                                main_module,
+                                freeze_limit,
+                                target_symbol=inst_desc
+                            )
+                            if not entry_ok:
+                                logger.critical(
+                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 2 (Entry) on {inst_desc} failed! "
+                                    f"Old contract {old_desc} was squared off. Marking position FLAT."
+                                )
+                                self.virtual_position = 0
+                                self.active_contract_id = inst_id
+                                self.active_contract_desc = inst_desc
+                                self.last_resolved_inst_id = inst_id
+                                self.last_resolved_symbol_desc = inst_desc
+                                self._save_virtual_position(main_module, 0, active_contract_id=inst_id, active_contract_desc=inst_desc)
+                                return
+
+                            # Both legs completed successfully!
+                            self.active_contract_id = inst_id
+                            self.active_contract_desc = inst_desc
+                            self.last_resolved_inst_id = inst_id
+                            self.last_resolved_symbol_desc = inst_desc
+                            self._save_virtual_position(main_module, self.virtual_position, active_contract_id=inst_id, active_contract_desc=inst_desc)
+                            logger.info(
+                                f"✅ SuperTrend [{self.symbol}]: Autonomous Rollover Complete! "
+                                f"Holding {self.virtual_position} lots on {inst_desc} (ID: {inst_id})."
+                            )
+                        else:
+                            # Market is CLOSED: do NOT overwrite active_contract_id!
+                            # Leave active_contract_id as old contract so rollover executes at 09:00:00 AM bell.
+                            logger.info(
+                                f"⏳ SuperTrend [{self.symbol}]: Rollover queued for {old_desc} -> {inst_desc}. "
+                                f"Market is currently closed. Will execute immediately upon market open bell."
+                            )
+                    else:
+                        # Position is FLAT (0 lots): seamlessly update contract pointer without trading
+                        logger.info(f"SuperTrend [{self.symbol}]: Auto-rolling contract {old_desc} -> {inst_desc} while FLAT (0 lots).")
+                        self.active_contract_id = inst_id
+                        self.active_contract_desc = inst_desc
+                        self.last_resolved_inst_id = inst_id
+                        self.last_resolved_symbol_desc = inst_desc
+                        self._save_virtual_position(main_module, 0, active_contract_id=inst_id, active_contract_desc=inst_desc)
+                else:
+                    self.last_resolved_inst_id = inst_id
+                    self.last_resolved_symbol_desc = inst_desc
 
             # 2. Expiry Protection Guard for Fixed (Non-Continuous) Contracts (Only during market hours)
             if market_open and not is_continuous:
                 expiry_date = inst.get("expiry")
                 if expiry_date:
                     days_to_expiry = (expiry_date - datetime.date.today()).days
-                    min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 5) if exch_seg in ("MCXFO", "NCDEX") \
+                    min_days = getattr(config, "MIN_DAYS_BEFORE_EXPIRY_MCX_NCDEX", 7) if exch_seg in ("MCXFO", "NCDEX") \
                         else getattr(config, "MIN_DAYS_BEFORE_EXPIRY_DERIVATIVES", 0)
                     if days_to_expiry <= min_days:
                         logger.warning(f"SuperTrend [{self.symbol}]: Fixed contract expires in {days_to_expiry} days (<= {min_days}). Squaring off & Pausing.")
@@ -1193,8 +1265,7 @@ class SingleSuperTrendRunner:
                 await self.dispatch_fn(sig_id, payload)
                 chunk_delta = chunk_qty if delta > 0 else -chunk_qty
                 self.virtual_position += chunk_delta
-                if main_module and hasattr(main_module, "db_set_virtual_position"):
-                    main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
+                self._save_virtual_position(main_module, self.virtual_position)
             elif main_module:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
@@ -1213,8 +1284,7 @@ class SingleSuperTrendRunner:
                     if res is None or (isinstance(res, dict) and res.get("status") in ("done", "paper_done", "partial_failure")):
                         chunk_delta = chunk_qty if delta > 0 else -chunk_qty
                         self.virtual_position += chunk_delta
-                        if hasattr(main_module, "db_set_virtual_position"):
-                            main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
+                        self._save_virtual_position(main_module, self.virtual_position)
                     else:
                         logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Delta order chunk {chunk_idx}/{len(chunks)} rejected ({res}). Halting slice sequence.")
                         return
@@ -1234,8 +1304,8 @@ class SingleSuperTrendRunner:
             "text": f"{action} {abs_qty}",
         })
 
-    async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> None:
-        """Dispatches an Exit order with freeze-quantity slicing."""
+    async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> bool:
+        """Dispatches an Exit order with freeze-quantity slicing. Returns True on success, False on failure."""
         # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
         max_allowed_lots = max(self.quantity * 5, 50)
         if qty > max_allowed_lots or qty <= 0:
@@ -1243,7 +1313,7 @@ class SingleSuperTrendRunner:
                 f"🚨 CRITICAL SAFETY GUARD: Disallowed exit quantity {qty} lots for {self.symbol} ({self.timeframe}) "
                 f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
             )
-            return
+            return False
 
         action = "BUY" if side.upper() == "SHORT" else "SELL"
         is_paper = (self.execution_mode == "PAPER")
@@ -1271,8 +1341,7 @@ class SingleSuperTrendRunner:
                 await self.dispatch_fn(sig_id, payload)
                 chunk_delta = chunk_qty if side.upper() == "SHORT" else -chunk_qty
                 self.virtual_position += chunk_delta
-                if main_module and hasattr(main_module, "db_set_virtual_position"):
-                    main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
+                self._save_virtual_position(main_module, self.virtual_position)
             elif main_module:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
@@ -1280,11 +1349,10 @@ class SingleSuperTrendRunner:
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
                     if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
                         logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected ({res.get('status')}). Halting further slices.")
-                        return
+                        return False
                     chunk_delta = chunk_qty if side.upper() == "SHORT" else -chunk_qty
                     self.virtual_position += chunk_delta
-                    if hasattr(main_module, "db_set_virtual_position"):
-                        main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
+                    self._save_virtual_position(main_module, self.virtual_position)
             
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
@@ -1300,9 +1368,10 @@ class SingleSuperTrendRunner:
             "shape": "arrowDown" if action == "SELL" else "arrowUp",
             "text": f"EXIT {side} ({qty})"
         })
+        return True
 
-    async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> None:
-        """Dispatches an Entry order with freeze-quantity slicing."""
+    async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> bool:
+        """Dispatches an Entry order with freeze-quantity slicing. Returns True on success, False on failure."""
         # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
         max_allowed_lots = max(self.quantity * 5, 50)
         if qty > max_allowed_lots or qty <= 0:
@@ -1310,7 +1379,7 @@ class SingleSuperTrendRunner:
                 f"🚨 CRITICAL SAFETY GUARD: Disallowed entry quantity {qty} lots for {self.symbol} ({self.timeframe}) "
                 f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
             )
-            return
+            return False
 
         is_paper = (self.execution_mode == "PAPER")
         symbol_to_trade = str(target_symbol).strip() if target_symbol else self.symbol
@@ -1337,8 +1406,7 @@ class SingleSuperTrendRunner:
                 await self.dispatch_fn(sig_id, payload)
                 chunk_delta = chunk_qty if action.upper() == "BUY" else -chunk_qty
                 self.virtual_position += chunk_delta
-                if main_module and hasattr(main_module, "db_set_virtual_position"):
-                    main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
+                self._save_virtual_position(main_module, self.virtual_position)
             elif main_module:
                 if hasattr(main_module, "db_insert_pending"):
                     main_module.db_insert_pending(sig_id, payload)
@@ -1346,11 +1414,10 @@ class SingleSuperTrendRunner:
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
                     if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
                         logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected ({res.get('status')}). Halting further slices.")
-                        return
+                        return False
                     chunk_delta = chunk_qty if action.upper() == "BUY" else -chunk_qty
                     self.virtual_position += chunk_delta
-                    if hasattr(main_module, "db_set_virtual_position"):
-                        main_module.db_set_virtual_position(self.strategy_key, self.symbol, self.timeframe, self.virtual_position)
+                    self._save_virtual_position(main_module, self.virtual_position)
 
             if chunk_idx < len(chunks):
                 await asyncio.sleep(0.2)
@@ -1366,6 +1433,7 @@ class SingleSuperTrendRunner:
             "shape": "arrowUp" if action.upper() == "BUY" else "arrowDown",
             "text": f"{action.upper()} {qty}"
         })
+        return True
 
 
 class MultiSuperTrendEngine:
