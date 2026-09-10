@@ -79,7 +79,33 @@ def generate_caddyfile_content() -> str:
         }}
     }}
 
-    # 2. Internal Portal-to-Client Telemetry Proxy (xts_mgmt_net only)
+    # 2. Hardened API Endpoints
+    handle /api* {{
+        @blocked_api {{
+            not client_ip {ADMIN_ALLOWED_IPS}
+        }}
+        respond @blocked_api "Access Denied: IP Not Authorized" 403
+
+        reverse_proxy xts_portal:8500 {{
+            header_up X-Forwarded-For {{remote_host}}
+            header_up X-Real-IP {{remote_host}}
+        }}
+    }}
+
+    # 3. Real-Time Telemetry WebSocket
+    handle /ws* {{
+        @blocked_ws {{
+            not client_ip {ADMIN_ALLOWED_IPS}
+        }}
+        respond @blocked_ws "Access Denied: IP Not Authorized" 403
+
+        reverse_proxy xts_portal:8500 {{
+            header_up X-Forwarded-For {{remote_host}}
+            header_up X-Real-IP {{remote_host}}
+        }}
+    }}
+
+    # 4. Internal Portal-to-Client Telemetry Proxy (xts_mgmt_net only)
     handle /internal-client-proxy/* {{
         @blocked_internal {{
             not client_ip 172.28.0.0/24 127.0.0.1
@@ -98,14 +124,17 @@ def generate_caddyfile_content() -> str:
         }}
     }}
 
-    # 3. Dynamic Per-Client Webhook Routes
+    # 5. Dynamic Per-Client Webhook Routes
     ### CLIENT_ROUTES_START ###
 {routes_block}
     ### CLIENT_ROUTES_END ###
 
-    # 4. Fallback for Inactive or Unrecognized Endpoints
+    # 6. Default Fallback: React Single Page Application (SPA) & Static Assets
     handle {{
-        respond "Tenant Not Found or Inactive" 404
+        reverse_proxy xts_portal:8500 {{
+            header_up X-Forwarded-For {{remote_host}}
+            header_up X-Real-IP {{remote_host}}
+        }}
     }}
 }}
 """
