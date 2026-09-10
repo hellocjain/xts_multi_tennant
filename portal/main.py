@@ -1398,20 +1398,26 @@ async def reset_supertrend_strategy_flat_portal(
 # =====================================================================
 
 @app.post("/admin/clients/{tenant_id}/panic")
-async def panic_single(tenant_id: str, user: dict = Depends(require_auth)):
+async def panic_single(tenant_id: str, request: Request, user: dict = Depends(require_auth)):
     with closing(database.get_db_connection()) as conn:
         c_row = conn.execute("SELECT encrypted_payload FROM tenant_credentials WHERE tenant_id=?", (tenant_id,)).fetchone()
     secret = security.decrypt_credentials(c_row["encrypted_payload"]).get("WEBHOOK_SECRET", "") if c_row else ""
     
     res = await telemetry_service.panic_single_client(tenant_id, secret)
     database.record_audit(user["username"], "PANIC_CLIENT", {"result": res}, tenant_id)
-    return RedirectResponse(url="/admin/dashboard", status_code=303)
+    if request.headers.get("accept") == "application/json" or request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JSONResponse({"status": "success", "result": res})
+    referer = request.headers.get("referer")
+    target_url = referer if (referer and f"/admin/clients/{tenant_id}" in referer) else f"/admin/clients/{tenant_id}"
+    return RedirectResponse(url=target_url, status_code=303)
 
 @app.post("/admin/panic-all")
-async def panic_all(user: dict = Depends(require_auth)):
+async def panic_all(request: Request, user: dict = Depends(require_auth)):
     res = await telemetry_service.panic_all_active_clients()
     database.record_audit(user["username"], "PANIC_ALL", {"result": res})
-    return RedirectResponse(url="/admin/dashboard", status_code=303)
+    if request.headers.get("accept") == "application/json" or request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JSONResponse({"status": "success", "result": res})
+    return RedirectResponse(url="/admin/dashboard?panic=completed", status_code=303)
 
 # =====================================================================
 # AUDIT TRAIL

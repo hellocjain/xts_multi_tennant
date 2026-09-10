@@ -521,7 +521,7 @@ async def panic_single_client(tenant_id: str, webhook_secret: str) -> dict:
     payload = {"secret": webhook_secret}
 
     async with httpx.AsyncClient() as client:
-        for target_url in [url_local, url_caddy, url_docker]:
+        for target_url in [url_docker, url_caddy, url_local]:
             try:
                 resp = await client.post(target_url, json=payload, timeout=5.0)
                 if resp.status_code in (200, 401):

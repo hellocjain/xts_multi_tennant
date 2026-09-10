@@ -115,14 +115,20 @@
             ⚠️ This will immediately <strong>cancel all pending orders</strong> and execute marketable limit square-off orders for <strong>all open positions across ALL client accounts</strong>.
         </p>
 
-        <form method="POST" action="/admin/panic-all" class="space-y-3">
+        <form method="POST" id="global-panic-form" action="/admin/panic-all" class="space-y-4" onsubmit="handleGlobalPanicSubmit(event)">
+            <div class="space-y-1.5">
+                <label class="text-[11px] font-mono text-slate-400">Type <strong class="text-rose-400">SQUARE OFF</strong> or <strong class="text-rose-400">PANIC ALL</strong> below to confirm:</label>
+                <input type="text" id="global-panic-confirm-input" oninput="validateGlobalPanicConfirm(this.value)" placeholder="Type SQUARE OFF" 
+                       class="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 text-xs font-mono focus:border-rose-500 focus:outline-none">
+            </div>
+
             <div class="flex items-center justify-end space-x-2.5 pt-2">
                 <button type="button" onclick="closeGlobalPanicModal()" class="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 bg-slate-800 rounded-xl transition">
                     Cancel
                 </button>
-                <button type="submit" class="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-lg shadow-rose-600/30 flex items-center gap-1.5">
-                    <i data-lucide="flame" class="w-4 h-4"></i>
-                    <span>Yes, Square Off All Clients</span>
+                <button type="submit" id="btn-global-panic-submit" disabled class="bg-rose-600/50 cursor-not-allowed text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-lg shadow-rose-600/30 flex items-center gap-1.5">
+                    <i data-lucide="flame" id="global-panic-btn-icon" class="w-4 h-4"></i>
+                    <span id="global-panic-btn-text">Yes, Square Off All Clients</span>
                 </button>
             </div>
         </form>
@@ -309,10 +315,127 @@
         }
     }
 
+    // =========================================================================
+    // GLOBAL PANIC SQUARE-OFF HANDLERS
+    // =========================================================================
+    function openGlobalPanicModal() {
+        const modal = document.getElementById('global-panic-modal');
+        if (!modal) return;
+        const inp = document.getElementById('global-panic-confirm-input');
+        if (inp) {
+            inp.value = '';
+            validateGlobalPanicConfirm('');
+        }
+        modal.classList.remove('hidden');
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        setTimeout(() => {
+            if (inp) inp.focus();
+        }, 50);
+    }
+
+    function closeGlobalPanicModal() {
+        const modal = document.getElementById('global-panic-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    function validateGlobalPanicConfirm(val) {
+        const btn = document.getElementById('btn-global-panic-submit');
+        if (!btn) return;
+        const clean = (val || '').trim().toUpperCase();
+        if (clean === 'SQUARE OFF' || clean === 'PANIC ALL' || clean === 'PANIC') {
+            btn.disabled = false;
+            btn.classList.remove('bg-rose-600/50', 'cursor-not-allowed');
+            btn.classList.add('bg-rose-600', 'hover:bg-rose-500', 'cursor-pointer');
+        } else {
+            btn.disabled = true;
+            btn.classList.add('bg-rose-600/50', 'cursor-not-allowed');
+            btn.classList.remove('bg-rose-600', 'hover:bg-rose-500', 'cursor-pointer');
+        }
+    }
+
+    async function handleGlobalPanicSubmit(event) {
+        event.preventDefault();
+        const btn = document.getElementById('btn-global-panic-submit');
+        const btnText = document.getElementById('global-panic-btn-text');
+        const btnIcon = document.getElementById('global-panic-btn-icon');
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
+        }
+        if (btnText) btnText.textContent = 'Executing Global Panic Sweep...';
+        if (btnIcon) {
+            btnIcon.setAttribute('data-lucide', 'loader-2');
+            btnIcon.classList.add('animate-spin');
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+        if (typeof showToast === 'function') {
+            showToast('🚨 Executing emergency panic square-off across ALL active clients...', 'info');
+        }
+
+        try {
+            const response = await fetch('/admin/panic-all', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            const data = await response.json().catch(() => ({}));
+            closeGlobalPanicModal();
+            if (response.ok && data.status === 'success') {
+                const total = data.result?.total_clients ?? 'all';
+                if (typeof showToast === 'function') {
+                    showToast(`🚨 Global Panic Complete: ${total} accounts swept & squared off!`, 'success');
+                }
+            } else {
+                const errMsg = data.detail || data.message || 'Panic operation encountered partial errors.';
+                if (typeof showToast === 'function') {
+                    showToast(`⚠️ Panic Sweep: ${errMsg}`, 'error');
+                }
+            }
+            // Trigger immediate refresh of telemetry stream
+            const stream = document.getElementById('dashboardStreamContainer');
+            if (stream && typeof htmx !== 'undefined') {
+                htmx.trigger(stream, 'refresh');
+            } else {
+                setTimeout(() => window.location.reload(), 1500);
+            }
+        } catch (err) {
+            closeGlobalPanicModal();
+            if (typeof showToast === 'function') {
+                showToast('Network error triggering global panic sweep', 'error');
+            }
+            setTimeout(() => window.location.reload(), 1500);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+            }
+            if (btnText) btnText.textContent = 'Yes, Square Off All Clients';
+            if (btnIcon) {
+                btnIcon.setAttribute('data-lucide', 'flame');
+                btnIcon.classList.remove('animate-spin');
+                if (typeof lucide !== 'undefined') lucide.createIcons();
+            }
+        }
+    }
+
     // Auto-hook into HTMX events
     document.addEventListener('htmx:afterSwap', applyAllDashboardState);
     document.addEventListener('htmx:afterSettle', applyAllDashboardState);
-    document.addEventListener('DOMContentLoaded', applyAllDashboardState);
+    document.addEventListener('DOMContentLoaded', () => {
+        applyAllDashboardState();
+        // Check for URL redirect flash message
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('panic') === 'completed') {
+            if (typeof showToast === 'function') {
+                showToast('🚨 Global Panic Square-Off completed across all accounts!', 'success');
+            }
+            params.delete('panic');
+            const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+            window.history.replaceState({}, document.title, cleanUrl);
+        }
+    });
 
     // Initial run
     applyAllDashboardState();

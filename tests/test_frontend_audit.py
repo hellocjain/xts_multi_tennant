@@ -430,4 +430,97 @@ def test_chart_markers_and_line_clearing_on_strategy_switch():
     assert "stLineSeries.setData(Array.isArray(data.supertrend_line) ? data.supertrend_line : [])" in html
 
 
+def test_global_panic_modal_markup_and_js_handlers():
+    """
+    Verifies that dashboard.html contains the global panic modal with 2-step verification,
+    input field, and all required JavaScript handlers (open, close, validate, submit).
+    """
+    client = get_auth_client()
+    res = client.get("/admin/dashboard")
+    assert res.status_code == 200
+    html = res.text
+
+    # Verify modal elements
+    assert 'id="global-panic-modal"' in html
+    assert 'id="global-panic-confirm-input"' in html
+    assert 'id="btn-global-panic-submit"' in html
+    assert 'onclick="openGlobalPanicModal()"' in html
+    assert 'onclick="closeGlobalPanicModal()"' in html
+
+    # Verify JavaScript function definitions
+    assert "function openGlobalPanicModal()" in html
+    assert "function closeGlobalPanicModal()" in html
+    assert "function validateGlobalPanicConfirm(val)" in html
+    assert "async function handleGlobalPanicSubmit(event)" in html
+    assert "PANIC ALL" in html or "SQUARE OFF" in html
+
+
+def test_base_html_dismisses_global_panic_modal():
+    """
+    Verifies that base.html modal dismissal helper includes 'global-panic-modal'
+    for Escape key and backdrop click handlers.
+    """
+    client = get_auth_client()
+    res = client.get("/admin/dashboard")
+    assert res.status_code == 200
+    html = res.text
+
+    assert "'global-panic-modal'" in html
+
+
+def test_admin_panic_all_endpoints(monkeypatch):
+    """
+    Verifies that POST /admin/panic-all works seamlessly:
+    1. Returns JSON when Accept: application/json is present.
+    2. Returns 303 Redirect to /admin/dashboard?panic=completed on standard HTML form post.
+    """
+    async def mock_panic_all():
+        return {
+            "status": "completed",
+            "total_clients": 2,
+            "results": [
+                {"tenant_id": "t_live_profit", "status": "success", "result": {"status": "success"}},
+                {"tenant_id": "t_paper_loss", "status": "success", "result": {"status": "success"}}
+            ]
+        }
+    monkeypatch.setattr(telemetry_service, "panic_all_active_clients", mock_panic_all)
+
+    client = get_auth_client()
+
+    # 1. AJAX request returns JSON
+    res_json = client.post("/admin/panic-all", headers={"Accept": "application/json"})
+    assert res_json.status_code == 200
+    data = res_json.json()
+    assert data["status"] == "success"
+    assert data["result"]["total_clients"] == 2
+
+    # 2. Browser form submission returns 303 Redirect
+    res_form = client.post("/admin/panic-all", follow_redirects=False)
+    assert res_form.status_code == 303
+    assert res_form.headers["location"] == "/admin/dashboard?panic=completed"
+
+
+def test_admin_panic_single_client_endpoint(monkeypatch):
+    """
+    Verifies that POST /admin/clients/{tenant_id}/panic works:
+    1. Returns JSON when Accept: application/json is present.
+    2. Returns 303 Redirect on standard HTML form post.
+    """
+    async def mock_panic_single(t_id, sec):
+        return {"status": "success", "squared_off": [{"symbol": "SILVER1001!", "qty": 1}]}
+    monkeypatch.setattr(telemetry_service, "panic_single_client", mock_panic_single)
+
+    client = get_auth_client()
+
+    # 1. AJAX request returns JSON
+    res_json = client.post("/admin/clients/t_live_profit/panic", headers={"Accept": "application/json"})
+    assert res_json.status_code == 200
+    assert res_json.json()["status"] == "success"
+
+    # 2. Browser form submission returns 303 Redirect
+    res_form = client.post("/admin/clients/t_live_profit/panic", follow_redirects=False)
+    assert res_form.status_code == 303
+    assert "/admin/clients/t_live_profit" in res_form.headers["location"]
+
+
 
