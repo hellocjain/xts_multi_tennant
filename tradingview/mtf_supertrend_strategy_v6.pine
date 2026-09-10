@@ -1,0 +1,233 @@
+//@version=6
+strategy(
+     title = "Multi-Timeframe Supertrend Strategy [v6]",
+     shorttitle = "MTF Supertrend Strat [v6]",
+     overlay = true,
+     pyramiding = 1,
+     default_qty_type = strategy.fixed,
+     default_qty_value = 1,
+     initial_capital = 1000000,
+     commission_type = strategy.commission.cash_per_order,
+     commission_value = 20.0,
+     slippage = 1,
+     process_orders_on_close = true,
+     calc_on_every_tick = false
+ )
+
+// =============================================================================
+// 1. INPUTS
+// =============================================================================
+var string GRP_ST  = "Supertrend Parameters (Shared)"
+atr_len      = input.int(10, title = "ATR Length", minval = 1, group = GRP_ST)
+atr_mult     = input.float(3.0, title = "ATR Multiplier", minval = 0.1, step = 0.1, group = GRP_ST)
+
+var string GRP_HTF = "Timeframe & Operating Mode"
+strat_mode   = input.string("Multi-Timeframe Filter", title = "Operating Mode", 
+               options = ["Multi-Timeframe Filter", "Standalone (Single Timeframe)"], 
+               group = GRP_HTF, 
+               tooltip = "• Multi-Timeframe Filter: Requires Chart Supertrend and Higher Timeframe Supertrend to agree before entering.\n• Standalone (Single Timeframe): Evaluates ONLY the chart timeframe Supertrend (flips Long <-> Short independently without HTF filtering).")
+
+htf_input    = input.timeframe("30", title = "Higher Timeframe", group = GRP_HTF, 
+               tooltip = "Higher timeframe filter. Defaults to 30m. Must be >= chart timeframe.")
+
+allow_same_tf = input.bool(true, title = "Allow Same Timeframe in MTF Mode", group = GRP_HTF, 
+                tooltip = "When enabled, if Higher Timeframe equals the chart timeframe, the script operates seamlessly in standalone mode without artificial 1-bar request.security lag.")
+
+var string GRP_EXEC = "Order Execution & Risk Rules"
+order_qty        = input.int(1, title = "Order Quantity (Lots / Contracts)", minval = 1, group = GRP_EXEC, 
+                   tooltip = "Fixed quantity for each trade. Prevents order rejection on high-value MCX commodity futures (SILVER100, GOLDPETAL) where percent-of-equity results in 0 contracts.")
+
+exit_on_disagree = input.bool(true, title = "Exit to Flat on Chart Flip (Disagreement)", group = GRP_EXEC, 
+                   tooltip = "• Enabled (Default): When in Long and chart flips Bearish (while HTF is still Bullish), exits Long to FLAT immediately.\n• Disabled: Holds position until Higher Timeframe confirms reversal (pure reversal system).")
+
+entry_on_start   = input.bool(false, title = "Enter on Startup if Trend Active", group = GRP_EXEC, 
+                   tooltip = "If enabled, takes a trade immediately on the first bar if both timeframes are already aligned, rather than waiting for the next flip.")
+
+var string GRP_WH  = "Webhook & Automation Integration"
+webhook_secret     = input.string("", title = "Webhook Secret Token", group = GRP_WH, 
+                     tooltip = "Secret token matching your server's WEBHOOK_SECRET. Included in JSON payloads.")
+wh_symbol_override = input.string("", title = "Custom Webhook Symbol (Optional)", group = GRP_WH, 
+                     tooltip = "Overrides the symbol string sent in the webhook JSON payload (e.g. GOLDPETAL1! or SILVER100). Leave blank to auto-use chart ticker.")
+
+var string GRP_VIS = "Visual Options"
+show_markers  = input.bool(true, title = "Show Entry / Exit Markers", group = GRP_VIS)
+show_bg       = input.bool(true, title = "Highlight Trend Disagreement", group = GRP_VIS)
+show_htf_line = input.bool(false, title = "Show Higher Timeframe Supertrend Line", group = GRP_VIS, 
+                tooltip = "Plots the confirmed 30m Supertrend level on the chart as a stepped line.")
+
+// =============================================================================
+// 2. TIMEFRAME VALIDATION GUARD
+// =============================================================================
+chart_tf_sec = timeframe.in_seconds(timeframe.period)
+htf_sec      = timeframe.in_seconds(htf_input)
+
+is_same_tf   = (htf_sec == chart_tf_sec)
+is_standalone_mode = (strat_mode == "Standalone (Single Timeframe)") or (is_same_tf and allow_same_tf)
+
+// Validation: In MTF mode, HTF must be >= chart (if allow_same_tf) or strictly > chart
+is_htf_valid = is_standalone_mode or (allow_same_tf ? (htf_sec >= chart_tf_sec) : (htf_sec > chart_tf_sec))
+
+var label warning_label = na
+if not is_htf_valid
+    if barstate.islast
+        warning_text = "⚠️ Invalid Timeframe: Higher Timeframe (" + htf_input + ") must be higher than chart (" + timeframe.period + "). Signals halted."
+        if na(warning_label)
+            warning_label := label.new(
+                 x = bar_index,
+                 y = high,
+                 text = warning_text,
+                 color = color.new(color.red, 15),
+                 textcolor = color.white,
+                 style = label.style_label_down,
+                 size = size.normal
+             )
+        else
+            label.set_xy(warning_label, bar_index, high)
+            label.set_text(warning_label, warning_text)
+else
+    if not na(warning_label)
+        label.delete(warning_label)
+        warning_label := na
+
+// =============================================================================
+// 3. SUPERTREND CALCULATIONS (CHART & HTF)
+// =============================================================================
+// Chart Timeframe Supertrend (dir == -1: Bullish / Uptrend, dir == 1: Bearish / Downtrend)
+[chart_st_val, chart_st_dir] = ta.supertrend(atr_mult, atr_len)
+
+// Higher Timeframe Supertrend via request.security (lookahead = barmerge.lookahead_off)
+// CRITICAL FIX: Calling request.security with lookahead_off on the SAME timeframe
+// forces Pine Script to read bar[1] (1-bar delay), which causes the latest signal on the 
+// trigger candle to be missed. When is_standalone_mode is active, we bypass request.security
+// and assign chart values directly, giving 0-lag execution on the latest candle.
+[sec_st_val, sec_st_dir] = request.security(
+     syminfo.tickerid,
+     htf_input,
+     ta.supertrend(atr_mult, atr_len),
+     gaps = barmerge.gaps_off,
+     lookahead = barmerge.lookahead_off
+ )
+
+float htf_st_val = is_standalone_mode ? chart_st_val : sec_st_val
+float htf_st_dir = is_standalone_mode ? chart_st_dir : sec_st_dir
+
+// Direction states (-1: Bullish, 1: Bearish)
+chart_is_bullish = (chart_st_dir == -1)
+chart_is_bearish = (chart_st_dir == 1)
+
+htf_is_bullish   = is_standalone_mode ? chart_is_bullish : (is_htf_valid and (htf_st_dir == -1))
+htf_is_bearish   = is_standalone_mode ? chart_is_bearish : (is_htf_valid and (htf_st_dir == 1))
+
+// Transition flips
+chart_turned_bullish = (ta.change(chart_st_dir) != 0) and chart_is_bullish
+chart_turned_bearish = (ta.change(chart_st_dir) != 0) and chart_is_bearish
+
+htf_turned_bullish   = is_standalone_mode ? chart_turned_bullish : ((ta.change(htf_st_dir) != 0) and htf_is_bullish)
+htf_turned_bearish   = is_standalone_mode ? chart_turned_bearish : ((ta.change(htf_st_dir) != 0) and htf_is_bearish)
+
+// Alignment & Disagreement
+both_bullish   = is_standalone_mode ? chart_is_bullish : (is_htf_valid and chart_is_bullish and htf_is_bullish)
+both_bearish   = is_standalone_mode ? chart_is_bearish : (is_htf_valid and chart_is_bearish and htf_is_bearish)
+trend_disagree = not is_standalone_mode and is_htf_valid and (chart_st_dir != htf_st_dir)
+
+// Tracking previous alignment to catch new agreement transitions
+both_bullish_transition = both_bullish and not both_bullish[1]
+both_bearish_transition = both_bearish and not both_bearish[1]
+
+// Position state helpers
+is_in_long  = strategy.position_size > 0
+is_in_short = strategy.position_size < 0
+is_flat     = strategy.position_size == 0
+
+// =============================================================================
+// 4. SIGNALS & ENTRY / EXIT RULES
+// =============================================================================
+// Long Entry Triggers
+long_entry_cond = is_htf_valid and (
+     is_standalone_mode ? chart_turned_bullish : (
+         both_bullish and (
+             chart_turned_bullish or 
+             htf_turned_bullish or 
+             both_bullish_transition or 
+             (entry_on_start and is_flat and not na(chart_st_dir))
+         )
+     )
+ )
+
+// Short Entry Triggers
+short_entry_cond = is_htf_valid and (
+     is_standalone_mode ? chart_turned_bearish : (
+         both_bearish and (
+             chart_turned_bearish or 
+             htf_turned_bearish or 
+             both_bearish_transition or 
+             (entry_on_start and is_flat and not na(chart_st_dir))
+         )
+     )
+ )
+
+// Exit to Flat conditions (when chart flips against position, but opposite entry is NOT satisfied due to HTF disagreement)
+long_exit_to_flat  = not is_standalone_mode and is_htf_valid and exit_on_disagree and is_in_long  and chart_turned_bearish and not short_entry_cond
+short_exit_to_flat = not is_standalone_mode and is_htf_valid and exit_on_disagree and is_in_short and chart_turned_bullish and not long_entry_cond
+
+// =============================================================================
+// 5. WEBHOOK PAYLOAD FORMATTING
+// =============================================================================
+// Determine effective symbol: override if specified, otherwise stripped ticker
+effective_symbol = str.length(wh_symbol_override) > 0 ? wh_symbol_override : syminfo.ticker
+
+// Build JSON string adhering exactly to XTS platform schema
+f_make_payload(_action, _qty) =>
+    '{"secret":"' + webhook_secret + '","action":"' + _action + '","symbol":"' + effective_symbol + '","price":' + str.tostring(close) + ',"quantity":' + str.tostring(_qty) + '}'
+
+long_entry_payload  = f_make_payload("BUY", order_qty)
+short_entry_payload = f_make_payload("SELL", order_qty)
+long_exit_payload   = f_make_payload("SELL", order_qty)
+short_exit_payload  = f_make_payload("BUY", order_qty)
+
+// =============================================================================
+// 6. STRATEGY EXECUTION & ALERTS
+// =============================================================================
+// Long Execution (Automatically reverses any existing Short position)
+if long_entry_cond
+    strategy.entry("Long", strategy.long, qty = order_qty, comment = "Entry Long", alert_message = long_entry_payload)
+    alert(long_entry_payload, alert.freq_once_per_bar_close)
+else if long_exit_to_flat
+    strategy.close("Long", comment = "Close Long (Disagreement)", alert_message = long_exit_payload)
+    alert(long_exit_payload, alert.freq_once_per_bar_close)
+
+// Short Execution (Automatically reverses any existing Long position)
+if short_entry_cond
+    strategy.entry("Short", strategy.short, qty = order_qty, comment = "Entry Short", alert_message = short_entry_payload)
+    alert(short_entry_payload, alert.freq_once_per_bar_close)
+else if short_exit_to_flat
+    strategy.close("Short", comment = "Close Short (Disagreement)", alert_message = short_exit_payload)
+    alert(short_exit_payload, alert.freq_once_per_bar_close)
+
+// Disagreement Warning Alert
+if trend_disagree and not trend_disagree[1]
+    disagree_payload = '{"secret":"' + webhook_secret + '","action":"DISAGREE","symbol":"' + effective_symbol + '","chart_trend":"' + (chart_is_bullish ? "BULLISH" : "BEARISH") + '","htf_trend":"' + (htf_is_bullish ? "BULLISH" : "BEARISH") + '"}'
+    alert(disagree_payload, alert.freq_once_per_bar_close)
+
+// =============================================================================
+// 7. VISUALIZATIONS
+// =============================================================================
+// Chart Supertrend Line (Green = Bullish, Red = Bearish)
+plot(chart_st_dir == -1 ? chart_st_val : na, title = "Supertrend Bullish", color = color.green, linewidth = 2, style = plot.style_linebr)
+plot(chart_st_dir == 1  ? chart_st_val : na, title = "Supertrend Bearish", color = color.red,   linewidth = 2, style = plot.style_linebr)
+
+// Higher Timeframe Supertrend Stepped Line (Optional)
+plot(show_htf_line and (htf_st_dir == -1) ? htf_st_val : na, title = "HTF Supertrend Bullish", color = color.new(color.teal, 25), linewidth = 2, style = plot.style_stepline)
+plot(show_htf_line and (htf_st_dir == 1)  ? htf_st_val : na, title = "HTF Supertrend Bearish", color = color.new(color.maroon, 25), linewidth = 2, style = plot.style_stepline)
+
+// Entry Markers (Triangle Up for Buy, Triangle Down for Sell)
+plotshape(show_markers and long_entry_cond,  title = "Long Entry Marker",  style = shape.triangleup,   location = location.belowbar, color = color.green, size = size.small, text = "BUY")
+plotshape(show_markers and short_entry_cond, title = "Short Entry Marker", style = shape.triangledown, location = location.abovebar, color = color.red,   size = size.small, text = "SELL")
+
+// Exit to Flat Markers (Plotted ONLY when an active position is closed to flat on disagreement)
+plotshape(show_markers and long_exit_to_flat,  title = "Long Exit Marker",  style = shape.xcross, location = location.abovebar, color = color.orange, size = size.tiny, text = "EXIT")
+plotshape(show_markers and short_exit_to_flat, title = "Short Exit Marker", style = shape.xcross, location = location.belowbar, color = color.orange, size = size.tiny, text = "EXIT")
+
+// Trend Disagreement Background Shading
+bgcolor(show_bg and trend_disagree ? color.new(color.maroon, 88) : na, title = "Trend Disagreement Background")
+
