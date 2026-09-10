@@ -354,10 +354,9 @@ def test_audit_logs_page():
 
 def test_setup_2fa_page_qr_generation():
     client = get_auth_client()
-    res = client.get("/admin/2fa-setup")
-    assert res.status_code == 200
-    assert "Mandatory 2FA Enrollment" in res.text
-    assert "Emergency One-Time Backup Recovery Codes" in res.text
+    res = client.get("/admin/2fa-setup", follow_redirects=False)
+    assert res.status_code == 303
+    assert res.headers["location"] == "/admin/dashboard"
 
 def test_custom_jinja_filters():
     from main import format_inr

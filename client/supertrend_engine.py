@@ -51,7 +51,8 @@ def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: Optional[float] = None, 
     if not force_check and "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_MARKET_HOURS_IN_TESTS", "").lower() not in ("true", "1", "yes"):
         return True
 
-    dt = datetime.datetime.fromtimestamp(now_ts, tz=IST_TIMEZONE) if now_ts is not None else datetime.datetime.now(IST_TIMEZONE)
+    ts = now_ts if now_ts is not None else time.time()
+    dt = datetime.datetime.fromtimestamp(ts, tz=IST_TIMEZONE)
 
     # 1. Weekday Check (Monday = 0 ... Friday = 4; Saturday = 5, Sunday = 6)
     if dt.weekday() >= 5:
@@ -1867,8 +1868,11 @@ class MultiSuperTrendEngine:
             return {"status": "IN_SYNC", "drift_count": 0, "actions": []}
 
         # Fetch live broker net positions
+        if not hasattr(xts_api_module, "get_broker_positions_net"):
+            return {"status": "SKIPPED", "reason": "Broker positions net API not available"}
+
         broker_data = await asyncio.to_thread(xts_api_module.get_broker_positions_net)
-        if broker_data.get("is_paper_trade", False):
+        if not broker_data or broker_data.get("is_paper_trade", False):
             return {"status": "IN_SYNC", "drift_count": 0, "actions": ["PAPER_MODE"]}
 
         all_pos = broker_data.get("all_positions", [])
@@ -1878,6 +1882,10 @@ class MultiSuperTrendEngine:
         for target_sym, target_lots in targets.items():
             runners_for_sym = [r for r in self.strategies.values() if r.is_enabled and r.symbol == target_sym]
             if not runners_for_sym:
+                continue
+
+            # If all runners for this symbol are running in PAPER mode, skip broker reconciliation
+            if all(getattr(r, "execution_mode", "LIVE") == "PAPER" for r in runners_for_sym):
                 continue
 
             primary_r = runners_for_sym[0]

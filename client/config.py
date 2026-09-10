@@ -98,7 +98,8 @@ def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: float = None, force_chec
     if not force_check and "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_MARKET_HOURS_IN_TESTS", "").lower() not in ("true", "1", "yes"):
         return True
 
-    dt = datetime.datetime.fromtimestamp(now_ts, tz=IST_TIMEZONE) if now_ts is not None else datetime.datetime.now(IST_TIMEZONE)
+    ts = now_ts if now_ts is not None else time.time()
+    dt = datetime.datetime.fromtimestamp(ts, tz=IST_TIMEZONE)
 
     # 1. Weekday Check (Monday = 0 ... Friday = 4; Saturday = 5, Sunday = 6)
     if dt.weekday() >= 5:
