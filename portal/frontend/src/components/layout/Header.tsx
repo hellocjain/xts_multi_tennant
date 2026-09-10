@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Flame, Activity, ShieldAlert, LogOut, Clock, Wifi, WifiOff, RotateCw } from 'lucide-react';
+import { Flame, Activity, LogOut, Clock, Wifi, WifiOff, RotateCw } from 'lucide-react';
 import { DashboardTelemetry } from '../../types/telemetry';
 
 interface HeaderProps {

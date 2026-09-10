@@ -190,7 +190,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
         lower_band: res.lower_band || [],
         markers: res.markers || [],
       });
-    } catch (_err: any) {
+    } catch {
       // chart error non-blocking
     } finally {
       setIsChartLoading(false);
@@ -1041,13 +1041,14 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                     <input
                       type="text"
                       readOnly
-                      value={settings?.webhook?.webhook_url || client?.webhook_url || `http://139.59.20.239/webhook/${clientId}`}
+                      value={settings?.webhook?.webhook_url || client?.webhook_url || `${typeof window !== 'undefined' ? window.location.origin : ''}/webhook/${clientId}`}
                       className="flex-1 px-3 py-2 bg-obsidian border border-bordercolor rounded-xl text-xs font-mono text-slate-300 select-all"
                     />
                     <button
                       type="button"
                       onClick={() => {
-                        navigator.clipboard.writeText(settings?.webhook?.webhook_url || client?.webhook_url || `http://139.59.20.239/webhook/${clientId}`);
+                        const targetUrl = settings?.webhook?.webhook_url || client?.webhook_url || `${typeof window !== 'undefined' ? window.location.origin : ''}/webhook/${clientId}`;
+                        navigator.clipboard.writeText(targetUrl);
                         setHasCopiedWebhook(true);
                         setTimeout(() => setHasCopiedWebhook(false), 2000);
                         toast.success('Webhook URL copied');

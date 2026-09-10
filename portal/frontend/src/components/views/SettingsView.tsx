@@ -88,7 +88,7 @@ export const SettingsView: React.FC = () => {
           <div className="space-y-3 text-xs font-mono">
             <div className="flex justify-between py-2 border-b border-bordercolor/60">
               <span className="text-slate-400">Host IP:</span>
-              <span className="text-slate-200">{healthData?.system?.server_ip || '139.59.20.239'}</span>
+              <span className="text-slate-200">{healthData?.system?.server_ip || (typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1')}</span>
             </div>
             <div className="flex justify-between py-2 border-b border-bordercolor/60">
               <span className="text-slate-400">Database Status:</span>

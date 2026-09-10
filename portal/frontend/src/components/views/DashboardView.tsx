@@ -13,7 +13,6 @@ import {
   Play, 
   Flame, 
   ExternalLink, 
-  ShieldAlert, 
   Wallet, 
   Activity, 
   Layers, 
@@ -30,7 +29,6 @@ interface DashboardViewProps {
   onRefresh: () => void;
   onOpenClientTab: (clientId: string, clientName: string) => void;
   onToggleTrading: (clientId: string, pause: boolean) => Promise<void>;
-  onPanicClient: (clientId: string) => Promise<void>;
   onOpenAddClient: () => void;
 }
 
@@ -40,7 +38,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onRefresh,
   onOpenClientTab,
   onToggleTrading,
-  onPanicClient,
   onOpenAddClient,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,7 +46,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [panicClientTarget, setPanicClientTarget] = useState<ClientSummary | null>(null);
 
-  const clients = telemetry?.clients || [];
+  const clients = useMemo(() => telemetry?.clients || [], [telemetry?.clients]);
 
   const filteredClients = useMemo(() => {
     return clients.filter((c) => {

@@ -160,10 +160,6 @@ function TerminalApp() {
               await api.toggleClientTrading(cid, pause);
               refetch();
             }}
-            onPanicClient={async (cid) => {
-              await api.panicClient(cid);
-              refetch();
-            }}
             onOpenAddClient={() => setIsAddClientModalOpen(true)}
           />
         )}

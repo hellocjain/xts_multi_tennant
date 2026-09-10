@@ -6,9 +6,7 @@ import {
   ShieldCheck, 
   Settings as SettingsIcon, 
   X, 
-  Plus, 
-  TrendingUp, 
-  TrendingDown 
+  Plus
 } from 'lucide-react';
 import { WorkspaceTab } from '../../types/workspace';
 

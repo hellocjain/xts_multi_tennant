@@ -2,12 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { 
   createChart, 
   IChartApi, 
-  ISeriesApi, 
   CandlestickSeries, 
   LineSeries, 
   createSeriesMarkers,
-  CandlestickData, 
-  LineData,
   LineStyle
 } from 'lightweight-charts';
 import { CandleData, ChartMarker } from '../../types/telemetry';
