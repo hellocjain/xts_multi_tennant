@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Flame, Activity, ShieldAlert, LogOut, Clock, Wifi, WifiOff } from 'lucide-react';
+import { Flame, Activity, ShieldAlert, LogOut, Clock, Wifi, WifiOff, RotateCw } from 'lucide-react';
 import { DashboardTelemetry } from '../../types/telemetry';
 
 interface HeaderProps {
   telemetry?: DashboardTelemetry;
   isWsConnected: boolean;
   onOpenGlobalPanic: () => void;
-  onLogout: () => void;
+  onLogout: () => Promise<void> | void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,6 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
 }) => {
   const [istTime, setIstTime] = useState<string>('');
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
     const updateTime = () => {
@@ -39,6 +40,16 @@ export const Header: React.FC<HeaderProps> = ({
   const isProfit = netMtm >= 0;
   const mcxOpen = telemetry?.market_status?.mcx_open ?? false;
   const nseOpen = telemetry?.market_status?.nse_open ?? false;
+
+  const handleLogoutClick = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await onLogout();
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   return (
     <header className="h-14 bg-cardbg border-b border-bordercolor px-4 flex items-center justify-between shrink-0 select-none z-30">
@@ -122,11 +133,18 @@ export const Header: React.FC<HeaderProps> = ({
 
         <button
           type="button"
-          onClick={onLogout}
+          onClick={handleLogoutClick}
+          disabled={isLoggingOut}
           title="Sign Out"
-          className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 rounded-xl border border-transparent hover:border-bordercolor transition cursor-pointer"
+          className={`p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 rounded-xl border border-transparent hover:border-bordercolor transition cursor-pointer ${
+            isLoggingOut ? 'opacity-60 cursor-not-allowed' : ''
+          }`}
         >
-          <LogOut className="w-4 h-4" />
+          {isLoggingOut ? (
+            <RotateCw className="w-4 h-4 animate-spin text-rose-400" />
+          ) : (
+            <LogOut className="w-4 h-4" />
+          )}
         </button>
       </div>
     </header>

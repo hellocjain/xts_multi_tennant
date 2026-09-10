@@ -1584,9 +1584,13 @@ async def trigger_manual_backup(request: Request, user: dict = Depends(require_a
         filename = os.path.basename(backup_file)
 
         database.record_audit(user["username"], "MANUAL_BACKUP_CREATED", {"backup_file": filename})
+        if request.headers.get("accept") == "application/json" or request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JSONResponse({"status": "success", "filename": filename, "message": f"Backup {filename} created and encrypted successfully!"})
         return RedirectResponse(url=f"/admin/settings?msg=Backup+{filename}+created+and+encrypted+successfully!", status_code=303)
     except Exception as e:
         logger.error(f"Backup trigger failed: {e}")
+        if request.headers.get("accept") == "application/json" or request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JSONResponse({"status": "error", "message": f"Backup failed: {str(e)}"}, status_code=500)
         return RedirectResponse(url=f"/admin/settings?err=Backup+failed:+{str(e)}", status_code=303)
 
 @app.post("/admin/settings/ip-allowlist")

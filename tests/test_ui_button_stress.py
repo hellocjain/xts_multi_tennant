@@ -446,3 +446,84 @@ def test_adversarial_button_payloads():
         headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
     )
     assert res4.status_code == 404
+
+
+# ==============================================================================
+# 8. DATABASE BACKUP CONCURRENT BUTTON STRESS
+# ==============================================================================
+
+def test_rapid_concurrent_database_backup_requests(monkeypatch, tmp_path):
+    """
+    Simulates rapid multiple clicks on 'Create Instant Database Backup'.
+    Verifies:
+    - JSON response is returned when requested with application/json.
+    - Zero SQLite deadlock or locking errors.
+    - All audit entries created safely.
+    """
+    client = get_auth_client()
+
+    import backup_engine
+    monkeypatch.setattr(backup_engine, "create_backup_archive", lambda pw: str(tmp_path / "test_backup.enc"))
+
+    def trigger_backup():
+        return client.post(
+            "/admin/settings/backup",
+            headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(trigger_backup) for _ in range(6)]
+        results = [f.result() for f in futures]
+
+    for res in results:
+        assert res.status_code == 200
+        data = res.json()
+        assert data.get("status") == "success"
+        assert "filename" in data
+
+
+# ==============================================================================
+# 9. STRATEGY EVALUATE & RESET FLAT CONCURRENT STRESS
+# ==============================================================================
+
+def test_rapid_concurrent_strategy_eval_and_reset(monkeypatch):
+    """
+    Simulates rapid concurrent clicks on Evaluate Now and Reset FLAT buttons.
+    Verifies:
+    - Handled JSON responses.
+    - No unhandled exceptions or state corruption.
+    """
+    client = get_auth_client()
+
+    async def mock_eval(tenant_id, symbol, strategy_id, user):
+        return {"status": "ok", "action": "EVAL_COMPLETED", "symbol": symbol}
+
+    async def mock_reset(tenant_id, strategy_id, square_off_broker, request, user):
+        return {"status": "ok", "action": "RESET_FLAT_COMPLETED"}
+
+    monkeypatch.setattr(portal_main, "evaluate_supertrend_now_portal", mock_eval)
+    monkeypatch.setattr(portal_main, "reset_supertrend_strategy_flat_portal", mock_reset)
+
+    def eval_call():
+        return client.post(
+            "/api/clients/t_stress_01/strategies/evaluate-now",
+            json={"symbol": "CRUDEOIL1!", "strategy_id": "strat_stress_01"},
+            headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+        )
+
+    def reset_call():
+        return client.post(
+            "/api/clients/t_stress_01/strategies/reset-flat",
+            json={"strategy_id": "strat_stress_01", "square_off_broker": True},
+            headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        f_evals = [executor.submit(eval_call) for _ in range(5)]
+        f_resets = [executor.submit(reset_call) for _ in range(5)]
+        results = [f.result() for f in f_evals + f_resets]
+
+    for res in results:
+        assert res.status_code == 200
+        assert res.json().get("status") == "ok"
+

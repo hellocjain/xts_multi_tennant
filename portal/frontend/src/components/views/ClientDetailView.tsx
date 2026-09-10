@@ -203,6 +203,18 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
     }
   }, [selectedStrategy, timeframe]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowAddStratModal(false);
+        setShowDeleteModal(false);
+        setShowPanicModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const handleToggleTrading = async () => {
     if (!clientData || isTogglingTrading) return;
     const newPause = !clientData.client.trading_paused && clientData.client.status !== 'PAUSED';
@@ -319,18 +331,30 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   };
 
   const handleEvaluateNow = async (strat: StrategyItem) => {
-    await api.evaluateStrategyNow(clientId, strat.symbol, strat.timeframe, strat.id);
-    loadChartData(strat.symbol, timeframe, strat.id);
+    try {
+      await api.evaluateStrategyNow(clientId, strat.symbol, strat.timeframe, strat.id);
+      loadChartData(strat.symbol, timeframe, strat.id);
+    } catch (err: any) {
+      toast.error(`Evaluation failed: ${err.message}`);
+    }
   };
 
   const handleSyncTrend = async (strat: StrategyItem, trend: 'BUY' | 'SELL' | 'FLAT') => {
-    await api.syncStrategyTrend(clientId, strat.symbol, strat.timeframe, trend, strat.id);
-    loadClientDetails();
+    try {
+      await api.syncStrategyTrend(clientId, strat.symbol, strat.timeframe, trend, strat.id);
+      loadClientDetails();
+    } catch (err: any) {
+      toast.error(`Sync trend failed: ${err.message}`);
+    }
   };
 
   const handleResetFlat = async (strat: StrategyItem) => {
-    await api.resetStrategyFlat(clientId, strat.symbol, strat.timeframe, strat.id);
-    loadClientDetails();
+    try {
+      await api.resetStrategyFlat(clientId, strat.symbol, strat.timeframe, strat.id);
+      loadClientDetails();
+    } catch (err: any) {
+      toast.error(`Reset flat failed: ${err.message}`);
+    }
   };
 
   const handleDeleteStrategy = async (stratId: string) => {
@@ -1131,7 +1155,12 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 
       {/* Add Strategy Modal */}
       {showAddStratModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isSavingStrat) setShowAddStratModal(false);
+          }}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        >
           <div className="bg-cardbg border border-bordercolor w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-base text-slate-100">Add SuperTrend Strategy</h3>
