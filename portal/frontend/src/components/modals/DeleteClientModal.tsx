@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { AlertTriangle, Trash2, Loader2, X } from 'lucide-react';
 import { api } from '../../services/api';
 import { toast } from 'sonner';
@@ -21,16 +21,15 @@ export const DeleteClientModal: React.FC<DeleteClientModalProps> = ({
   const [confirmText, setConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      setConfirmText('');
-      setIsDeleting(false);
-    }
-  }, [isOpen]);
-
   if (!isOpen) return null;
 
   const isConfirmed = confirmText.trim().toLowerCase() === clientId.trim().toLowerCase();
+
+  const handleClose = () => {
+    setConfirmText('');
+    setIsDeleting(false);
+    onClose();
+  };
 
   const handleDelete = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,10 +39,10 @@ export const DeleteClientModal: React.FC<DeleteClientModalProps> = ({
     try {
       await api.deleteClient(clientId);
       toast.success(`Client ${clientName || clientId} has been deleted permanently`);
-      onClose();
+      handleClose();
       if (onSuccess) onSuccess();
     } catch (err: any) {
-      toast.error(`Failed to delete client: ${err.message}`);
+      toast.error(`Failed to delete client: ${err.message || 'Unknown error'}`);
     } finally {
       setIsDeleting(false);
     }
@@ -51,8 +50,11 @@ export const DeleteClientModal: React.FC<DeleteClientModalProps> = ({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-client-title"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !isDeleting) onClose();
+        if (e.target === e.currentTarget && !isDeleting) handleClose();
       }}
       className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
     >
@@ -63,13 +65,15 @@ export const DeleteClientModal: React.FC<DeleteClientModalProps> = ({
               <AlertTriangle className="w-5 h-5 text-rose-400" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-slate-100">Delete Client Container</h3>
+              <h3 id="delete-client-title" className="font-bold text-base text-slate-100">Delete Client Container</h3>
               <p className="text-xs text-rose-400 font-mono">DANGER ZONE • IRREVERSIBLE</p>
             </div>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleClose}
             disabled={isDeleting}
+            aria-label="Close dialog"
             className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
           >
             <X className="w-4 h-4" />
@@ -99,7 +103,7 @@ export const DeleteClientModal: React.FC<DeleteClientModalProps> = ({
           <div className="flex items-center justify-end space-x-2.5 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={isDeleting}
               className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 bg-slate-800 rounded-xl transition"
             >

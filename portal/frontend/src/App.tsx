@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Header } from './components/layout/Header';
 import { WorkspaceTabs } from './components/layout/WorkspaceTabs';
@@ -39,20 +39,29 @@ function TerminalApp() {
     closeTab,
   } = useWorkspaceTabs();
 
-  const { telemetry, isLoading, refetch, isWsConnected } = useTelemetry();
+  const { telemetry, isLoading, refetch, isWsConnected } = useTelemetry(isAuthenticated === true);
 
   // Check auth session
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     try {
       const res = await api.getMe();
       setIsAuthenticated(res.authenticated);
     } catch {
       setIsAuthenticated(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    checkAuth();
+    let isMounted = true;
+    api.getMe().then((res) => {
+      if (isMounted) {
+        setIsAuthenticated(res.authenticated);
+      }
+    }).catch(() => {
+      if (isMounted) {
+        setIsAuthenticated(false);
+      }
+    });
 
     const handleUnauthorized = () => {
       setIsAuthenticated(false);
@@ -78,15 +87,16 @@ function TerminalApp() {
       window.removeEventListener('auth:unauthorized', handleUnauthorized);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [checkAuth]);
 
   const handleLogout = async () => {
     try {
       await api.logout();
+    } catch {
+      // ignore
+    } finally {
       setIsAuthenticated(false);
       toast.success('Logged out successfully');
-    } catch {
-      setIsAuthenticated(false);
     }
   };
 

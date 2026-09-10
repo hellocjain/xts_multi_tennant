@@ -41,6 +41,9 @@ export const ClientPanicModal: React.FC<ClientPanicModalProps> = ({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="client-panic-title"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSubmitting) onClose();
       }}
@@ -53,13 +56,15 @@ export const ClientPanicModal: React.FC<ClientPanicModalProps> = ({
               <Flame className="w-5 h-5 text-rose-400 animate-pulse" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-slate-100">Client Panic Square-Off</h3>
+              <h3 id="client-panic-title" className="font-bold text-base text-slate-100">Client Panic Square-Off</h3>
               <p className="text-xs text-rose-400 font-mono">EMERGENCY KILL-SWITCH • {clientId}</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             disabled={isSubmitting}
+            aria-label="Close dialog"
             className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
           >
             <X className="w-4 h-4" />

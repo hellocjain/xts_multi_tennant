@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ClientSummary, 
   PositionItem, 
@@ -126,22 +126,25 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   const [formMinDaysMcx, setFormMinDaysMcx] = useState(7);
 
   // Load client detail data
-  const loadClientDetails = async () => {
+  const loadClientDetails = useCallback(async () => {
     try {
       const data = await api.getClientDetail(clientId);
       setClientData(data);
-      if (data.strategies && data.strategies.length > 0 && !selectedStrategy) {
-        setSelectedStrategy(data.strategies[0]);
-        setTimeframe(data.strategies[0].timeframe || '5m');
-      }
+      setSelectedStrategy((prev) => {
+        if (!prev && data.strategies && data.strategies.length > 0) {
+          setTimeframe(data.strategies[0].timeframe || '5m');
+          return data.strategies[0];
+        }
+        return prev;
+      });
     } catch (err: any) {
       toast.error(`Failed to load client details: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [clientId]);
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     setIsLoadingSettings(true);
     try {
       const data = await api.getClientSettings(clientId);
@@ -163,22 +166,72 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
     } finally {
       setIsLoadingSettings(false);
     }
-  };
-
-  useEffect(() => {
-    loadClientDetails();
-    const interval = setInterval(loadClientDetails, 5000);
-    return () => clearInterval(interval);
   }, [clientId]);
 
   useEffect(() => {
-    if (activeSubTab === 'settings') {
-      loadSettings();
-    }
+    let isMounted = true;
+    const load = () => {
+      api.getClientDetail(clientId).then((data) => {
+        if (isMounted) {
+          setClientData(data);
+          setSelectedStrategy((prev) => {
+            if (!prev && data.strategies && data.strategies.length > 0) {
+              setTimeframe(data.strategies[0].timeframe || '5m');
+              return data.strategies[0];
+            }
+            return prev;
+          });
+          setIsLoading(false);
+        }
+      }).catch((err: any) => {
+        if (isMounted) {
+          toast.error(`Failed to load client details: ${err.message || 'Unknown error'}`);
+          setIsLoading(false);
+        }
+      });
+    };
+
+    load();
+    const interval = setInterval(load, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [clientId]);
+
+  useEffect(() => {
+    if (activeSubTab !== 'settings') return;
+    let isMounted = true;
+    api.getClientSettings(clientId).then((data) => {
+      if (isMounted) {
+        setSettings(data);
+        setFormName(data.name || '');
+        setFormApiKey(data.credentials?.api_key || '');
+        setFormApiSecret(data.credentials?.api_secret || '');
+        setFormBrokerClientId(data.credentials?.broker_client_id || '');
+        setFormExecMode(data.credentials?.execution_mode || 'LIVE');
+
+        setFormMaxLots(data.risk_limits?.max_lots_limit || 100);
+        setFormMaxOrderVal(data.risk_limits?.max_order_value_inr || 5000000);
+        setFormDailyNotional(data.risk_limits?.daily_notional_cap_inr || 10000000);
+        setFormMaxDailyLoss(data.risk_limits?.max_daily_loss_inr || 50000);
+        setFormSlippageBuf(data.risk_limits?.slippage_buffer_pct || 0.005);
+        setFormMinDaysMcx(data.risk_limits?.min_days_before_expiry_mcx || 7);
+        setIsLoadingSettings(false);
+      }
+    }).catch((err: any) => {
+      if (isMounted) {
+        toast.error(`Failed to load client settings: ${err.message || 'Unknown error'}`);
+        setIsLoadingSettings(false);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
   }, [activeSubTab, clientId]);
 
   // Load chart data
-  const loadChartData = async (symbol: string, tf: string, _stratId?: string) => {
+  const loadChartData = useCallback(async (symbol: string, tf: string, _stratId?: string) => {
     if (!symbol) return;
     setIsChartLoading(true);
     try {
@@ -195,13 +248,31 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
     } finally {
       setIsChartLoading(false);
     }
-  };
+  }, [clientId]);
 
   useEffect(() => {
-    if (selectedStrategy) {
-      loadChartData(selectedStrategy.symbol, timeframe, selectedStrategy.id);
-    }
-  }, [selectedStrategy, timeframe]);
+    if (!selectedStrategy || !selectedStrategy.symbol) return;
+    let isMounted = true;
+    api.getCandles(clientId, selectedStrategy.symbol, timeframe).then((res) => {
+      if (isMounted) {
+        setCandleData({
+          candles: res.candles || [],
+          supertrend_line: res.supertrend_line || [],
+          upper_band: res.upper_band || [],
+          lower_band: res.lower_band || [],
+          markers: res.markers || [],
+        });
+        setIsChartLoading(false);
+      }
+    }).catch(() => {
+      if (isMounted) {
+        setIsChartLoading(false);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [clientId, selectedStrategy, timeframe]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

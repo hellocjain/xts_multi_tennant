@@ -196,6 +196,8 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
                 onClick={() => setShowSyncDropdown(!showSyncDropdown)}
                 disabled={isSyncing}
                 title="Override and Synchronize Strategy Trend"
+                aria-haspopup="true"
+                aria-expanded={showSyncDropdown}
                 className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200 font-medium transition"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-brand-400' : ''}`} />
@@ -260,6 +262,7 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
             <button
               type="button"
               disabled={isToggling}
+              aria-label={selectedStrat.is_enabled ? 'Disable Strategy' : 'Enable Strategy'}
               onClick={async () => {
                 setIsToggling(true);
                 try {
@@ -282,6 +285,7 @@ export const StrategyRibbon: React.FC<StrategyRibbonProps> = ({
             <button
               type="button"
               disabled={isDeleting}
+              aria-label="Delete Strategy"
               onClick={async () => {
                 setIsDeleting(true);
                 try {

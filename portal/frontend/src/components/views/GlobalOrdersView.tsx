@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { OrderItem } from '../../types/telemetry';
 import { api } from '../../services/api';
 import { Search, RotateCw, Download, XCircle, ArrowUpRight, ArrowDownRight, X } from 'lucide-react';
@@ -12,7 +12,7 @@ export const GlobalOrdersView: React.FC = () => {
   const [sideFilter, setSideFilter] = useState<string>('ALL');
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await api.getGlobalOrders();
@@ -22,12 +22,30 @@ export const GlobalOrdersView: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchOrders();
-    const interval = setInterval(fetchOrders, 5000);
-    return () => clearInterval(interval);
+    let isMounted = true;
+    const load = () => {
+      api.getGlobalOrders().then((res) => {
+        if (isMounted) {
+          setOrders(res.orders || []);
+          setIsLoading(false);
+        }
+      }).catch((err: any) => {
+        if (isMounted) {
+          toast.error(`Failed to load orders: ${err.message || 'Unknown error'}`);
+          setIsLoading(false);
+        }
+      });
+    };
+
+    load();
+    const interval = setInterval(load, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const [isBulkCancelling, setIsBulkCancelling] = useState(false);
@@ -69,6 +87,33 @@ export const GlobalOrdersView: React.FC = () => {
     }
   };
 
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => {
+      const q = search.toLowerCase().trim();
+      const matchSearch =
+        !q ||
+        o.app_order_id.toLowerCase().includes(q) ||
+        o.symbol.toLowerCase().includes(q) ||
+        (o.client_id && o.client_id.toLowerCase().includes(q)) ||
+        (o.client_name && o.client_name.toLowerCase().includes(q));
+
+      if (!matchSearch) return false;
+
+      if (statusFilter !== 'ALL') {
+        if (statusFilter === 'OPEN' && !['OPEN', 'PENDING', 'TRIGGER_PENDING'].includes(o.status.toUpperCase())) return false;
+        if (statusFilter === 'COMPLETE' && o.status.toUpperCase() !== 'COMPLETE') return false;
+        if (statusFilter === 'REJECTED' && o.status.toUpperCase() !== 'REJECTED') return false;
+        if (statusFilter === 'CANCELLED' && o.status.toUpperCase() !== 'CANCELLED') return false;
+      }
+
+      if (sideFilter !== 'ALL' && o.side.toUpperCase() !== sideFilter.toUpperCase()) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [orders, search, statusFilter, sideFilter]);
+
   const handleExportCSV = () => {
     if (filteredOrders.length === 0) {
       toast.error('No orders available to export');
@@ -104,33 +149,6 @@ export const GlobalOrdersView: React.FC = () => {
     URL.revokeObjectURL(url);
     toast.success(`Exported ${filteredOrders.length} orders to orders_${nowStr}.csv`);
   };
-
-  const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
-      const q = search.toLowerCase().trim();
-      const matchSearch =
-        !q ||
-        o.app_order_id.toLowerCase().includes(q) ||
-        o.symbol.toLowerCase().includes(q) ||
-        (o.client_id && o.client_id.toLowerCase().includes(q)) ||
-        (o.client_name && o.client_name.toLowerCase().includes(q));
-
-      if (!matchSearch) return false;
-
-      if (statusFilter !== 'ALL') {
-        if (statusFilter === 'OPEN' && !['OPEN', 'PENDING', 'TRIGGER_PENDING'].includes(o.status.toUpperCase())) return false;
-        if (statusFilter === 'COMPLETE' && o.status.toUpperCase() !== 'COMPLETE') return false;
-        if (statusFilter === 'REJECTED' && o.status.toUpperCase() !== 'REJECTED') return false;
-        if (statusFilter === 'CANCELLED' && o.status.toUpperCase() !== 'CANCELLED') return false;
-      }
-
-      if (sideFilter !== 'ALL' && o.side.toUpperCase() !== sideFilter.toUpperCase()) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [orders, search, statusFilter, sideFilter]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 md:p-6 space-y-4">
@@ -178,6 +196,7 @@ export const GlobalOrdersView: React.FC = () => {
             disabled={isLoading}
             className="p-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl border border-bordercolor transition"
             title="Refresh Orders"
+            aria-label="Refresh Orders"
           >
             <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-brand-400' : ''}`} />
           </button>
@@ -191,6 +210,7 @@ export const GlobalOrdersView: React.FC = () => {
           <input
             type="text"
             data-search="true"
+            aria-label="Search global order book"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by symbol, order ID, or client... (Cmd+K)"
@@ -202,6 +222,7 @@ export const GlobalOrdersView: React.FC = () => {
               onClick={() => setSearch('')}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-800 transition cursor-pointer"
               title="Clear search"
+              aria-label="Clear search"
             >
               <X className="w-3.5 h-3.5" />
             </button>

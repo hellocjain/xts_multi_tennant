@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../../services/api';
 import { ShieldCheck, Search, RotateCw, ChevronRight, ChevronDown, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,32 +9,46 @@ export const AuditLogsView: React.FC = () => {
   const [search, setSearch] = useState('');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
-  const fetchLogs = async () => {
-    setIsLoading(true);
+  const fetchLogs = useCallback(async (showLoading: boolean = false) => {
+    if (showLoading) setIsLoading(true);
     try {
       const res = await api.getAuditLogs(150);
       setLogs(res.logs || []);
     } catch (err: any) {
-      toast.error(`Failed to load audit logs: ${err.message}`);
+      toast.error(`Failed to load audit logs: ${err.message || 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchLogs();
   }, []);
 
-  const filteredLogs = logs.filter((log) => {
+  useEffect(() => {
+    let isMounted = true;
+    api.getAuditLogs(150).then((res) => {
+      if (isMounted) {
+        setLogs(res.logs || []);
+        setIsLoading(false);
+      }
+    }).catch((err: any) => {
+      if (isMounted) {
+        toast.error(`Failed to load audit logs: ${err.message || 'Unknown error'}`);
+        setIsLoading(false);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const filteredLogs = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return true;
-    return (
+    if (!q) return logs;
+    return logs.filter((log) => (
       (log.actor && log.actor.toLowerCase().includes(q)) ||
       (log.action && log.action.toLowerCase().includes(q)) ||
       (log.target_tenant_id && log.target_tenant_id.toLowerCase().includes(q)) ||
       (log.details_json && log.details_json.toLowerCase().includes(q))
-    );
-  });
+    ));
+  }, [logs, search]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-4 md:p-6 space-y-4">
@@ -49,10 +63,11 @@ export const AuditLogsView: React.FC = () => {
         </div>
         <button
           type="button"
-          onClick={fetchLogs}
+          onClick={() => fetchLogs(true)}
           disabled={isLoading}
           className="p-2 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-xl border border-bordercolor transition cursor-pointer"
           title="Refresh Logs"
+          aria-label="Refresh Logs"
         >
           <RotateCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-brand-400' : ''}`} />
         </button>
@@ -68,6 +83,7 @@ export const AuditLogsView: React.FC = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by action, actor, or tenant... (Cmd+K)"
+            aria-label="Search by action, actor, or tenant"
             className="w-full pl-9 pr-9 py-2 rounded-xl bg-obsidian border border-bordercolor text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 transition"
           />
           {search && (
@@ -76,6 +92,7 @@ export const AuditLogsView: React.FC = () => {
               onClick={() => setSearch('')}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 rounded-full hover:bg-slate-800 transition cursor-pointer"
               title="Clear search"
+              aria-label="Clear search"
             >
               <X className="w-3.5 h-3.5" />
             </button>

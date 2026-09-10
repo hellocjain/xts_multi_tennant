@@ -1593,6 +1593,26 @@ async def trigger_manual_backup(request: Request, user: dict = Depends(require_a
             return JSONResponse({"status": "error", "message": f"Backup failed: {str(e)}"}, status_code=500)
         return RedirectResponse(url=f"/admin/settings?err=Backup+failed:+{str(e)}", status_code=303)
 
+
+@app.post("/api/backup")
+async def api_trigger_backup(request: Request, user: dict = Depends(require_api_auth)):
+    try:
+        import sys
+        backup_dir_path = os.path.abspath(os.path.join(os.path.dirname(PORTAL_DIR), "backup"))
+        if backup_dir_path not in sys.path:
+            sys.path.insert(0, backup_dir_path)
+        import backup_engine
+
+        passphrase = os.environ.get("BACKUP_PASSPHRASE", "DefaultBackupPassphrase123!")
+        backup_file = backup_engine.create_backup_archive(passphrase)
+        filename = os.path.basename(backup_file)
+
+        database.record_audit(user["username"], "MANUAL_BACKUP_CREATED", {"backup_file": filename})
+        return {"status": "ok", "filename": filename, "message": f"Backup {filename} created and encrypted successfully!"}
+    except Exception as e:
+        logger.error(f"API Backup trigger failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
+
 @app.post("/admin/settings/ip-allowlist")
 async def update_ip_allowlist(request: Request, allowed_ips: str = Form(...), user: dict = Depends(require_auth)):
     try:
@@ -1984,7 +2004,9 @@ async def delete_strategy_action(
 
 
 @app.get("/admin/api/system-health")
-async def get_system_health_api(user: dict = Depends(require_auth)):
+@app.get("/api/system-health")
+@app.get("/api/system/health")
+async def get_system_health_api(user: dict = Depends(require_api_auth)):
     """Comprehensive real-time diagnostic health check across database, client containers, and memory."""
     health_data = {
         "status": "HEALTHY",
@@ -2844,6 +2866,17 @@ async def api_audit_logs(limit: int = 100, user: dict = Depends(require_api_auth
 # WebSocket Telemetry Streaming Endpoint
 @app.websocket("/ws/telemetry")
 async def websocket_telemetry_endpoint(websocket: WebSocket):
+    token = websocket.cookies.get("admin_session")
+    user = None
+    if token:
+        ip = websocket.client.host if websocket.client else "127.0.0.1"
+        ua = websocket.headers.get("user-agent", "")
+        user = security.validate_session(token, ip, ua)
+
+    if not user:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await websocket.accept()
     await websocket.send_json({"type": "connection_status", "connected": True})
 

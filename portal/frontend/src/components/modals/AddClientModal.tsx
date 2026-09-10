@@ -49,6 +49,9 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-client-title"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSubmitting) onClose();
       }}
@@ -58,11 +61,12 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 text-brand-400">
             <UserPlus className="w-5 h-5" />
-            <h3 className="font-bold text-base text-slate-100">Add New Trading Client</h3>
+            <h3 id="add-client-title" className="font-bold text-base text-slate-100">Add New Trading Client</h3>
           </div>
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close dialog"
             className="text-slate-400 hover:text-slate-200 p-1 rounded-lg"
           >
             <X className="w-4 h-4" />
@@ -72,8 +76,9 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
         <form onSubmit={handleSubmit} className="space-y-4 text-xs font-mono">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-slate-400">Tenant ID (e.g. abk13)</label>
+              <label htmlFor="new-tenant-id" className="text-slate-400">Tenant ID (e.g. abk13)</label>
               <input
+                id="new-tenant-id"
                 type="text"
                 required
                 value={tenantId}
@@ -84,8 +89,9 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
             </div>
 
             <div className="space-y-1">
-              <label className="text-slate-400">Client Name</label>
+              <label htmlFor="new-client-name" className="text-slate-400">Client Name</label>
               <input
+                id="new-client-name"
                 type="text"
                 required
                 value={clientName}
@@ -98,8 +104,9 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-slate-400">Broker Client ID</label>
+              <label htmlFor="new-broker-client-id" className="text-slate-400">Broker Client ID</label>
               <input
+                id="new-broker-client-id"
                 type="text"
                 value={brokerClientId}
                 onChange={(e) => setBrokerClientId(e.target.value)}
@@ -109,8 +116,9 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
             </div>
 
             <div className="space-y-1">
-              <label className="text-slate-400">Execution Mode</label>
+              <label htmlFor="new-execution-mode" className="text-slate-400">Execution Mode</label>
               <select
+                id="new-execution-mode"
                 value={executionMode}
                 onChange={(e) => setExecutionMode(e.target.value as any)}
                 className="w-full px-3 py-2 rounded-xl bg-obsidian border border-bordercolor text-slate-100 focus:outline-none focus:border-brand-500"
@@ -122,8 +130,9 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
           </div>
 
           <div className="space-y-1">
-            <label className="text-slate-400">Interactive App Key</label>
+            <label htmlFor="new-app-key" className="text-slate-400">Interactive App Key</label>
             <input
+              id="new-app-key"
               type="text"
               value={appKey}
               onChange={(e) => setAppKey(e.target.value)}
@@ -133,8 +142,9 @@ export const AddClientModal: React.FC<AddClientModalProps> = ({ isOpen, onClose,
           </div>
 
           <div className="space-y-1">
-            <label className="text-slate-400">Interactive Secret Key</label>
+            <label htmlFor="new-secret-key" className="text-slate-400">Interactive Secret Key</label>
             <input
+              id="new-secret-key"
               type="password"
               value={secretKey}
               onChange={(e) => setSecretKey(e.target.value)}

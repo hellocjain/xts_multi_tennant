@@ -136,6 +136,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={handleLogoutClick}
           disabled={isLoggingOut}
           title="Sign Out"
+          aria-label="Sign Out"
           className={`p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 rounded-xl border border-transparent hover:border-bordercolor transition cursor-pointer ${
             isLoggingOut ? 'opacity-60 cursor-not-allowed' : ''
           }`}

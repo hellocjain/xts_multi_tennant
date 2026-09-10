@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Settings as SettingsIcon, 
   Database, 
@@ -7,49 +7,49 @@ import {
   Server, 
   RotateCw, 
   Download, 
-  CheckCircle2, 
-  AlertCircle 
+  CheckCircle2 
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { api } from '../../services/api';
 
 export const SettingsView: React.FC = () => {
   const [healthData, setHealthData] = useState<any>(null);
   const [isLoadingHealth, setIsLoadingHealth] = useState(true);
   const [isBackingUp, setIsBackingUp] = useState(false);
 
-  const fetchHealth = async () => {
-    setIsLoadingHealth(true);
+  const fetchHealth = useCallback(async () => {
     try {
-      const res = await fetch('/admin/api/system-health', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        setHealthData(data);
-      }
-    } catch (err: any) {
+      const data = await api.getSystemHealth();
+      setHealthData(data);
+    } catch {
       // Non-blocking
     } finally {
       setIsLoadingHealth(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchHealth();
+    let isMounted = true;
+    api.getSystemHealth().then((data) => {
+      if (isMounted) {
+        setHealthData(data);
+        setIsLoadingHealth(false);
+      }
+    }).catch(() => {
+      if (isMounted) setIsLoadingHealth(false);
+    });
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleBackup = async () => {
     setIsBackingUp(true);
     try {
-      const res = await fetch('/admin/settings/backup', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (res.ok) {
-        toast.success('Database backup created and saved successfully');
-      } else {
-        toast.error('Backup request failed');
-      }
+      await api.createBackup();
+      toast.success('Database backup created and saved successfully');
     } catch (err: any) {
-      toast.error(`Backup failed: ${err.message}`);
+      toast.error(`Backup failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsBackingUp(false);
     }
@@ -76,10 +76,14 @@ export const SettingsView: React.FC = () => {
             </h3>
             <button
               type="button"
-              onClick={fetchHealth}
+              onClick={() => {
+                setIsLoadingHealth(true);
+                fetchHealth();
+              }}
               disabled={isLoadingHealth}
               className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-slate-800 transition"
               title="Refresh Health"
+              aria-label="Refresh Health"
             >
               <RotateCw className={`w-3.5 h-3.5 ${isLoadingHealth ? 'animate-spin text-brand-400' : ''}`} />
             </button>

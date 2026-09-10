@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { AlertOctagon, Flame, Loader2, X } from 'lucide-react';
 import { api } from '../../services/api';
 import { toast } from 'sonner';
@@ -13,15 +13,14 @@ export const GlobalPanicModal: React.FC<GlobalPanicModalProps> = ({ isOpen, onCl
   const [confirmText, setConfirmText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      setConfirmText('');
-    }
-  }, [isOpen]);
-
   if (!isOpen) return null;
 
   const isConfirmed = ['SQUARE OFF', 'PANIC ALL', 'PANIC'].includes(confirmText.trim().toUpperCase());
+
+  const handleClose = () => {
+    setConfirmText('');
+    onClose();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,11 +32,11 @@ export const GlobalPanicModal: React.FC<GlobalPanicModalProps> = ({ isOpen, onCl
     });
 
     try {
-      const res = await api.panicAll();
+      await api.panicAll();
       toast.success(`🚨 Global Panic Complete: All accounts swept and squared off!`, {
         duration: 5000,
       });
-      onClose();
+      handleClose();
       if (onSuccess) onSuccess();
     } catch (err: any) {
       toast.error(`❌ Panic Error: ${err.message || 'Operation encountered an error'}`, {
@@ -50,8 +49,11 @@ export const GlobalPanicModal: React.FC<GlobalPanicModalProps> = ({ isOpen, onCl
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="global-panic-title"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !isSubmitting) onClose();
+        if (e.target === e.currentTarget && !isSubmitting) handleClose();
       }}
       className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
     >
@@ -62,13 +64,15 @@ export const GlobalPanicModal: React.FC<GlobalPanicModalProps> = ({ isOpen, onCl
               <AlertOctagon className="w-5 h-5 text-rose-400 animate-pulse" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-slate-100">Confirm Global Emergency Square-Off</h3>
+              <h3 id="global-panic-title" className="font-bold text-base text-slate-100">Confirm Global Emergency Square-Off</h3>
               <p className="text-xs text-rose-400 font-mono">CRITICAL ACTION • ALL ACCOUNTS</p>
             </div>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={handleClose}
             disabled={isSubmitting}
+            aria-label="Close dialog"
             className="text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800 transition"
           >
             <X className="w-4 h-4" />
@@ -98,7 +102,7 @@ export const GlobalPanicModal: React.FC<GlobalPanicModalProps> = ({ isOpen, onCl
           <div className="flex items-center justify-end space-x-2.5 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={isSubmitting}
               className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 bg-slate-800 rounded-xl transition"
             >

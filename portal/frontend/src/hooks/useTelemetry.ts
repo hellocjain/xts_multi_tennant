@@ -4,7 +4,7 @@ import { api } from '../services/api';
 import { wsService } from '../services/websocket';
 import { DashboardTelemetry } from '../types/telemetry';
 
-export function useTelemetry() {
+export function useTelemetry(enabled: boolean = true) {
   const queryClient = useQueryClient();
   const [isWsConnected, setIsWsConnected] = useState<boolean>(false);
 
@@ -12,11 +12,17 @@ export function useTelemetry() {
   const { data: telemetry, isLoading, error, refetch } = useQuery<DashboardTelemetry>({
     queryKey: ['dashboardTelemetry'],
     queryFn: api.getDashboardData,
-    refetchInterval: isWsConnected ? 15000 : 3000, // If WS connected, slow down REST polling to 15s; else 3s fallback
-    refetchOnWindowFocus: true,
+    enabled,
+    refetchInterval: enabled ? (isWsConnected ? 15000 : 3000) : false,
+    refetchOnWindowFocus: enabled,
   });
 
   useEffect(() => {
+    if (!enabled) {
+      wsService.disconnect();
+      return;
+    }
+
     wsService.connect();
 
     const unsubStatus = wsService.on('connection_status', ({ connected }: { connected: boolean }) => {
@@ -32,8 +38,9 @@ export function useTelemetry() {
     return () => {
       unsubStatus();
       unsubTelemetry();
+      wsService.disconnect();
     };
-  }, [queryClient]);
+  }, [enabled, queryClient]);
 
   return {
     telemetry,

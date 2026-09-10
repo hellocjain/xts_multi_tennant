@@ -57,7 +57,16 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
           return (
             <div
               key={tab.id}
+              role="tab"
+              aria-selected={isActive}
+              tabIndex={0}
               onClick={() => onSelectTab(tab.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelectTab(tab.id);
+                }
+              }}
               className={`group relative flex items-center space-x-2 px-3 py-1.5 rounded-t-lg border-t border-x cursor-pointer transition-all duration-150 text-xs font-medium shrink-0 ${
                 isActive
                   ? 'bg-cardbg border-bordercolor text-slate-100 shadow-sm border-b-transparent -mb-[1px] z-10'
@@ -91,6 +100,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
                 <button
                   type="button"
                   title="Close Tab"
+                  aria-label={`Close ${tab.title} tab`}
                   onClick={(e) => {
                     e.stopPropagation();
                     onCloseTab(tab.id);

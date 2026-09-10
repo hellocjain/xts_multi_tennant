@@ -185,4 +185,11 @@ export const api = {
   // Audit Logs
   getAuditLogs: (limit: number = 100) =>
     request<{ logs: Array<{ id: string; formatted_time: string; actor: string; action: string; target_tenant_id?: string; details_json: string }> }>(`/api/audit-logs?limit=${limit}`),
+
+  // System Health & Database Backup
+  getSystemHealth: () =>
+    request<any>('/api/system-health'),
+
+  createBackup: () =>
+    request<{ status: string; filename?: string; message?: string }>('/api/backup', { method: 'POST' }),
 };

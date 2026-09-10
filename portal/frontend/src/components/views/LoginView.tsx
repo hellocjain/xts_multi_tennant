@@ -56,10 +56,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         {/* Login Form */}
         <form onSubmit={handleSubmit} className="space-y-4 text-xs font-mono">
           <div className="space-y-1.5">
-            <label className="text-slate-400 font-medium">Username</label>
+            <label htmlFor="login-username" className="text-slate-400 font-medium">Username</label>
             <div className="relative">
               <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
               <input
+                id="login-username"
                 type="text"
                 required
                 autoFocus
@@ -72,10 +73,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-slate-400 font-medium">Password</label>
+            <label htmlFor="login-password" className="text-slate-400 font-medium">Password</label>
             <div className="relative">
               <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
               <input
+                id="login-password"
                 type="password"
                 required
                 value={password}

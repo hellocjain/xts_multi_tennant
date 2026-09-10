@@ -7,9 +7,12 @@ class WebSocketService {
   private maxReconnectAttempts = 20;
   private reconnectInterval = 1000;
   private heartbeatTimer: any = null;
+  private reconnectTimer: any = null;
   private isConnected = false;
+  private isExplicitlyClosed = false;
 
   public connect() {
+    this.isExplicitlyClosed = false;
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -33,7 +36,7 @@ class WebSocketService {
           const type = message.type || 'message';
           this.emit(type, message.data !== undefined ? message.data : message);
           this.emit('all', message);
-        } catch (err) {
+        } catch {
           console.warn('[WS] Failed to parse message:', event.data);
         }
       };
@@ -46,24 +49,36 @@ class WebSocketService {
         this.isConnected = false;
         this.stopHeartbeat();
         this.emit('connection_status', { connected: false });
-        this.scheduleReconnect();
+        if (!this.isExplicitlyClosed) {
+          this.scheduleReconnect();
+        }
       };
     } catch (e) {
       console.warn('[WS] Connection attempt failed:', e);
-      this.scheduleReconnect();
+      if (!this.isExplicitlyClosed) {
+        this.scheduleReconnect();
+      }
     }
   }
 
   private scheduleReconnect() {
+    if (this.isExplicitlyClosed) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.warn('[WS] Max reconnect attempts reached.');
       return;
     }
 
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     const delay = Math.min(this.reconnectInterval * Math.pow(1.5, this.reconnectAttempts), 10000);
     this.reconnectAttempts++;
-    setTimeout(() => {
-      this.connect();
+    this.reconnectTimer = setTimeout(() => {
+      if (!this.isExplicitlyClosed) {
+        this.connect();
+      }
     }, delay);
   }
 
@@ -109,11 +124,18 @@ class WebSocketService {
   }
 
   public disconnect() {
+    this.isExplicitlyClosed = true;
     this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.socket) {
       this.socket.close();
       this.socket = null;
     }
+    this.isConnected = false;
+    this.emit('connection_status', { connected: false });
   }
 
   public getStatus(): boolean {
