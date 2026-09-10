@@ -1347,8 +1347,10 @@ class SingleSuperTrendRunner:
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
-                    if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
-                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected ({res.get('status')}). Halting further slices.")
+                    is_rollover = "ROLL_" in str(ref_suffix).upper()
+                    valid_statuses = ("done", "paper_done") if is_rollover else ("done", "paper_done", "partial_failure")
+                    if res and isinstance(res, dict) and res.get("status") not in valid_statuses:
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected/incomplete ({res.get('status')}). Halting further slices.")
                         return False
                     chunk_delta = chunk_qty if side.upper() == "SHORT" else -chunk_qty
                     self.virtual_position += chunk_delta
@@ -1412,8 +1414,10 @@ class SingleSuperTrendRunner:
                     main_module.db_insert_pending(sig_id, payload)
                 if hasattr(main_module, "_dispatch_and_record"):
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
-                    if res and isinstance(res, dict) and res.get("status") not in ("done", "paper_done", "partial_failure"):
-                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected ({res.get('status')}). Halting further slices.")
+                    is_rollover = "ROLL_" in str(ref_suffix).upper()
+                    valid_statuses = ("done", "paper_done") if is_rollover else ("done", "paper_done", "partial_failure")
+                    if res and isinstance(res, dict) and res.get("status") not in valid_statuses:
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected/incomplete ({res.get('status')}). Halting further slices.")
                         return False
                     chunk_delta = chunk_qty if action.upper() == "BUY" else -chunk_qty
                     self.virtual_position += chunk_delta
