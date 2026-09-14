@@ -355,7 +355,9 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
     IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     now_ist = datetime.datetime.now(IST)
     
-    lookback_seconds = max(timeframe_seconds * lookback_bars * 2, 86400 * 3)
+    # Standardize lookback: guarantee at least 14 calendar days (or 5x candle bars)
+    # to prevent starvation across weekends, holidays, and extended market pauses.
+    lookback_seconds = max(timeframe_seconds * lookback_bars * 5, 86400 * 14)
     start_ist = now_ist - datetime.timedelta(seconds=lookback_seconds)
 
     start_str = start_ist.strftime("%b %d %Y %H%M%S")
@@ -1057,86 +1059,20 @@ def _today_ist_str():
     return datetime.datetime.now(IST).date().isoformat()
 
 def get_daily_notional_state():
-    risk_file = _get_daily_risk_file()
+    """RMS Shield disabled: Cumulative notional cap removed for direct SuperTrend tracking."""
     today_str = _today_ist_str()
-    cap = getattr(config, "DAILY_NOTIONAL_CAP_INR", 10000000.0)
-    if not os.path.exists(risk_file):
-        return {"date": today_str, "notional": 0.0, "cap": cap, "remaining": cap}
-    try:
-        with open(risk_file, "r") as f:
-            state = json.load(f)
-            if state.get("date") == today_str:
-                n = float(state.get("notional", 0.0))
-                return {"date": today_str, "notional": n, "cap": cap, "remaining": max(0.0, cap - n)}
-    except Exception:
-        pass
-    return {"date": today_str, "notional": 0.0, "cap": cap, "remaining": cap}
+    return {"date": today_str, "notional": 0.0, "cap": 0.0, "remaining": 0.0}
 
 def check_and_reserve_daily_notional(order_val):
-    cap = getattr(config, "DAILY_NOTIONAL_CAP_INR", 10000000.0)
-    if cap is None or cap <= 0:
-        return True, None
-        
-    today_str = _today_ist_str()
-    risk_file = _get_daily_risk_file()
-    
-    fd = os.open(risk_file, os.O_RDWR | os.O_CREAT, 0o666)
-    with open(fd, "r+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX) 
-        try:
-            f.seek(0)
-            try:
-                state = json.load(f)
-            except Exception:
-                state = {"date": today_str, "notional": 0.0}
-                
-            if state.get("date") != today_str:
-                state = {"date": today_str, "notional": 0.0}
-                
-            if state["notional"] + order_val > cap:
-                return False, state["notional"]
-                
-            state["notional"] += order_val
-            
-            f.seek(0)
-            f.write(json.dumps(state))
-            f.truncate()
-            f.flush()
-            os.fsync(f.fileno())
-            return True, state["notional"]
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    """
+    RMS Shield disabled: System trades strictly according to SuperTrend signals.
+    Always returns True with 0.0 cumulative tracking.
+    """
+    return True, 0.0
 
 def refund_daily_notional(order_val):
-    cap = getattr(config, "DAILY_NOTIONAL_CAP_INR", 10000000.0)
-    if cap is None or cap <= 0:
-        return
-        
-    today_str = _today_ist_str()
-    risk_file = _get_daily_risk_file()
-    
-    if not os.path.exists(risk_file):
-        return
-        
-    fd = os.open(risk_file, os.O_RDWR | os.O_CREAT, 0o666)
-    with open(fd, "r+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            f.seek(0)
-            try:
-                state = json.load(f)
-            except Exception:
-                state = {"date": today_str, "notional": 0.0}
-                
-            if state.get("date") == today_str:
-                state["notional"] = max(0.0, state["notional"] - order_val)
-                f.seek(0)
-                f.write(json.dumps(state))
-                f.truncate()
-                f.flush()
-                os.fsync(f.fileno())
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    """RMS Shield disabled: No-op refund."""
+    return
 
 def _log_paper_trade_to_file(action, symbol, execution_qty, instrument_id, exch_seg,
                               execution_price, order_ref, order_val, paper_order_id):
@@ -1336,15 +1272,6 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
 
     contract_mult = get_contract_multiplier(symbol, exch_seg)
     order_val = base_price * execution_qty * contract_mult
-    max_val = getattr(config, "MAX_ORDER_VALUE_INR", 5000000.0)
-    if order_val > max_val:
-        logger.error(f"POSITION VALUE SHIELD: Order value Rs {order_val:,.2f} exceeds cap Rs {max_val:,.2f}.")
-        return {"status": "error", "message": "Order value exceeds max safety threshold"}
-        
-    allowed, running_total = check_and_reserve_daily_notional(order_val)
-    if not allowed:
-        logger.error(f"DAILY NOTIONAL SHIELD: Cap reached (already at Rs {running_total:,.2f}).")
-        return {"status": "error", "message": "Daily cumulative notional cap reached"}
 
     client_id = getattr(config, "CLIENT_ID", "").strip()
     if not client_id and not is_paper:

@@ -658,7 +658,7 @@ class SingleSuperTrendRunner:
             exch_seg,
             inst_id,
             tf_seconds,
-            150
+            200
         )
         fetch_ms = int((time.time() - t_start) * 1000)
 
@@ -753,7 +753,7 @@ class SingleSuperTrendRunner:
             exch_seg,
             inst_id,
             tf_seconds,
-            100
+            200
         )
         if not candles:
             if self.cached_candles:
@@ -1126,7 +1126,7 @@ class SingleSuperTrendRunner:
                 exch_seg,
                 inst_id,
                 tf_seconds,
-                100
+                200
             )
 
             if not candles:
@@ -1815,7 +1815,7 @@ class MultiSuperTrendEngine:
                         exch_seg,
                         inst_id,
                         tf_seconds,
-                        150
+                        200
                     )
                     if raw_candles:
                         st_res = calculate_supertrend(raw_candles, atr_p, mult)
