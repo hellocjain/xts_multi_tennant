@@ -341,7 +341,7 @@ def start_token_keepalive():
                 pass
     threading.Thread(target=_heartbeat, name="token-keepalive", daemon=True).start()
 
-def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timeframe_seconds: int, lookback_bars: int = 100) -> list:
+def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timeframe_seconds: int, lookback_bars: int = 100, timeout: float = 3.5) -> list:
     """
     Fetches historical OHLC candle data from Symphony XTS Market Data API.
     Returns list of candle dicts sorted ascending:
@@ -375,7 +375,7 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
     headers = {"Authorization": token, "Content-Type": "application/json"}
 
     try:
-        resp = api_session.get(url, headers=headers, params=params, timeout=6)
+        resp = api_session.get(url, headers=headers, params=params, timeout=timeout)
         
         # If token was invalidated or expired, trigger auto-reauth and retry once immediately
         if resp.status_code in (400, 401) and any(kw in resp.text.lower() for kw in ("token", "session", "e-session-0007", "invalid token")):
@@ -384,7 +384,7 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
             if token and base_md_url:
                 url = f"{base_md_url}/instruments/ohlc"
                 headers = {"Authorization": token, "Content-Type": "application/json"}
-                resp = api_session.get(url, headers=headers, params=params, timeout=6)
+                resp = api_session.get(url, headers=headers, params=params, timeout=timeout)
 
         if resp.status_code != 200:
             logger.warning(f"OHLC: Broker returned HTTP {resp.status_code} for {exchange_segment}:{exchange_instrument_id} -> {resp.text[:100]}")

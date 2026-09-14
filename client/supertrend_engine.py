@@ -886,7 +886,40 @@ class SingleSuperTrendRunner:
                 "strategy": self.get_telemetry()
             }
 
-    async def evaluate_cycle(self, xts_api_module, main_module) -> None:
+    def update_live_tick(self, ltp: float) -> None:
+        """
+        Updates the forming candle and dynamic SuperTrend indicator using a live touchline tick (LTP).
+        Provides TradingView-style live chart updates without trade execution (strictly non-repainting).
+        """
+        if not ltp or ltp <= 0:
+            return
+
+        self.last_close = float(ltp)
+        if not self.cached_candles:
+            return
+
+        try:
+            # Clone last candle to avoid mutating historical list directly
+            last_c = dict(self.cached_candles[-1])
+            last_c["close"] = float(ltp)
+            if float(ltp) > float(last_c.get("high", ltp)):
+                last_c["high"] = float(ltp)
+            if float(ltp) < float(last_c.get("low", ltp)):
+                last_c["low"] = float(ltp)
+
+            live_candles = list(self.cached_candles[:-1]) + [last_c]
+            st_res = calculate_supertrend(live_candles, self.atr_period, self.multiplier)
+            if not st_res.get("error"):
+                self.cached_candles = st_res.get("candle_series") or live_candles
+                self.active_trend = st_res["trend_name"]
+                self.last_atr = st_res["atr"]
+                self.upper_band = st_res["upper_band"]
+                self.lower_band = st_res["lower_band"]
+                self.last_candle_time = st_res["last_candle_time"]
+        except Exception as e:
+            logger.debug(f"SuperTrend [{self.symbol}]: live tick update warning: {e}")
+
+    async def evaluate_cycle(self, xts_api_module, main_module, skip_order_checks: bool = False) -> None:
         """Executes a single SuperTrend evaluation and reversal check for this symbol."""
         if not self.is_enabled or not self.is_configured:
             return
@@ -1033,105 +1066,109 @@ class SingleSuperTrendRunner:
                         self.status = "EXPIRED_PAUSED"
                         return
 
-            # 3. Position Telemetry Observation (Non-Destructive for Multi-Timeframe Isolation)
-            try:
-                pos_telemetry = await asyncio.to_thread(xts_api_module.get_positions_telemetry)
-                positions = pos_telemetry.get("positions", []) or pos_telemetry.get("all_positions", [])
-                
-                target_pos = None
-                for p in positions:
-                    p_sym = str(p.get("symbol", "")).upper()
-                    p_id = p.get("instrument_id") or p.get("exchange_instrument_id")
-                    if p_id == inst_id or self.symbol in p_sym:
-                        target_pos = p
-                        break
-
-                if target_pos:
-                    side = target_pos.get("side", "").upper()
-                    raw_qty = int(target_pos.get("quantity", 0))
-                    reconciled_lots = (raw_qty // lot_size) if (is_derivative and lot_size > 1) else raw_qty
-                    self.current_broker_quantity = reconciled_lots
-                    self.broker_side = side
-                    # Finding #1 Fix: Do not adopt broker net position into virtual_position.
-                    # Individual strategies strictly rely on their own persisted state in strategy_virtual_positions.
-                else:
-                    self.current_broker_quantity = 0
-                    self.broker_side = "FLAT"
-            except Exception as e:
-                logger.error(f"SuperTrend [{self.symbol}]: Failed to inspect broker positions: {e}")
-
-            # 4. Pending Order Protection (Scoped to strategy orders with 60s stale timeout)
-            try:
-                broker_orders = await asyncio.to_thread(xts_api_module.get_broker_orders)
-                now_ts = time.time()
-                for o in broker_orders:
-                    st = str(o.get("OrderStatus", "")).upper()
-                    o_sym = str(o.get("TradingSymbol", "")).upper()
-                    order_ref = str(o.get("OrderUniqueIdentifier") or o.get("orderUniqueIdentifier") or "")
-                    app_id = str(o.get("AppOrderID") or o.get("appOrderID") or "")
-
-                    # Finding #3 Fix: Exact token matching to prevent substring collision (e.g. SILVER vs SILVERMIC)
-                    expected_ref_token = f"_{self.symbol}_{self.timeframe.upper()}_"
-                    clean_sym_core = self.symbol.replace("1!", "").replace("!", "").strip().upper()
-                    o_sym_core = o_sym.split()[0].upper() if o_sym else ""
+            # 3. Position Telemetry Observation & Order Protection Helper
+            async def _check_broker_state() -> bool:
+                try:
+                    pos_telemetry = await asyncio.to_thread(xts_api_module.get_positions_telemetry)
+                    positions = pos_telemetry.get("positions", []) or pos_telemetry.get("all_positions", [])
                     
-                    is_our_st_order = (
-                        (order_ref.startswith("ST_REV_") or order_ref.startswith("ST_DELTA_")) and
-                        (expected_ref_token in order_ref or (o_sym_core == clean_sym_core and f"_{self.timeframe.upper()}_" in order_ref))
-                    )
-                    if is_our_st_order and st in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
-                        first_seen = self.pending_order_first_seen.setdefault(app_id, now_ts)
-                        age = now_ts - first_seen
-                        if age > 60.0:
-                            logger.critical(
-                                f"🚨 SuperTrend [{self.symbol} ({self.timeframe})]: STALE PENDING ORDER {app_id} (Ref: {order_ref}, Age: {age:.1f}s). "
-                                f"Bypassing suppression to allow position reconciliation."
-                            )
-                            if hasattr(xts_api_module, "send_ops_alert"):
-                                xts_api_module.send_ops_alert(
-                                    f"WARNING: Strategy {self.symbol} ({self.timeframe}) bypassed stale pending order {app_id} ({st}, {age:.0f}s old)"
-                                )
-                        else:
-                            logger.warning(
-                                f"SuperTrend [{self.symbol} ({self.timeframe})]: Found in-flight strategy pending order {app_id} "
-                                f"({st}, Ref: {order_ref}, Age: {age:.1f}s). Yielding cycle."
-                            )
-                            return
-                    elif app_id in self.pending_order_first_seen and st not in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
-                        self.pending_order_first_seen.pop(app_id, None)
-            except Exception as e:
-                logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Order check warning: {e}")
+                    target_pos = None
+                    for p in positions:
+                        p_sym = str(p.get("symbol", "")).upper()
+                        p_id = p.get("instrument_id") or p.get("exchange_instrument_id")
+                        if p_id == inst_id or self.symbol in p_sym:
+                            target_pos = p
+                            break
 
-            # 4.1. Position Drift Detection (Observability only, never auto-corrects)
-            try:
-                broker_signed_lots = (
-                    abs(self.current_broker_quantity) if self.broker_side == "LONG"
-                    else (-abs(self.current_broker_quantity) if self.broker_side == "SHORT" else 0)
-                )
-                has_inflight = len(self.pending_order_first_seen) > 0
-                
-                # Check portfolio-level symbol target if multi-strategy engine is present
-                st_engine = getattr(main_module, "supertrend_engine", None)
-                if st_engine and hasattr(st_engine, "strategies"):
-                    matching_runners = [r for r in st_engine.strategies.values() if r.is_enabled and (r.symbol == self.symbol or r.symbol in self.symbol)]
-                    if len(matching_runners) > 1:
-                        symbol_target = sum(r.virtual_position for r in matching_runners)
-                        is_drift = (symbol_target != broker_signed_lots)
+                    if target_pos:
+                        side = target_pos.get("side", "").upper()
+                        raw_qty = int(target_pos.get("quantity", 0))
+                        reconciled_lots = (raw_qty // lot_size) if (is_derivative and lot_size > 1) else raw_qty
+                        self.current_broker_quantity = reconciled_lots
+                        self.broker_side = side
+                    else:
+                        self.current_broker_quantity = 0
+                        self.broker_side = "FLAT"
+                except Exception as e:
+                    logger.error(f"SuperTrend [{self.symbol}]: Failed to inspect broker positions: {e}")
+
+                try:
+                    broker_orders = await asyncio.to_thread(xts_api_module.get_broker_orders)
+                    now_ts_orders = time.time()
+                    for o in broker_orders:
+                        st = str(o.get("OrderStatus", "")).upper()
+                        o_sym = str(o.get("TradingSymbol", "")).upper()
+                        order_ref = str(o.get("OrderUniqueIdentifier") or o.get("orderUniqueIdentifier") or "")
+                        app_id = str(o.get("AppOrderID") or o.get("appOrderID") or "")
+
+                        # Finding #3 Fix: Exact token matching to prevent substring collision (e.g. SILVER vs SILVERMIC)
+                        expected_ref_token = f"_{self.symbol}_{self.timeframe.upper()}_"
+                        clean_sym_core = self.symbol.replace("1!", "").replace("!", "").strip().upper()
+                        o_sym_core = o_sym.split()[0].upper() if o_sym else ""
+                        
+                        is_our_st_order = (
+                            (order_ref.startswith("ST_REV_") or order_ref.startswith("ST_DELTA_")) and
+                            (expected_ref_token in order_ref or (o_sym_core == clean_sym_core and f"_{self.timeframe.upper()}_" in order_ref))
+                        )
+                        if is_our_st_order and st in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
+                            first_seen = self.pending_order_first_seen.setdefault(app_id, now_ts_orders)
+                            age = now_ts_orders - first_seen
+                            if age > 60.0:
+                                logger.critical(
+                                    f"🚨 SuperTrend [{self.symbol} ({self.timeframe})]: STALE PENDING ORDER {app_id} (Ref: {order_ref}, Age: {age:.1f}s). "
+                                    f"Bypassing suppression to allow position reconciliation."
+                                )
+                                if hasattr(xts_api_module, "send_ops_alert"):
+                                    xts_api_module.send_ops_alert(
+                                        f"WARNING: Strategy {self.symbol} ({self.timeframe}) bypassed stale pending order {app_id} ({st}, {age:.0f}s old)"
+                                    )
+                            else:
+                                logger.warning(
+                                    f"SuperTrend [{self.symbol} ({self.timeframe})]: Found in-flight strategy pending order {app_id} "
+                                    f"({st}, Ref: {order_ref}, Age: {age:.1f}s). Yielding cycle."
+                                )
+                                return False
+                        elif app_id in self.pending_order_first_seen and st not in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
+                            self.pending_order_first_seen.pop(app_id, None)
+                except Exception as e:
+                    logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Order check warning: {e}")
+
+                try:
+                    broker_signed_lots = (
+                        abs(self.current_broker_quantity) if self.broker_side == "LONG"
+                        else (-abs(self.current_broker_quantity) if self.broker_side == "SHORT" else 0)
+                    )
+                    has_inflight = len(self.pending_order_first_seen) > 0
+                    
+                    st_engine = getattr(main_module, "supertrend_engine", None)
+                    if st_engine and hasattr(st_engine, "strategies"):
+                        matching_runners = [r for r in st_engine.strategies.values() if r.is_enabled and (r.symbol == self.symbol or r.symbol in self.symbol)]
+                        if len(matching_runners) > 1:
+                            symbol_target = sum(r.virtual_position for r in matching_runners)
+                            is_drift = (symbol_target != broker_signed_lots)
+                        else:
+                            is_drift = (self.virtual_position != broker_signed_lots)
                     else:
                         is_drift = (self.virtual_position != broker_signed_lots)
-                else:
-                    is_drift = (self.virtual_position != broker_signed_lots)
 
-                if not has_inflight and is_drift:
-                    logger.warning(
-                        f"⚠️ [POSITION DRIFT WARNING] Strategy '{self.strategy_key}': "
-                        f"Persisted virtual_position={self.virtual_position} lots ({self.strategy_position}), "
-                        f"broker position={broker_signed_lots} lots ({self.broker_side}). Divergence detected."
-                    )
-            except Exception as e:
-                logger.debug(f"Drift check error: {e}")
+                    if not has_inflight and is_drift:
+                        logger.warning(
+                            f"⚠️ [POSITION DRIFT WARNING] Strategy '{self.strategy_key}': "
+                            f"Persisted virtual_position={self.virtual_position} lots ({self.strategy_position}), "
+                            f"broker position={broker_signed_lots} lots ({self.broker_side}). Divergence detected."
+                        )
+                except Exception as e:
+                    logger.debug(f"Drift check error: {e}")
 
-            # 5. Fetch OHLC Candles from Market Data REST API
+                return True
+
+            should_check_orders = (not skip_order_checks) or (len(self.pending_order_first_seen) > 0)
+            if should_check_orders:
+                can_proceed = await _check_broker_state()
+                if not can_proceed:
+                    return
+
+            # 5. Fetch OHLC Candles from Market Data REST API (with fast-fail 3.5s default timeout)
             candles = await asyncio.to_thread(
                 xts_api_module.fetch_ohlc_candles,
                 exch_seg,
@@ -1212,6 +1249,12 @@ class SingleSuperTrendRunner:
 
             # Defense-in-depth: Duplicate signal on already evaluated candle is a strict no-op
             if is_flip and candle_ts != self.last_processed_candle_time:
+                # If broker state was bypassed during fast OHLC polling, inspect orders and positions now before placing orders!
+                if not should_check_orders:
+                    can_proceed = await _check_broker_state()
+                    if not can_proceed:
+                        return
+
                 logger.info(
                     f"🚨 [SUPERTREND FLIP] Symbol: {self.symbol} ({self.timeframe}) | "
                     f"Direction: {flip_dir} at confirmed candle close {candle_ts}. "
@@ -2192,14 +2235,14 @@ class MultiSuperTrendEngine:
                         except Exception as ex:
                             logger.error(f"Auto-Heal Watchdog periodic error: {ex}")
 
-                    # 3. Strategy Cycle Evaluations & Candle Boundary Tracking
-                    eval_tasks = []
+                    # 3. Strategy Candle Boundary Tracking & Cooperative Scheduling
                     IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
                     now_dt = datetime.datetime.now(IST)
                     seconds_from_0900 = (now_dt.hour - 9) * 3600 + now_dt.minute * 60 + now_dt.second
 
                     min_remaining = 999999
-                    any_near_close = False
+                    closing_runners = []
+                    mid_candle_runners = []
 
                     for r in runners:
                         tf_sec = parse_timeframe_seconds(r.timeframe)
@@ -2210,27 +2253,60 @@ class MultiSuperTrendEngine:
                             if sec_rem < min_remaining:
                                 min_remaining = sec_rem
                             # Within 20s of candle close or within 10s after boundary (candle close confirmation window)
-                            if sec_rem <= 20 or sec_into_bar <= 10:
-                                any_near_close = True
+                            # Or if uninitialized (no cached candles yet)
+                            if sec_rem <= 20 or sec_into_bar <= 10 or not r.cached_candles:
+                                closing_runners.append(r)
+                            else:
+                                mid_candle_runners.append(r)
                         else:
                             r.next_poll_seconds = 0
-                            any_near_close = True
+                            closing_runners.append(r)
 
-                        eval_tasks.append(r.evaluate_cycle(xts_api_module, main_module))
-
-                    if eval_tasks:
-                        await asyncio.gather(*eval_tasks, return_exceptions=True)
-
-                    # 4. Adaptive Smart Polling Sleep:
+                    # 4. Adaptive Execution Branch:
                     if not market_open:
-                        sleep_seconds = 15.0
-                    elif any_near_close:
-                        sleep_seconds = 2.0  # High-speed polling during confirmed candle close window
-                    else:
-                        # Mid-candle: balanced sleep (between 5s and 20s), ensuring we wake up at least 15s before next candle close
-                        sleep_seconds = float(max(5, min(20, min_remaining - 15)))
+                        # Outside market hours: perform baseline cycle for any uninitialized runner
+                        uninit = [r for r in runners if not r.cached_candles]
+                        if uninit:
+                            await asyncio.gather(*[r.evaluate_cycle(xts_api_module, main_module) for r in uninit], return_exceptions=True)
+                        await asyncio.sleep(15.0)
+                        continue
 
-                    await asyncio.sleep(sleep_seconds)
+                    if closing_runners:
+                        # 4A. High-Speed Candle-Close Burst:
+                        # Fast 2.0s OHLC polling with skip_order_checks=True (orders only queried if flip triggers).
+                        eval_tasks = [r.evaluate_cycle(xts_api_module, main_module, skip_order_checks=True) for r in closing_runners]
+                        await asyncio.gather(*eval_tasks, return_exceptions=True)
+                        await asyncio.sleep(2.0)
+                    else:
+                        # 4B. Mid-Candle Live Tick Streaming:
+                        # Batch query live touchline quotes (LTP) across all active symbols in a single request.
+                        batch_pairs = []
+                        seen_ids = set()
+                        for r in mid_candle_runners:
+                            inst = xts_api_module.resolve_contract(r.symbol) if xts_api_module else None
+                            if inst:
+                                iid = inst.get("inst_id")
+                                seg = inst.get("exch_seg") or r.exchange_segment or "MCXFO"
+                                if iid and iid not in seen_ids:
+                                    seen_ids.add(iid)
+                                    batch_pairs.append((iid, seg))
+
+                        if batch_pairs and xts_api_module and hasattr(xts_api_module, "get_live_prices_batch"):
+                            try:
+                                live_prices = await asyncio.to_thread(xts_api_module.get_live_prices_batch, batch_pairs)
+                                for r in mid_candle_runners:
+                                    inst = xts_api_module.resolve_contract(r.symbol) if xts_api_module else None
+                                    if inst:
+                                        iid = inst.get("inst_id")
+                                        ltp = live_prices.get(iid)
+                                        if ltp and ltp > 0:
+                                            r.update_live_tick(ltp)
+                            except Exception as tick_err:
+                                logger.debug(f"Batch live tick update error: {tick_err}")
+
+                        # Sleep 3.0s, waking up at least 20s before the next candle close
+                        sleep_seconds = float(min(3.0, max(1.0, min_remaining - 20))) if min_remaining > 20 else 2.0
+                        await asyncio.sleep(sleep_seconds)
                 else:
                     await asyncio.sleep(5)
             except asyncio.CancelledError:

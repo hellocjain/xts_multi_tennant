@@ -1308,6 +1308,118 @@ async def test_market_open_0900_lifecycle_and_multitimeframe_netting(monkeypatch
     assert runner_15m.virtual_position == 2
 
 
+@pytest.mark.asyncio
+async def test_adaptive_smart_polling_live_tick_update():
+    """
+    Verifies that update_live_tick:
+    1. Dynamically updates forming candle High, Low, Close, and SuperTrend line.
+    2. Strictly obeys non-repainting rules: 0 orders dispatched, purely visual & telemetry.
+    """
+    dispatched = []
+
+    async def mock_dispatch(sig_id, payload):
+        dispatched.append((sig_id, payload))
+
+    engine = SuperTrendEngine(dispatch_fn=mock_dispatch)
+    engine.add_or_update_strategy({
+        "id": "st_gold_test",
+        "symbol": "GOLD1!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "15m",
+        "quantity": 1,
+        "is_enabled": True
+    })
+    runner = engine.get_strategy("st_gold_test")
+
+    # Seed 20 historical candles
+    base_time = 1787200000
+    prices = [100 + i for i in range(20)]
+    candles = generate_synthetic_candles(prices, base_time=base_time, interval=900)
+    runner.cached_candles = list(candles)
+    runner.last_close = float(prices[-1])
+
+    # Simulate incoming live tick (LTP = 150.0 > previous high 119)
+    runner.update_live_tick(150.0)
+
+    # Invariant 1: last_close updated to 150.0
+    assert runner.last_close == 150.0
+
+    # Invariant 2: forming candle updated with new High and Close
+    last_candle = runner.cached_candles[-1]
+    assert last_candle["close"] == 150.0
+    assert last_candle["high"] == 150.0
+
+    # Invariant 3: Zero trades dispatched mid-candle
+    assert len(dispatched) == 0
+
+
+@pytest.mark.asyncio
+async def test_evaluate_cycle_skip_order_checks_reduces_api_calls(monkeypatch):
+    """
+    Verifies that evaluate_cycle with skip_order_checks=True:
+    1. Bypasses get_positions_telemetry and get_broker_orders when no flip occurs (saving 66% API calls).
+    2. In the event of a confirmed flip, automatically executes order checks before dispatching orders.
+    """
+    api_calls = {"positions": 0, "orders": 0, "ohlc": 0}
+
+    def mock_get_positions():
+        api_calls["positions"] += 1
+        return {"positions": [], "all_positions": []}
+
+    def mock_get_orders():
+        api_calls["orders"] += 1
+        return []
+
+    def mock_fetch_ohlc(seg, iid, tf, bars):
+        api_calls["ohlc"] += 1
+        # Flat series: no flip
+        return generate_synthetic_candles([100] * 20, base_time=1787200000, interval=900)
+
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", mock_get_positions)
+    monkeypatch.setattr(xts_api, "get_broker_orders", mock_get_orders)
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", mock_fetch_ohlc)
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 111222, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+
+    dispatched = []
+    async def mock_dispatch(sig_id, payload):
+        dispatched.append((sig_id, payload))
+
+    engine = SuperTrendEngine(dispatch_fn=mock_dispatch)
+    engine.add_or_update_strategy({
+        "id": "st_test_fast",
+        "symbol": "GOLD1!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "5m",
+        "quantity": 1,
+        "is_enabled": True
+    })
+    runner = engine.get_strategy("st_test_fast")
+
+    # 1. Routine tick with skip_order_checks=True:
+    await runner.evaluate_cycle(xts_api, client_main, skip_order_checks=True)
+
+    # Must fetch OHLC but SKIP positions and broker orders
+    assert api_calls["ohlc"] == 1
+    assert api_calls["positions"] == 0
+    assert api_calls["orders"] == 0
+
+    # 2. Now simulate a confirmed flip:
+    prices_flip = [130, 128, 126, 124, 122, 120, 118, 116, 114, 112, 110, 100, 50, 40, 30, 150]
+    flip_candles = generate_synthetic_candles(prices_flip, base_time=1787200000, interval=300)
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: flip_candles)
+    monkeypatch.setattr(time, "time", lambda: float(flip_candles[-1]["time"] + 5))
+
+    await runner.evaluate_cycle(xts_api, client_main, skip_order_checks=True)
+
+    # Invariant: On flip, order checks MUST be executed before dispatching trade!
+    assert api_calls["orders"] >= 1
+    assert len(dispatched) >= 1
+
+
+
 
 
 
