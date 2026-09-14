@@ -811,7 +811,10 @@ async def sync_supertrend_trend_endpoint(
         return JSONResponse(status_code=400, content={"status": "error", "message": "No active strategy found to sync"})
 
     this_mod = sys.modules.get(__name__) or sys.modules.get("main") or sys.modules.get("client_main")
-    return await supertrend_engine.sync_strategy_to_trend(target_id, xts_api, this_mod)
+    res = await supertrend_engine.sync_strategy_to_trend(target_id, xts_api, this_mod)
+    if isinstance(res, dict) and res.get("status") == "ERROR":
+        return JSONResponse(status_code=500, content=res)
+    return res
 
 @app.post("/internal/supertrend/strategy/reset-flat")
 async def reset_supertrend_strategy_flat_endpoint(

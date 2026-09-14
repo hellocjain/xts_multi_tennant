@@ -8,6 +8,7 @@ from contextlib import closing
 import database
 import docker_manager
 import telemetry_service
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -153,18 +154,119 @@ async def check_drawdown_circuit_breakers(enforce_market_hours: bool = True):
                 target_tenant_id=t_id
             )
 
+async def run_market_open_fleet_alignment():
+    """
+    Executes automated fleet alignment across all active clients at 09:00:05 IST market open.
+    Synchronizes any client whose position is FLAT or misaligned to the prevailing market trend.
+    """
+    logger.info("🔔 [09:00 IST MARKET OPEN] Executing automated fleet alignment across all active clients...")
+    start_time = time.time()
+
+    with closing(database.get_db_connection()) as conn:
+        active_tenants = [dict(r) for r in conn.execute("SELECT id, name FROM tenants WHERE status='ACTIVE'").fetchall()]
+
+    if not active_tenants:
+        logger.info("[09:00 IST MARKET OPEN] No active tenants to align.")
+        return {"status": "success", "synced": 0, "already_aligned": 0, "failures": []}
+
+    aligned_count = 0
+    synced_count = 0
+    failures = []
+
+    async with httpx.AsyncClient(timeout=15.0) as http_client:
+        for t in active_tenants:
+            t_id = t["id"]
+            try:
+                tel = await telemetry_service.get_single_client_telemetry(t_id)
+                st_data = tel.get("supertrend") or {}
+                strategies = st_data.get("strategies") or []
+
+                port = docker_manager.get_tenant_port(t_id)
+                headers = {}
+                internal_token = os.environ.get("INTERNAL_AUTH_TOKEN", "").strip()
+                if internal_token:
+                    headers["X-Internal-Token"] = internal_token
+
+                for s in strategies:
+                    strat_id = s.get("id")
+                    sym = s.get("symbol")
+                    tf = s.get("timeframe")
+                    qty = s.get("quantity", 0)
+                    trend = s.get("current_trend", "INITIALIZING")
+                    vpos = s.get("virtual_position", 0)
+                    bpos = s.get("current_broker_quantity", 0)
+                    target_pos = -qty if trend == "BEARISH" else (qty if trend == "BULLISH" else 0)
+
+                    is_aligned = (vpos == target_pos) and (bpos == target_pos)
+                    if is_aligned:
+                        aligned_count += 1
+                        continue
+
+                    logger.warning(
+                        f"⚠️ [09:00 IST MARKET OPEN] Aligning {t_id.upper()} [{sym} ({tf})]: "
+                        f"Trend={trend} | Current={vpos:+d} lots -> Target={target_pos:+d} lots"
+                    )
+
+                    sync_urls = [
+                        f"http://xts_client_{t_id}:8000/internal/supertrend/sync-trend?strategy_id={strat_id}",
+                        f"http://127.0.0.1:{port}/internal/supertrend/sync-trend?strategy_id={strat_id}",
+                        f"{telemetry_service.CADDY_PROXY_BASE}/{t_id}/internal/supertrend/sync-trend?strategy_id={strat_id}"
+                    ]
+                    synced_ok = False
+                    sync_err_desc = "All sync URLs failed"
+                    for s_url in sync_urls:
+                        try:
+                            resp = await http_client.post(s_url, headers=headers, json={"strategy_id": strat_id})
+                            if resp.status_code == 200:
+                                res_json = resp.json()
+                                res_status = res_json.get("status") if isinstance(res_json, dict) else "UNKNOWN"
+                                if res_status in ("SUCCESS", "ALREADY_SYNCED"):
+                                    logger.info(f"✅ [09:00 IST MARKET OPEN] Sync result for {t_id.upper()} ({strat_id}): {res_json}")
+                                    synced_count += 1
+                                    synced_ok = True
+                                    break
+                                else:
+                                    sync_err_desc = res_json.get("error") or res_json.get("message") or f"Invalid status {res_status}"
+                                    logger.error(f"❌ [09:00 IST MARKET OPEN] Sync error for {t_id.upper()} ({strat_id}): {res_json}")
+                                    break
+                        except Exception as err:
+                            logger.debug(f"Sync attempt on {s_url} failed: {err}")
+
+                    if not synced_ok:
+                        failures.append({"tenant_id": t_id, "strategy_id": strat_id, "symbol": sym, "error": sync_err_desc})
+            except Exception as e:
+                logger.error(f"[09:00 IST MARKET OPEN] Error checking {t_id}: {e}")
+                failures.append({"tenant_id": t_id, "error": str(e)})
+
+    elapsed = round(time.time() - start_time, 2)
+    logger.info(f"🏁 [09:00 IST MARKET OPEN] Fleet alignment completed in {elapsed}s. Synced: {synced_count} | Already Aligned: {aligned_count} | Failures: {len(failures)}")
+
+    database.record_audit(
+        "MARKET_OPEN_ALIGNMENT",
+        "AUTO_FLEET_SYNC",
+        {"synced": synced_count, "already_aligned": aligned_count, "failures": failures, "elapsed_seconds": elapsed}
+    )
+    return {"status": "success", "synced": synced_count, "already_aligned": aligned_count, "failures": failures}
+
 async def start_scheduler_loop(poll_interval_sec=5):
-    """Background scheduler loop checking time for 08:30 IST daily trigger and drawdown breakers."""
+    """Background scheduler loop checking time for 08:30 IST daily trigger, 09:00 IST market open alignment, and drawdown breakers."""
     while True:
         try:
             # 1. Check Drawdown Circuit Breakers across active clients
             await check_drawdown_circuit_breakers()
 
-            # 2. Check 08:30 IST cache warmup on trading days only (Mon-Fri)
             now_ist = datetime.datetime.now(IST)
+
+            # 2. Check 08:30 IST cache warmup on trading days only (Mon-Fri)
             if now_ist.weekday() < 5 and now_ist.hour == 8 and now_ist.minute == 30 and now_ist.second < 15:
                 await run_rolling_cache_warmup()
                 await asyncio.sleep(30)
+
+            # 3. Check 09:00:05 IST Market Open Fleet Alignment on trading days only (Mon-Fri)
+            if now_ist.weekday() < 5 and now_ist.hour == 9 and now_ist.minute == 0 and 5 <= now_ist.second <= 35:
+                await run_market_open_fleet_alignment()
+                await asyncio.sleep(40)
+
         except Exception as e:
             logger.error(f"Scheduler loop error: {e}")
         await asyncio.sleep(poll_interval_sec)
