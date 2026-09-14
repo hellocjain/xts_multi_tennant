@@ -745,97 +745,136 @@ class SingleSuperTrendRunner:
     async def sync_to_current_trend(self, xts_api_module, main_module) -> dict:
         """
         Synchronizes runner's position to its active prevailing SuperTrend trend on-demand.
-        - If FLAT: Enters initial position (BUY if BULLISH, SELL if BEARISH).
-        - If already matching: Returns ALREADY_SYNCED.
-        - If opposite: Reverses position cleanly to match active trend.
+        - Concurrency Safe: Enforces self.lock to eliminate race conditions with evaluate_cycle.
+        - Two-Leg Fail-Safe: If Leg 1 (Exit) fails, Leg 2 (Entry) is aborted to prevent unhedged exposure.
+        - Full Persistence: Commits every position change immediately to SQLite via _save_virtual_position.
         """
-        sym = self.symbol
-        inst = xts_api_module.resolve_contract(sym)
-        if not inst:
-            return {"status": "ERROR", "error": f"Symbol '{sym}' not found in master cache"}
+        async with self.lock:
+            sym = self.symbol
+            inst = xts_api_module.resolve_contract(sym)
+            if not inst:
+                return {"status": "ERROR", "error": f"Symbol '{sym}' not found in master cache"}
 
-        inst_id = inst.get("inst_id")
-        exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
-        freeze_limit = int(inst.get("freeze_qty") or 100000)
-        tf_seconds = parse_timeframe_seconds(self.timeframe)
+            inst_id = inst.get("inst_id")
+            exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
+            freeze_limit = int(inst.get("freeze_qty") or 100000)
+            tf_seconds = parse_timeframe_seconds(self.timeframe)
 
-        candles = await asyncio.to_thread(
-            xts_api_module.fetch_ohlc_candles,
-            exch_seg,
-            inst_id,
-            tf_seconds,
-            200
-        )
-        if not candles:
-            if self.cached_candles:
-                candles = list(self.cached_candles)
-            else:
-                return {"status": "ERROR", "error": "No candle data returned from broker OHLC API"}
+            candles = await asyncio.to_thread(
+                xts_api_module.fetch_ohlc_candles,
+                exch_seg,
+                inst_id,
+                tf_seconds,
+                200
+            )
+            if not candles:
+                if self.cached_candles:
+                    candles = list(self.cached_candles)
+                else:
+                    return {"status": "ERROR", "error": "No candle data returned from broker OHLC API"}
 
-        st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
-        trend_name = st_res.get("trend_name", "INITIALIZING")
-        if trend_name not in ("BULLISH", "BEARISH"):
-            return {"status": "ERROR", "error": f"Invalid trend state: {trend_name}"}
+            st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
+            trend_name = st_res.get("trend_name", "INITIALIZING")
+            if trend_name not in ("BULLISH", "BEARISH"):
+                return {"status": "ERROR", "error": f"Invalid trend state: {trend_name}"}
 
-        self.active_trend = trend_name
-        self.last_close = st_res["last_close"]
-        self.last_atr = st_res["atr"]
-        self.upper_band = st_res["upper_band"]
-        self.lower_band = st_res["lower_band"]
-        candle_ts = st_res["last_candle_time"] or int(time.time())
+            self.active_trend = trend_name
+            self.last_close = st_res["last_close"]
+            self.last_atr = st_res["atr"]
+            self.upper_band = st_res["upper_band"]
+            self.lower_band = st_res["lower_band"]
+            candle_ts = st_res["last_candle_time"] or int(time.time())
 
-        # Check current state vs target state
-        if trend_name == "BULLISH":
-            if self.virtual_position == self.quantity:
-                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
-            
-            if self.virtual_position < 0:
-                # Two-leg reversal
-                exit_qty = abs(self.virtual_position)
-                await self._execute_exit("SHORT", exit_qty, f"SYNC_EXIT_{candle_ts}", main_module, freeze_limit)
-                self.virtual_position = 0
-                await asyncio.sleep(0.5)
-                await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
-                self.virtual_position = self.quantity
-                return {"status": "SUCCESS", "message": f"Reversed from SHORT to LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
-            elif self.virtual_position > 0:
-                diff = self.quantity - self.virtual_position
-                if diff > 0:
-                    await self._execute_entry("BUY", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+            # Check current state vs target state
+            if trend_name == "BULLISH":
+                if self.virtual_position == self.quantity:
+                    return {"status": "ALREADY_SYNCED", "message": f"Strategy is already LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                
+                if self.virtual_position < 0:
+                    # Two-leg reversal
+                    exit_qty = abs(self.virtual_position)
+                    exit_ok = await self._execute_exit("SHORT", exit_qty, f"SYNC_EXIT_{candle_ts}", main_module, freeze_limit)
+                    if not exit_ok:
+                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Exit failed! Aborting Entry to prevent unhedged exposure.")
+                        return {"status": "ERROR", "error": "Exit leg failed or rejected by broker. Entry aborted."}
+                    self.virtual_position = 0
+                    self._save_virtual_position(main_module, 0)
+                    await asyncio.sleep(0.5)
+
+                    entry_ok = await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                    if not entry_ok:
+                        self.status = "ENTRY_FAILED_PAUSED"
+                        self.is_enabled = False
+                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Entry failed! Position remains FLAT (0 lots). Strategy PAUSED.")
+                        return {"status": "ERROR", "error": "Entry leg failed. Position remains FLAT (0 lots)."}
                     self.virtual_position = self.quantity
-                    return {"status": "SUCCESS", "message": f"Topped up LONG by +{diff} lots (total +{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
-                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already LONG (+{self.virtual_position} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
-            else:
-                # Entry from flat
-                await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
-                self.virtual_position = self.quantity
-                return {"status": "SUCCESS", "message": f"Entered LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                    self._save_virtual_position(main_module, self.quantity)
+                    return {"status": "SUCCESS", "message": f"Reversed from SHORT to LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                elif self.virtual_position > 0:
+                    diff = self.quantity - self.virtual_position
+                    if diff > 0:
+                        entry_ok = await self._execute_entry("BUY", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                        if not entry_ok:
+                            return {"status": "ERROR", "error": "Top-up entry failed or was rejected by broker."}
+                        self.virtual_position = self.quantity
+                        self._save_virtual_position(main_module, self.quantity)
+                        return {"status": "SUCCESS", "message": f"Topped up LONG by +{diff} lots (total +{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                    return {"status": "ALREADY_SYNCED", "message": f"Strategy is already LONG (+{self.virtual_position} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                else:
+                    # Entry from flat
+                    entry_ok = await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                    if not entry_ok:
+                        self.status = "ENTRY_FAILED_PAUSED"
+                        self.is_enabled = False
+                        return {"status": "ERROR", "error": "Entry leg failed or was rejected by broker."}
+                    self.virtual_position = self.quantity
+                    self._save_virtual_position(main_module, self.quantity)
+                    return {"status": "SUCCESS", "message": f"Entered LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
 
-        elif trend_name == "BEARISH":
-            if self.virtual_position == -self.quantity:
-                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+            elif trend_name == "BEARISH":
+                if self.virtual_position == -self.quantity:
+                    return {"status": "ALREADY_SYNCED", "message": f"Strategy is already SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
 
-            if self.virtual_position > 0:
-                # Two-leg reversal
-                exit_qty = abs(self.virtual_position)
-                await self._execute_exit("LONG", exit_qty, f"SYNC_EXIT_{candle_ts}", main_module, freeze_limit)
-                self.virtual_position = 0
-                await asyncio.sleep(0.5)
-                await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
-                self.virtual_position = -self.quantity
-                return {"status": "SUCCESS", "message": f"Reversed from LONG to SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
-            elif self.virtual_position < 0:
-                diff = self.quantity - abs(self.virtual_position)
-                if diff > 0:
-                    await self._execute_entry("SELL", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                if self.virtual_position > 0:
+                    # Two-leg reversal
+                    exit_qty = abs(self.virtual_position)
+                    exit_ok = await self._execute_exit("LONG", exit_qty, f"SYNC_EXIT_{candle_ts}", main_module, freeze_limit)
+                    if not exit_ok:
+                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Exit failed! Aborting Entry to prevent unhedged exposure.")
+                        return {"status": "ERROR", "error": "Exit leg failed or rejected by broker. Entry aborted."}
+                    self.virtual_position = 0
+                    self._save_virtual_position(main_module, 0)
+                    await asyncio.sleep(0.5)
+
+                    entry_ok = await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                    if not entry_ok:
+                        self.status = "ENTRY_FAILED_PAUSED"
+                        self.is_enabled = False
+                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Entry failed! Position remains FLAT (0 lots). Strategy PAUSED.")
+                        return {"status": "ERROR", "error": "Entry leg failed. Position remains FLAT (0 lots)."}
                     self.virtual_position = -self.quantity
-                    return {"status": "SUCCESS", "message": f"Topped up SHORT by -{diff} lots (total -{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
-                return {"status": "ALREADY_SYNCED", "message": f"Strategy is already SHORT ({self.virtual_position} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
-            else:
-                # Entry from flat
-                await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
-                self.virtual_position = -self.quantity
-                return {"status": "SUCCESS", "message": f"Entered SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                    self._save_virtual_position(main_module, -self.quantity)
+                    return {"status": "SUCCESS", "message": f"Reversed from LONG to SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                elif self.virtual_position < 0:
+                    diff = self.quantity - abs(self.virtual_position)
+                    if diff > 0:
+                        entry_ok = await self._execute_entry("SELL", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                        if not entry_ok:
+                            return {"status": "ERROR", "error": "Top-up entry failed or was rejected by broker."}
+                        self.virtual_position = -self.quantity
+                        self._save_virtual_position(main_module, -self.quantity)
+                        return {"status": "SUCCESS", "message": f"Topped up SHORT by -{diff} lots (total -{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                    return {"status": "ALREADY_SYNCED", "message": f"Strategy is already SHORT ({self.virtual_position} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
+                else:
+                    # Entry from flat
+                    entry_ok = await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
+                    if not entry_ok:
+                        self.status = "ENTRY_FAILED_PAUSED"
+                        self.is_enabled = False
+                        return {"status": "ERROR", "error": "Entry leg failed or was rejected by broker."}
+                    self.virtual_position = -self.quantity
+                    self._save_virtual_position(main_module, -self.quantity)
+                    return {"status": "SUCCESS", "message": f"Entered SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
 
     async def reset_to_flat(self, square_off_broker: bool, xts_api_module, main_module) -> dict:
         """
@@ -1265,16 +1304,70 @@ class SingleSuperTrendRunner:
                 if flip_dir == "BULLISH":
                     if self.virtual_position < 0:
                         exit_qty = abs(self.virtual_position)
-                        await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
+                        exit_ok = await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
+                        if not exit_ok:
+                            logger.warning(f"SuperTrend [{self.symbol}]: Exit leg failed, retrying once after 2.0s...")
+                            await asyncio.sleep(2.0)
+                            exit_ok = await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}_RETRY", main_module, freeze_limit)
+                        if not exit_ok:
+                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Exit failed after retry! Aborting Entry to prevent duplicate exposure.")
+                            self.status = "EXIT_FAILED_PAUSED"
+                            self.is_enabled = False
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Exit failed after retry. Strategy PAUSED.")
+                            return
                         await asyncio.sleep(0.5)
-                    await self._execute_entry("BUY", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
+
+                    entry_qty = self.quantity - self.virtual_position if self.virtual_position > 0 else self.quantity
+                    if entry_qty > 0:
+                        entry_ok = await self._execute_entry("BUY", entry_qty, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
+                        if not entry_ok:
+                            logger.warning(f"SuperTrend [{self.symbol}]: Entry leg failed, retrying once after 2.0s...")
+                            await asyncio.sleep(2.0)
+                            entry_ok = await self._execute_entry("BUY", entry_qty, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
+                        if not entry_ok:
+                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Entry failed after retry! Position is FLAT. Strategy PAUSED.")
+                            self.status = "ENTRY_FAILED_PAUSED"
+                            self.is_enabled = False
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Entry failed after retry. Strategy PAUSED.")
+                            return
+                    else:
+                        logger.info(f"SuperTrend [{self.symbol}]: Already LONG (+{self.virtual_position} lots). Skipping redundant entry.")
 
                 elif flip_dir == "BEARISH":
                     if self.virtual_position > 0:
                         exit_qty = abs(self.virtual_position)
-                        await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
+                        exit_ok = await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}", main_module, freeze_limit)
+                        if not exit_ok:
+                            logger.warning(f"SuperTrend [{self.symbol}]: Exit leg failed, retrying once after 2.0s...")
+                            await asyncio.sleep(2.0)
+                            exit_ok = await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}_RETRY", main_module, freeze_limit)
+                        if not exit_ok:
+                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Exit failed after retry! Aborting Entry to prevent duplicate exposure.")
+                            self.status = "EXIT_FAILED_PAUSED"
+                            self.is_enabled = False
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Exit failed after retry. Strategy PAUSED.")
+                            return
                         await asyncio.sleep(0.5)
-                    await self._execute_entry("SELL", self.quantity, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
+
+                    entry_qty = self.quantity - abs(self.virtual_position) if self.virtual_position < 0 else self.quantity
+                    if entry_qty > 0:
+                        entry_ok = await self._execute_entry("SELL", entry_qty, f"FLIP_ENTRY_{candle_ts}", main_module, freeze_limit)
+                        if not entry_ok:
+                            logger.warning(f"SuperTrend [{self.symbol}]: Entry leg failed, retrying once after 2.0s...")
+                            await asyncio.sleep(2.0)
+                            entry_ok = await self._execute_entry("SELL", entry_qty, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
+                        if not entry_ok:
+                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Entry failed after retry! Position is FLAT. Strategy PAUSED.")
+                            self.status = "ENTRY_FAILED_PAUSED"
+                            self.is_enabled = False
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Entry failed after retry. Strategy PAUSED.")
+                            return
+                    else:
+                        logger.info(f"SuperTrend [{self.symbol}]: Already SHORT ({self.virtual_position} lots). Skipping redundant entry.")
 
                 self.last_processed_candle_time = candle_ts
 
@@ -2017,6 +2110,18 @@ class MultiSuperTrendEngine:
         actions_taken = []
         drift_count = 0
 
+        # Fetch live broker orders to inspect in-flight trades and suppress drift auto-heal while orders match
+        broker_orders = []
+        if hasattr(xts_api_module, "get_broker_orders"):
+            try:
+                orders_res = await asyncio.to_thread(xts_api_module.get_broker_orders)
+                if isinstance(orders_res, list):
+                    broker_orders = orders_res
+                elif isinstance(orders_res, dict):
+                    broker_orders = orders_res.get("result", []) or orders_res.get("orders", []) or []
+            except Exception as e:
+                logger.debug(f"reconcile_portfolio_drift: failed to fetch broker orders: {e}")
+
         for target_sym, target_lots in targets.items():
             runners_for_sym = [r for r in self.strategies.values() if r.is_enabled and r.symbol == target_sym]
             if not runners_for_sym:
@@ -2039,6 +2144,23 @@ class MultiSuperTrendEngine:
                 inst_id = 0
 
             if not inst_id:
+                continue
+
+            # In-Flight Order Guard: Suppress auto-healing if there are open / pending orders for this symbol
+            clean_target_core = re.sub(r'[^A-Z0-9]', '', target_sym.upper())
+            has_inflight = False
+            for ord_item in broker_orders:
+                o_status = str(ord_item.get("OrderStatus") or ord_item.get("status") or "").upper()
+                o_sym = str(ord_item.get("TradingSymbol") or ord_item.get("symbol") or "").upper()
+                o_inst_id = str(ord_item.get("ExchangeInstrumentID") or ord_item.get("instrument_id") or "")
+                if o_status in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
+                    clean_o_sym = re.sub(r'[^A-Z0-9]', '', o_sym)
+                    if (inst_id and str(inst_id) == o_inst_id) or (clean_target_core and clean_target_core in clean_o_sym) or (target_sym in o_sym):
+                        has_inflight = True
+                        break
+
+            if has_inflight:
+                logger.info(f"reconcile_portfolio_drift [{target_sym}]: In-flight order detected at broker. Suppressing auto-heal.")
                 continue
 
             try:

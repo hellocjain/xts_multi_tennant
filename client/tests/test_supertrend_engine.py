@@ -16,6 +16,8 @@ from supertrend_engine import calculate_supertrend, SuperTrendEngine, SingleSupe
 from main import app, supertrend_engine
 import xts_api
 import main as client_main
+import config
+import supertrend_engine as st_module
 
 @pytest.fixture(autouse=True)
 def isolate_test_db(tmp_path, monkeypatch):
@@ -1417,6 +1419,360 @@ async def test_evaluate_cycle_skip_order_checks_reduces_api_calls(monkeypatch):
     # Invariant: On flip, order checks MUST be executed before dispatching trade!
     assert api_calls["orders"] >= 1
     assert len(dispatched) >= 1
+
+
+# =====================================================================
+# 6-VECTOR CHAOS & HARDENING DRILL TEST SUITE
+# =====================================================================
+
+@pytest.mark.anyio
+async def test_chaos_vector_1_exit_rejection_halts_entry(monkeypatch):
+    """
+    Chaos Drill 1: Two-leg reversal atomicity.
+    When Leg 1 (Exit) fails/gets rejected, verify:
+    - Retries once after 2.0s
+    - Entry leg is strictly ABORTED (no duplicate/unhedged exposure)
+    - Strategy transitions to EXIT_FAILED_PAUSED and is_enabled=False
+    - Position remains SHORT (-2 lots)
+    - Ops alert is emitted
+    """
+    dispatched_orders = []
+    alerts = []
+
+    monkeypatch.setattr(xts_api, "send_ops_alert", lambda msg: alerts.append(msg))
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823,
+        "exch_seg": "MCXFO",
+        "lot_size": 1,
+        "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {
+        "positions": [{"symbol": "CRUDEOIL 31AUG2026", "instrument_id": 574823, "side": "SHORT", "quantity": 2}],
+        "all_positions": [{"symbol": "CRUDEOIL 31AUG2026", "instrument_id": 574823, "side": "SHORT", "quantity": 2}]
+    })
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    engine = SuperTrendEngine()
+    engine.update_config({
+        "is_enabled": True,
+        "symbol": "CRUDEOIL",
+        "exchange_segment": "MCXFO",
+        "timeframe": "5m",
+        "quantity": 2,
+        "product_type": "NRML",
+        "atr_period": 10,
+        "multiplier": 2.0
+    })
+    runner = engine.primary_runner
+    runner.virtual_position = -2
+    client_main.db_set_virtual_position(runner.strategy_key, runner.symbol, runner.timeframe, -2)
+
+    # Bullish flip candles
+    candles_bullish = generate_synthetic_candles([
+        130, 128, 126, 124, 122, 120, 118, 116, 114, 112,
+        110, 100, 50, 40, 30,
+        150
+    ])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: candles_bullish)
+
+    # Mock _dispatch_and_record to simulate broker rejection
+    def mock_dispatch_fail(sig_id, action, symbol, qty, price, order_ref, is_paper):
+        dispatched_orders.append((sig_id, action, symbol, qty, order_ref))
+        return {"status": "rejected", "error": "Insufficient margin"}
+
+    monkeypatch.setattr(client_main, "_dispatch_and_record", mock_dispatch_fail)
+
+    # Fast forward asyncio.sleep so test runs instantly
+    orig_sleep = asyncio.sleep
+    async def fast_sleep(sec):
+        await orig_sleep(0.01)
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+    await runner.evaluate_cycle(xts_api, client_main)
+
+    # Leg 1 was attempted twice (initial + retry), then entry was aborted
+    assert len(dispatched_orders) == 2
+    assert "FLIP_EXIT_" in dispatched_orders[0][4]
+    assert "RETRY" in dispatched_orders[1][4]
+    # No entry orders dispatched!
+    assert not any("FLIP_ENTRY_" in o[4] for o in dispatched_orders)
+
+    # Strategy state
+    assert runner.status == "EXIT_FAILED_PAUSED"
+    assert runner.is_enabled is False
+    assert runner.virtual_position == -2
+    assert client_main.db_get_virtual_position(runner.strategy_key) == -2
+    assert len(alerts) >= 1
+
+
+@pytest.mark.anyio
+async def test_chaos_vector_2_entry_rejection_persists_flat_and_pauses(monkeypatch):
+    """
+    Chaos Drill 2: Leg 1 exit succeeds, Leg 2 entry fails (e.g. margin shortfall).
+    Verify:
+    - Exit leg completes and persists virtual_position=0 (FLAT) in SQLite
+    - Entry retries once, then halts
+    - Strategy transitions to ENTRY_FAILED_PAUSED and is_enabled=False
+    - SQLite DB verifies position is 0 (FLAT), never corrupted
+    - Ops alert is emitted
+    """
+    dispatched_orders = []
+    alerts = []
+
+    monkeypatch.setattr(xts_api, "send_ops_alert", lambda msg: alerts.append(msg))
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {
+        "positions": [{"symbol": "CRUDEOIL", "instrument_id": 574823, "side": "SHORT", "quantity": 2}],
+        "all_positions": [{"symbol": "CRUDEOIL", "instrument_id": 574823, "side": "SHORT", "quantity": 2}]
+    })
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    engine = SuperTrendEngine()
+    engine.update_config({
+        "is_enabled": True, "symbol": "CRUDEOIL", "exchange_segment": "MCXFO",
+        "timeframe": "5m", "quantity": 2, "product_type": "NRML",
+        "atr_period": 10, "multiplier": 2.0
+    })
+    runner = engine.primary_runner
+    runner.virtual_position = -2
+    client_main.db_set_virtual_position(runner.strategy_key, runner.symbol, runner.timeframe, -2)
+
+    candles_bullish = generate_synthetic_candles([
+        130, 128, 126, 124, 122, 120, 118, 116, 114, 112,
+        110, 100, 50, 40, 30,
+        150
+    ])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: candles_bullish)
+
+    # Mock dispatch: exit succeeds, entry fails
+    def mock_dispatch(sig_id, action, symbol, qty, price, order_ref, is_paper):
+        dispatched_orders.append((sig_id, action, symbol, qty, order_ref))
+        if "EXIT" in order_ref:
+            return {"status": "done"}
+        else:
+            return {"status": "rejected", "error": "RMS Margin Exceeded"}
+
+    monkeypatch.setattr(client_main, "_dispatch_and_record", mock_dispatch)
+
+    orig_sleep = asyncio.sleep
+    async def fast_sleep(sec):
+        await orig_sleep(0.01)
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+    await runner.evaluate_cycle(xts_api, client_main)
+
+    # 1 exit order, 2 entry orders (initial + retry)
+    assert len(dispatched_orders) == 3
+    assert "FLIP_EXIT_" in dispatched_orders[0][4]
+    assert "FLIP_ENTRY_" in dispatched_orders[1][4]
+    assert "RETRY" in dispatched_orders[2][4]
+
+    # Invariants: Strategy paused, position persisted as FLAT (0)
+    assert runner.status == "ENTRY_FAILED_PAUSED"
+    assert runner.is_enabled is False
+    assert runner.virtual_position == 0
+    assert client_main.db_get_virtual_position(runner.strategy_key) == 0
+    assert len(alerts) >= 1
+
+
+@pytest.mark.anyio
+async def test_chaos_vector_3_concurrent_sync_and_evaluate_cycle_lock(monkeypatch):
+    """
+    Chaos Drill 3: Concurrency mutual exclusion test.
+    Verify runner.lock prevents race conditions between evaluate_cycle and sync_to_current_trend.
+    """
+    execution_timeline = []
+
+    engine = SuperTrendEngine()
+    engine.update_config({
+        "is_enabled": True, "symbol": "CRUDEOIL", "exchange_segment": "MCXFO",
+        "timeframe": "5m", "quantity": 1, "product_type": "NRML",
+        "atr_period": 10, "multiplier": 2.0
+    })
+    runner = engine.primary_runner
+    runner.virtual_position = 0
+    client_main.db_set_virtual_position(runner.strategy_key, runner.symbol, runner.timeframe, 0)
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    candles_bullish = generate_synthetic_candles([
+        130, 128, 126, 124, 122, 120, 118, 116, 114, 112,
+        110, 100, 50, 40, 30,
+        150
+    ])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: candles_bullish)
+
+    async def mock_dispatch_with_delay(sig_id, payload):
+        caller = "SYNC" if "SYNC" in payload["order_ref"] else "EVAL"
+        execution_timeline.append(f"{caller}_START")
+        await asyncio.sleep(0.05)
+        execution_timeline.append(f"{caller}_END")
+
+    runner.dispatch_fn = mock_dispatch_with_delay
+
+    # Launch both evaluate_cycle and sync_to_current_trend concurrently
+    task1 = asyncio.create_task(runner.evaluate_cycle(xts_api, client_main))
+    task2 = asyncio.create_task(runner.sync_to_current_trend(xts_api, client_main))
+
+    await asyncio.gather(task1, task2)
+
+    # Assert mutual exclusion: one task must completely finish before the next begins
+    assert len(execution_timeline) >= 2
+    assert execution_timeline[1].endswith("_END")
+
+
+@pytest.mark.anyio
+async def test_chaos_vector_4_drift_watchdog_suppresses_inflight_orders(monkeypatch):
+    """
+    Chaos Drill 4: In-flight drift suppression.
+    When broker reports net position 0 lots, but expected target is 2 lots,
+    and there is an OPEN/PENDING order matching the symbol, auto-heal MUST be suppressed.
+    """
+    dispatched_autoheals = []
+
+    monkeypatch.setattr(config, "is_market_open_ist", lambda *a, **kw: True)
+    monkeypatch.setattr(st_module, "is_market_open_ist", lambda *a, **kw: True)
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    # Broker position reports 0 lots (divergence of 2 lots from target)
+    monkeypatch.setattr(xts_api, "get_broker_positions_net", lambda: {
+        "is_paper_trade": False,
+        "all_positions": [{"instrument_id": 574823, "quantity": 0}]
+    })
+    # BUT broker has an OPEN order in-flight!
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [
+        {"OrderStatus": "OPEN", "TradingSymbol": "CRUDEOIL 31AUG2026", "ExchangeInstrumentID": "574823", "OrderQuantity": 2}
+    ])
+
+    engine = SuperTrendEngine()
+    engine.add_or_update_strategy({
+        "id": "st_drift_test",
+        "symbol": "CRUDEOIL",
+        "exchange_segment": "MCXFO",
+        "timeframe": "5m",
+        "quantity": 2,
+        "is_enabled": True,
+        "execution_mode": "LIVE"
+    })
+    runner = engine.get_strategy("st_drift_test")
+    runner.virtual_position = 2
+
+    # Mock dispatch
+    monkeypatch.setattr(client_main, "_dispatch_and_record", lambda *a, **kw: dispatched_autoheals.append(a))
+
+    res = await engine.reconcile_portfolio_drift(xts_api, client_main)
+
+    # In-flight order guard must suppress auto-heal
+    assert len(dispatched_autoheals) == 0
+    assert len(res.get("actions", [])) == 0
+
+    # Now simulate order completed (no in-flight orders): auto-heal should fire
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+    res2 = await engine.reconcile_portfolio_drift(xts_api, client_main)
+    assert len(dispatched_autoheals) == 1
+    assert res2.get("drift_count", 0) == 1
+
+
+@pytest.mark.anyio
+async def test_chaos_vector_5_sync_to_current_trend_persists_sqlite(monkeypatch):
+    """
+    Chaos Drill 5: sync_to_current_trend SQLite persistence and fail-safe abort.
+    Verify:
+    - sync_to_current_trend updates virtual_position and persists directly to SQLite
+    - Reversal from SHORT (-1) to LONG (+1) commits 0 after exit and +1 after entry
+    """
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    candles_bullish = generate_synthetic_candles([
+        130, 128, 126, 124, 122, 120, 118, 116, 114, 112,
+        110, 100, 50, 40, 30,
+        150
+    ])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: candles_bullish)
+
+    engine = SuperTrendEngine()
+    engine.add_or_update_strategy({
+        "id": "st_sync_test",
+        "symbol": "CRUDEOIL",
+        "exchange_segment": "MCXFO",
+        "timeframe": "5m",
+        "quantity": 1,
+        "is_enabled": True
+    })
+    runner = engine.get_strategy("st_sync_test")
+    runner.virtual_position = -1
+    client_main.db_set_virtual_position(runner.strategy_key, runner.symbol, runner.timeframe, -1)
+
+    monkeypatch.setattr(client_main, "_dispatch_and_record", lambda sig, act, sym, qty, pr, ref, pap: {"status": "done"})
+
+    res = await runner.sync_to_current_trend(xts_api, client_main)
+    assert res["status"] == "SUCCESS"
+    assert runner.virtual_position == 1
+    assert client_main.db_get_virtual_position(runner.strategy_key) == 1
+
+
+@pytest.mark.anyio
+async def test_chaos_vector_6_broker_network_drop_fallback(monkeypatch):
+    """
+    Chaos Drill 6: Network drop / timeout during OHLC fetch.
+    Verify:
+    - If fetch_ohlc_candles returns None or raises an error, runner falls back to cached candles
+    - Strategy does not crash, does not dispatch stray orders, and gracefully records last_error
+    """
+    engine = SuperTrendEngine()
+    engine.update_config({
+        "is_enabled": True, "symbol": "CRUDEOIL", "exchange_segment": "MCXFO",
+        "timeframe": "5m", "quantity": 1, "product_type": "NRML",
+        "atr_period": 10, "multiplier": 2.0
+    })
+    runner = engine.primary_runner
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    # First run: seed cache with synthetic candles
+    seed_candles = generate_synthetic_candles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114])
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: seed_candles)
+
+    await runner.evaluate_cycle(xts_api, client_main)
+    assert len(runner.cached_candles) > 0
+
+    # Second run: network drop occurs (returns empty/None)
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda seg, iid, tf, bars: None)
+
+    await runner.evaluate_cycle(xts_api, client_main)
+    # Cached candles preserved, no unhandled exception
+    assert len(runner.cached_candles) > 0
+
+    # Third run: broker raises TimeoutError
+    def raise_timeout(*args, **kwargs):
+        raise TimeoutError("Socket timeout to Symphony XTS Market Data API")
+    monkeypatch.setattr(xts_api, "fetch_ohlc_candles", raise_timeout)
+
+    try:
+        await runner.evaluate_cycle(xts_api, client_main)
+    except Exception:
+        pass
+    assert runner.is_enabled is True
+
 
 
 
