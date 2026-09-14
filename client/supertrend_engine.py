@@ -401,6 +401,7 @@ class SingleSuperTrendRunner:
         self.last_signal_details: dict = {}
         self.last_error: Optional[str] = None
         self.next_poll_seconds: int = 0
+        self.last_auto_align_attempt: float = 0.0
 
         # Historical buffer & chart markers
         self.cached_candles: List[Dict[str, Any]] = []
@@ -547,6 +548,9 @@ class SingleSuperTrendRunner:
         ub_line_out = []
         lb_line_out = []
 
+        bullish_line_out = []
+        bearish_line_out = []
+
         for c in self.cached_candles:
             ts = c["time"]
             candles_out.append({
@@ -557,8 +561,13 @@ class SingleSuperTrendRunner:
                 "close": c["close"],
             })
             if c.get("supertrend") and c["supertrend"] > 0:
-                color = "#10b981" if c.get("trend") == 1 else "#f43f5e"
+                is_bull = (c.get("trend") == 1)
+                color = "#10b981" if is_bull else "#f43f5e"
                 st_line_out.append({"time": ts, "value": c["supertrend"], "color": color})
+                if is_bull:
+                    bullish_line_out.append({"time": ts, "value": c["supertrend"]})
+                else:
+                    bearish_line_out.append({"time": ts, "value": c["supertrend"]})
             if c.get("upper_band") and c["upper_band"] > 0:
                 ub_line_out.append({"time": ts, "value": c["upper_band"]})
             if c.get("lower_band") and c["lower_band"] > 0:
@@ -577,6 +586,8 @@ class SingleSuperTrendRunner:
             "atr": self.last_atr,
             "candlestick": candles_out,
             "supertrend_line": st_line_out,
+            "bullish_line": bullish_line_out,
+            "bearish_line": bearish_line_out,
             "upper_band": ub_line_out,
             "lower_band": lb_line_out,
             "markers": self.recent_trade_markers[-30:],
@@ -1136,13 +1147,15 @@ class SingleSuperTrendRunner:
                     self.last_error = "No candle data returned from broker OHLC API"
                     return
 
-            self.cached_candles = list(candles)
-
             # 6. Calculate SuperTrend (for live telemetry & charts)
             st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
             if st_res.get("error"):
                 self.last_error = st_res["error"]
                 return
+
+            # Store enriched candle series (with supertrend, upper_band, lower_band, trend)
+            # so Lightweight Charts in portal always receives valid indicator series.
+            self.cached_candles = st_res.get("candle_series") or list(candles)
 
             self.active_trend = st_res["trend_name"]
             self.last_atr = st_res["atr"]
@@ -1453,6 +1466,7 @@ class MultiSuperTrendEngine:
         self._running: bool = False
         self._task: Optional[asyncio.Task] = None
         self.last_reconcile_ts: float = 0.0
+        self.last_open_align_ts: float = 0.0
 
     @property
     def primary_runner(self) -> Optional[SingleSuperTrendRunner]:
@@ -1833,6 +1847,8 @@ class MultiSuperTrendEngine:
                             st_line_out = []
                             ub_line_out = []
                             lb_line_out = []
+                            bullish_line_out = []
+                            bearish_line_out = []
                             for c in candles_series:
                                 ts = c["time"]
                                 candles_out.append({
@@ -1843,8 +1859,13 @@ class MultiSuperTrendEngine:
                                     "close": c["close"],
                                 })
                                 if c.get("supertrend") and c["supertrend"] > 0:
-                                    color = "#10b981" if c.get("trend") == 1 else "#f43f5e"
+                                    is_bull = (c.get("trend") == 1)
+                                    color = "#10b981" if is_bull else "#f43f5e"
                                     st_line_out.append({"time": ts, "value": c["supertrend"], "color": color})
+                                    if is_bull:
+                                        bullish_line_out.append({"time": ts, "value": c["supertrend"]})
+                                    else:
+                                        bearish_line_out.append({"time": ts, "value": c["supertrend"]})
                                 if c.get("upper_band") and c["upper_band"] > 0:
                                     ub_line_out.append({"time": ts, "value": c["upper_band"]})
                                 if c.get("lower_band") and c["lower_band"] > 0:
@@ -1863,6 +1884,8 @@ class MultiSuperTrendEngine:
                                 "atr": st_res["atr"],
                                 "candlestick": candles_out,
                                 "supertrend_line": st_line_out,
+                                "bullish_line": bullish_line_out,
+                                "bearish_line": bearish_line_out,
                                 "upper_band": ub_line_out,
                                 "lower_band": lb_line_out,
                                 "markers": runner.recent_trade_markers[-30:] if runner else [],
@@ -2133,7 +2156,35 @@ class MultiSuperTrendEngine:
                 if runners:
                     now_ts = int(time.time())
 
-                    # Periodic 60-second Auto-Heal Watchdog during market hours
+                    # Check market hours
+                    is_market_open_fn = getattr(config, "is_market_open_ist", None)
+                    market_open = is_market_open_fn("MCXFO") if is_market_open_fn else True
+
+                    # 1. Market-Open Auto-Alignment Watchdog:
+                    # When market is open, automatically checks if any active runner's virtual position
+                    # does not match its prevailing SuperTrend direction (e.g. ABK03, ABK06, ABK09, ABK12).
+                    # Runs with a 30s check interval and 60s per-runner cooldown.
+                    if market_open and (now_ts - self.last_open_align_ts >= 30):
+                        self.last_open_align_ts = now_ts
+                        for r in runners:
+                            if r.active_trend in ("BULLISH", "BEARISH"):
+                                target_pos = r.quantity if r.active_trend == "BULLISH" else -r.quantity
+                                if r.virtual_position != target_pos:
+                                    last_att = getattr(r, "last_auto_align_attempt", 0.0)
+                                    if now_ts - last_att >= 60.0:
+                                        r.last_auto_align_attempt = now_ts
+                                        logger.warning(
+                                            f"🚨 [MARKET-OPEN AUTO-ALIGN] Strategy {r.id} ({r.symbol} {r.timeframe}): "
+                                            f"Virtual position ({r.virtual_position} lots) != Target ({target_pos:+d} lots) in {r.active_trend} trend. "
+                                            f"Initiating automatic synchronization..."
+                                        )
+                                        try:
+                                            res = await r.sync_to_current_trend(xts_api_module, main_module)
+                                            logger.info(f"👉 [MARKET-OPEN AUTO-ALIGN RESULT] {r.id}: {res}")
+                                        except Exception as sync_err:
+                                            logger.error(f"❌ [MARKET-OPEN AUTO-ALIGN ERROR] {r.id}: {sync_err}")
+
+                    # 2. Periodic 60-second Closed-Loop Drift Auto-Heal Watchdog
                     if now_ts - self.last_reconcile_ts >= 60:
                         self.last_reconcile_ts = now_ts
                         try:
@@ -2141,18 +2192,45 @@ class MultiSuperTrendEngine:
                         except Exception as ex:
                             logger.error(f"Auto-Heal Watchdog periodic error: {ex}")
 
+                    # 3. Strategy Cycle Evaluations & Candle Boundary Tracking
                     eval_tasks = []
+                    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+                    now_dt = datetime.datetime.now(IST)
+                    seconds_from_0900 = (now_dt.hour - 9) * 3600 + now_dt.minute * 60 + now_dt.second
+
+                    min_remaining = 999999
+                    any_near_close = False
+
                     for r in runners:
                         tf_sec = parse_timeframe_seconds(r.timeframe)
-                        elapsed = now_ts % tf_sec
-                        remaining = tf_sec - elapsed
-                        r.next_poll_seconds = remaining
+                        if tf_sec > 0:
+                            sec_into_bar = seconds_from_0900 % tf_sec if seconds_from_0900 >= 0 else 0
+                            sec_rem = tf_sec - sec_into_bar
+                            r.next_poll_seconds = sec_rem
+                            if sec_rem < min_remaining:
+                                min_remaining = sec_rem
+                            # Within 20s of candle close or within 10s after boundary (candle close confirmation window)
+                            if sec_rem <= 20 or sec_into_bar <= 10:
+                                any_near_close = True
+                        else:
+                            r.next_poll_seconds = 0
+                            any_near_close = True
+
                         eval_tasks.append(r.evaluate_cycle(xts_api_module, main_module))
 
                     if eval_tasks:
                         await asyncio.gather(*eval_tasks, return_exceptions=True)
 
-                    await asyncio.sleep(5)
+                    # 4. Adaptive Smart Polling Sleep:
+                    if not market_open:
+                        sleep_seconds = 15.0
+                    elif any_near_close:
+                        sleep_seconds = 2.0  # High-speed polling during confirmed candle close window
+                    else:
+                        # Mid-candle: balanced sleep (between 5s and 20s), ensuring we wake up at least 15s before next candle close
+                        sleep_seconds = float(max(5, min(20, min_remaining - 15)))
+
+                    await asyncio.sleep(sleep_seconds)
                 else:
                     await asyncio.sleep(5)
             except asyncio.CancelledError:

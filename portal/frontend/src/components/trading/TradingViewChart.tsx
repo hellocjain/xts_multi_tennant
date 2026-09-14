@@ -38,7 +38,8 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<any>(null);
-  const stSeriesRef = useRef<any>(null);
+  const stBullSeriesRef = useRef<any>(null);
+  const stBearSeriesRef = useRef<any>(null);
   const upperBandSeriesRef = useRef<any>(null);
   const lowerBandSeriesRef = useRef<any>(null);
   const markersPluginRef = useRef<any>(null);
@@ -108,14 +109,23 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
     });
     candleSeriesRef.current = candleSeries;
 
-    // 2. SuperTrend Line Series
-    const stSeries = chart.addSeries(LineSeries, {
+    // 2a. Bullish SuperTrend Series (Green - below price)
+    const stBullSeries = chart.addSeries(LineSeries, {
       color: '#10B981',
       lineWidth: 2,
       priceLineVisible: false,
       crosshairMarkerVisible: true,
     });
-    stSeriesRef.current = stSeries;
+    stBullSeriesRef.current = stBullSeries;
+
+    // 2b. Bearish SuperTrend Series (Red - above price)
+    const stBearSeries = chart.addSeries(LineSeries, {
+      color: '#F43F5E',
+      lineWidth: 2,
+      priceLineVisible: false,
+      crosshairMarkerVisible: true,
+    });
+    stBearSeriesRef.current = stBearSeries;
 
     // 3. Upper Band
     const upperBandSeries = chart.addSeries(LineSeries, {
@@ -145,14 +155,15 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
       }
 
       const cData = param.seriesData.get(candleSeries) as any;
-      const sData = param.seriesData.get(stSeries) as any;
+      const sBullData = param.seriesData.get(stBullSeries) as any;
+      const sBearData = param.seriesData.get(stBearSeries) as any;
 
       if (cData) {
         const dTime = typeof param.time === 'number' 
           ? new Date(param.time * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })
           : String(param.time);
 
-        const stVal = sData ? sData.value : undefined;
+        const stVal = sBullData ? sBullData.value : (sBearData ? sBearData.value : undefined);
         const dist = (stVal !== undefined && cData.close) 
           ? Math.round((cData.close - stVal) * 100) / 100 
           : undefined;
@@ -224,17 +235,29 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
         }
       }
 
-      // SuperTrend Line
-      if (stSeriesRef.current && supertrendLine && supertrendLine.length > 0) {
+      // SuperTrend Lines (Dual-Color: Green for Bullish below price, Red for Bearish above price)
+      if (supertrendLine && supertrendLine.length > 0) {
         const sortedST = [...supertrendLine]
           .sort((a, b) => a.time - b.time)
           .filter((c, i, arr) => i === 0 || c.time > arr[i - 1].time);
 
-        const stData = sortedST.map((s) => ({
-          time: s.time as any,
-          value: s.value,
-        }));
-        stSeriesRef.current.setData(stData);
+        const bullData: Array<{ time: any; value: number }> = [];
+        const bearData: Array<{ time: any; value: number }> = [];
+
+        for (const s of sortedST) {
+          const isBull = s.color === '#10b981' || s.color === '#10B981';
+          if (isBull) {
+            bullData.push({ time: s.time as any, value: s.value });
+          } else {
+            bearData.push({ time: s.time as any, value: s.value });
+          }
+        }
+
+        if (stBullSeriesRef.current) stBullSeriesRef.current.setData(bullData);
+        if (stBearSeriesRef.current) stBearSeriesRef.current.setData(bearData);
+      } else {
+        if (stBullSeriesRef.current) stBullSeriesRef.current.setData([]);
+        if (stBearSeriesRef.current) stBearSeriesRef.current.setData([]);
       }
 
       // Upper & Lower Bands
