@@ -552,13 +552,13 @@ class SingleSuperTrendRunner:
         bearish_line_out = []
 
         for c in self.cached_candles:
-            ts = c["time"]
+            ts = c.get("time") or c.get("timestamp", 0)
             candles_out.append({
                 "time": ts,
-                "open": c["open"],
-                "high": c["high"],
-                "low": c["low"],
-                "close": c["close"],
+                "open": c.get("open", 0.0),
+                "high": c.get("high", 0.0),
+                "low": c.get("low", 0.0),
+                "close": c.get("close", 0.0),
             })
             if c.get("supertrend") and c["supertrend"] > 0:
                 is_bull = (c.get("trend") == 1)
@@ -1023,10 +1023,25 @@ class SingleSuperTrendRunner:
                                 target_symbol=old_desc
                             )
                             if not exit_ok:
+                                logger.warning(f"SuperTrend [{self.symbol}]: Rollover Exit failed, retrying once after 2.0s...")
+                                await asyncio.sleep(2.0)
+                                exit_ok = await self._execute_exit(
+                                    current_pos_side,
+                                    roll_qty,
+                                    f"ROLL_EXIT_{roll_ts}_RETRY",
+                                    main_module,
+                                    freeze_limit,
+                                    target_symbol=old_desc
+                                )
+                            if not exit_ok:
                                 logger.critical(
-                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 1 (Exit) on {old_desc} failed! "
+                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 1 (Exit) on {old_desc} failed after retry! "
                                     f"Aborting Leg 2 to prevent duplicate/unhedged exposure."
                                 )
+                                self.status = "ROLLOVER_FAILED_PAUSED"
+                                self.is_enabled = False
+                                if hasattr(xts_api_module, "send_ops_alert"):
+                                    xts_api_module.send_ops_alert(f"CRITICAL: Rollover Exit failed on {old_desc} for {self.symbol}. Strategy PAUSED.")
                                 return
 
                             # Brief safety pause for margin release
@@ -1043,16 +1058,31 @@ class SingleSuperTrendRunner:
                                 target_symbol=inst_desc
                             )
                             if not entry_ok:
+                                logger.warning(f"SuperTrend [{self.symbol}]: Rollover Entry failed, retrying once after 2.0s...")
+                                await asyncio.sleep(2.0)
+                                entry_ok = await self._execute_entry(
+                                    entry_action,
+                                    roll_qty,
+                                    f"ROLL_ENTRY_{roll_ts}_RETRY",
+                                    main_module,
+                                    freeze_limit,
+                                    target_symbol=inst_desc
+                                )
+                            if not entry_ok:
                                 logger.critical(
-                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 2 (Entry) on {inst_desc} failed! "
-                                    f"Old contract {old_desc} was squared off. Marking position FLAT."
+                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 2 (Entry) on {inst_desc} failed after retry! "
+                                    f"Old contract {old_desc} was squared off. Marking position FLAT and PAUSING strategy."
                                 )
                                 self.virtual_position = 0
+                                self.status = "ROLLOVER_FAILED_PAUSED"
+                                self.is_enabled = False
                                 self.active_contract_id = inst_id
                                 self.active_contract_desc = inst_desc
                                 self.last_resolved_inst_id = inst_id
                                 self.last_resolved_symbol_desc = inst_desc
                                 self._save_virtual_position(main_module, 0, active_contract_id=inst_id, active_contract_desc=inst_desc)
+                                if hasattr(xts_api_module, "send_ops_alert"):
+                                    xts_api_module.send_ops_alert(f"CRITICAL: Rollover Entry failed on {inst_desc} for {self.symbol}. Position FLAT. Strategy PAUSED.")
                                 return
 
                             # Both legs completed successfully!
@@ -1094,13 +1124,16 @@ class SingleSuperTrendRunner:
                     if days_to_expiry <= min_days:
                         logger.warning(f"SuperTrend [{self.symbol}]: Fixed contract expires in {days_to_expiry} days (<= {min_days}). Squaring off & Pausing.")
                         if self.strategy_position != "FLAT":
+                            exit_qty = abs(self.virtual_position) if self.virtual_position != 0 else (self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity)
                             await self._execute_exit(
                                 self.strategy_position,
-                                self.current_broker_quantity if self.current_broker_quantity > 0 else self.quantity,
+                                exit_qty,
                                 f"EXPIRY_SQOFF_{int(time.time())}",
                                 main_module,
                                 freeze_limit
                             )
+                        self.virtual_position = 0
+                        self._save_virtual_position(main_module, 0)
                         self.is_enabled = False
                         self.status = "EXPIRED_PAUSED"
                         return
@@ -1146,8 +1179,8 @@ class SingleSuperTrendRunner:
                         o_sym_core = o_sym.split()[0].upper() if o_sym else ""
                         
                         is_our_st_order = (
-                            (order_ref.startswith("ST_REV_") or order_ref.startswith("ST_DELTA_")) and
-                            (expected_ref_token in order_ref or (o_sym_core == clean_sym_core and f"_{self.timeframe.upper()}_" in order_ref))
+                            (order_ref.startswith("ST_REV_") or order_ref.startswith("ST_DELTA_") or order_ref.startswith("ST_AUTO_HEAL_")) and
+                            (expected_ref_token in order_ref or (o_sym_core == clean_sym_core and f"_{self.timeframe.upper()}_" in order_ref) or (order_ref.startswith("ST_AUTO_HEAL_") and clean_sym_core == o_sym_core))
                         )
                         if is_our_st_order and st in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
                             first_seen = self.pending_order_first_seen.setdefault(app_id, now_ts_orders)
@@ -1986,13 +2019,13 @@ class MultiSuperTrendEngine:
                             bullish_line_out = []
                             bearish_line_out = []
                             for c in candles_series:
-                                ts = c["time"]
+                                ts = c.get("time") or c.get("timestamp", 0)
                                 candles_out.append({
                                     "time": ts,
-                                    "open": c["open"],
-                                    "high": c["high"],
-                                    "low": c["low"],
-                                    "close": c["close"],
+                                    "open": c.get("open", 0.0),
+                                    "high": c.get("high", 0.0),
+                                    "low": c.get("low", 0.0),
+                                    "close": c.get("close", 0.0),
                                 })
                                 if c.get("supertrend") and c["supertrend"] > 0:
                                     is_bull = (c.get("trend") == 1)

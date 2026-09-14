@@ -1774,6 +1774,124 @@ async def test_chaos_vector_6_broker_network_drop_fallback(monkeypatch):
     assert runner.is_enabled is True
 
 
+@pytest.mark.anyio
+async def test_chaos_vector_7_rollover_exit_rejection_halts_entry(monkeypatch):
+    """
+    Chaos Drill 7: Continuous rollover two-leg atomicity.
+    When Leg 1 (Exit on old contract) fails during autonomous rollover:
+    - Retries once after 2.0s
+    - Leg 2 (Entry on next-month contract) is strictly ABORTED
+    - Strategy transitions to ROLLOVER_FAILED_PAUSED and is_enabled=False
+    - Ops alert is emitted
+    """
+    dispatched_orders = []
+    alerts = []
+
+    monkeypatch.setattr(xts_api, "send_ops_alert", lambda msg: alerts.append(msg))
+    monkeypatch.setattr(config, "is_market_open_ist", lambda *a, **kw: True)
+    monkeypatch.setattr(st_module, "is_market_open_ist", lambda *a, **kw: True)
+
+    engine = SuperTrendEngine()
+    engine.add_or_update_strategy({
+        "id": "st_roll_test",
+        "symbol": "CRUDEOIL1!",
+        "exchange_segment": "MCXFO",
+        "timeframe": "5m",
+        "quantity": 1,
+        "is_enabled": True
+    })
+    runner = engine.get_strategy("st_roll_test")
+    runner.virtual_position = 1  # Long 1 lot
+    runner.active_contract_id = 111111
+    runner.active_contract_desc = "CRUDEOIL 19MAR2026"
+    runner.last_resolved_inst_id = 111111
+    runner.last_resolved_symbol_desc = "CRUDEOIL 19MAR2026"
+
+    # Contract switches to next month contract 222222 ("CRUDEOIL 19APR2026")
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 222222,
+        "desc": "CRUDEOIL 19APR2026",
+        "exch_seg": "MCXFO",
+        "lot_size": 1,
+        "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=40)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [])
+
+    # Mock dispatch to fail on exit
+    def mock_dispatch_fail(sig_id, action, symbol, qty, price, order_ref, is_paper):
+        dispatched_orders.append((sig_id, action, symbol, qty, order_ref))
+        return {"status": "rejected", "error": "RMS Freeze Reject"}
+
+    monkeypatch.setattr(client_main, "_dispatch_and_record", mock_dispatch_fail)
+
+    orig_sleep = asyncio.sleep
+    async def fast_sleep(sec):
+        await orig_sleep(0.01)
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+
+    await runner.evaluate_cycle(xts_api, client_main)
+
+    # Leg 1 was attempted twice (initial + retry), then entry was aborted
+    assert len(dispatched_orders) == 2
+    assert "ROLL_EXIT_" in dispatched_orders[0][4]
+    assert "RETRY" in dispatched_orders[1][4]
+    # No entry orders dispatched!
+    assert not any("ROLL_ENTRY_" in o[4] for o in dispatched_orders)
+
+    # Strategy state paused
+    assert runner.status == "ROLLOVER_FAILED_PAUSED"
+    assert runner.is_enabled is False
+    assert len(alerts) >= 1
+
+
+@pytest.mark.anyio
+async def test_chaos_vector_8_autoheal_pending_suppresses_cycle(monkeypatch):
+    """
+    Chaos Drill 8: evaluate_cycle suppression on in-flight auto-heal order.
+    When an ST_AUTO_HEAL_ order for this symbol is pending matching at the broker,
+    evaluate_cycle MUST yield and NOT dispatch new trades.
+    """
+    engine = SuperTrendEngine()
+    engine.add_or_update_strategy({
+        "id": "st_suppress_test",
+        "symbol": "CRUDEOIL",
+        "exchange_segment": "MCXFO",
+        "timeframe": "5m",
+        "quantity": 1,
+        "is_enabled": True
+    })
+    runner = engine.get_strategy("st_suppress_test")
+    runner.virtual_position = 0
+
+    monkeypatch.setattr(xts_api, "resolve_contract", lambda sym: {
+        "inst_id": 574823, "exch_seg": "MCXFO", "lot_size": 1, "freeze_qty": 10000,
+        "expiry": datetime.date.today() + datetime.timedelta(days=20)
+    })
+    monkeypatch.setattr(xts_api, "get_positions_telemetry", lambda: {"positions": [], "all_positions": []})
+    
+    # In-flight auto-heal order matching at broker
+    monkeypatch.setattr(xts_api, "get_broker_orders", lambda: [
+        {
+            "OrderStatus": "OPEN",
+            "TradingSymbol": "CRUDEOIL 31AUG2026",
+            "OrderUniqueIdentifier": "ST_AUTO_HEAL_CRUDEOIL_BUY_1787200000",
+            "AppOrderID": "APP_ORD_9999"
+        }
+    ])
+
+    dispatched = []
+    runner.dispatch_fn = lambda sig, pay: dispatched.append((sig, pay))
+
+    # Trigger cycle
+    await runner.evaluate_cycle(xts_api, client_main)
+
+    # Must yield due to in-flight auto-heal order!
+    assert len(dispatched) == 0
+
+
+
 
 
 
