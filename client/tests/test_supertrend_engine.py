@@ -1891,6 +1891,68 @@ async def test_chaos_vector_8_autoheal_pending_suppresses_cycle(monkeypatch):
     assert len(dispatched) == 0
 
 
+def test_order_unique_identifier_length_and_uniqueness_clamp():
+    """
+    Verifies that format_order_ref_chunk strictly enforces Symphony XTS 50-char schema limit
+    while preserving uniqueness for multi-slice orders and retaining _RETRY markers.
+    """
+    from xts_api import format_order_ref_chunk
+
+    # Normal short ref
+    short_ref = "ST_REV_ENTRY_CRUDEOIL_5M_1726000000"
+    assert len(format_order_ref_chunk(short_ref, 1)) <= 50
+    assert format_order_ref_chunk(short_ref, 1) == short_ref
+    assert format_order_ref_chunk(short_ref, 2) == f"{short_ref}_2"
+
+    # Excessively long ref (>60 chars) with retry
+    long_ref = "ST_REV_EXIT_GOLDGUINEA26OCTFUT_15MIN_ROLL_EXIT_1726358400_RETRY"
+    assert len(long_ref) > 50
+
+    chunk1 = format_order_ref_chunk(long_ref, 1)
+    chunk2 = format_order_ref_chunk(long_ref, 2)
+    chunk3 = format_order_ref_chunk(long_ref, 3)
+
+    assert len(chunk1) <= 50, f"Chunk 1 exceeded 50 chars: {len(chunk1)}"
+    assert len(chunk2) <= 50, f"Chunk 2 exceeded 50 chars: {len(chunk2)}"
+    assert len(chunk3) <= 50, f"Chunk 3 exceeded 50 chars: {len(chunk3)}"
+
+    # Uniqueness invariant: must not collide
+    assert len({chunk1, chunk2, chunk3}) == 3
+    assert chunk2.endswith("_2")
+    assert chunk3.endswith("_3")
+    assert "RETRY" in chunk1
+    assert "RETRY" in chunk2
+    assert "RETRY" in chunk3
+
+
+def test_runner_update_config_symbol_change_clears_cache():
+    """
+    Verifies that changing runner symbol invalidates cached candles, markers,
+    and broker position state to prevent cross-symbol contamination.
+    """
+    runner = SingleSuperTrendRunner({
+        "symbol": "CRUDEOIL",
+        "timeframe": "5m",
+        "exchange_segment": "MCXFO",
+        "quantity": 1
+    })
+    runner.cached_candles = [{"time": 100, "close": 5000}]
+    runner.recent_trade_markers = [{"time": 100, "text": "BUY"}]
+    runner.current_broker_quantity = 2
+    runner.broker_side = "LONG"
+
+    # Update with a new symbol
+    runner.update_config({"symbol": "GOLDGUINEA"})
+
+    assert runner.symbol == "GOLDGUINEA"
+    assert runner.strategy_key == "GOLDGUINEA_5m"
+    assert runner.cached_candles == []
+    assert runner.recent_trade_markers == []
+    assert runner.current_broker_quantity == 0
+    assert runner.broker_side == "FLAT"
+
+
+
 
 
 

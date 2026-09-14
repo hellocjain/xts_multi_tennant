@@ -1207,6 +1207,26 @@ def slice_quantity_for_freeze(quantity: int, freeze_limit: int) -> list:
         rem -= c
     return chunks
 
+def format_order_ref_chunk(base_ref: str, chunk_idx: int = 1, max_len: int = 50) -> str:
+    """
+    Safely formats and clamps an orderUniqueIdentifier to max_len (default 50 chars for Symphony XTS),
+    guaranteeing that chunk suffixes (_2, _3) and retry markers (_RETRY) are never truncated or duplicated.
+    """
+    if not base_ref:
+        return ""
+    chunk_suffix = f"_{chunk_idx}" if chunk_idx > 1 else ""
+    full_ref = f"{base_ref}{chunk_suffix}"
+    if len(full_ref) <= max_len:
+        return full_ref
+
+    retry_suffix = "_RETRY" if "_RETRY" in str(base_ref) else ""
+    combined_suffix = f"{retry_suffix}{chunk_suffix}"
+    avail_prefix_len = max(1, max_len - len(combined_suffix))
+
+    base_str = str(base_ref)
+    base_clean = base_str[:-len(retry_suffix)] if retry_suffix else base_str
+    return f"{base_clean[:avail_prefix_len]}{combined_suffix}"
+
 def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
     is_paper = is_paper or getattr(config, "PAPER_TRADE_MODE", False)
     token = None
@@ -1294,7 +1314,7 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
         "limitPrice": execution_price,
         "stopPrice": 0,
         "apiOrderSource": "WEBAPI",
-        "orderUniqueIdentifier": order_ref,
+        "orderUniqueIdentifier": format_order_ref_chunk(order_ref, 1),
         "clientID": client_id or "PAPER_CLIENT",
     }
 
@@ -1306,7 +1326,7 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
     if is_paper:
         paper_order_ids = []
         for idx, chunk_qty in enumerate(chunks, start=1):
-            chunk_ref = f"{order_ref}_{idx}" if idx > 1 else order_ref
+            chunk_ref = format_order_ref_chunk(order_ref, idx)
             paper_order_id = f"PAPER_{int(time.time() * 1000)}_{idx}"
             paper_order_ids.append(paper_order_id)
             log_line = f"[PAPER MARKET TRADE] {action} {chunk_qty} qty of {symbol} (ID: {instrument_id} [{contract_expiry}]) @ Limit Px Rs {execution_price} (LTP Rs {base_price}) | Ref: {chunk_ref}"
@@ -1322,7 +1342,7 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
             "description": f"Paper order executed successfully in {len(chunks)} slices" if len(chunks) > 1 else "Paper order executed successfully",
             "result": {
                 "AppOrderID": paper_order_ids[0],
-                "OrderUniqueIdentifier": order_ref,
+                "OrderUniqueIdentifier": format_order_ref_chunk(order_ref, 1),
                 "OrderStatus": "Filled",
                 "ExecutionPrice": base_price,
                 "ExecutionQty": execution_qty,
@@ -1370,7 +1390,7 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
     dispatched_results = []
     total_dispatched_qty = 0
     for idx, chunk_qty in enumerate(chunks, start=1):
-        chunk_ref = f"{order_ref}_{idx}" if idx > 1 else order_ref
+        chunk_ref = format_order_ref_chunk(order_ref, idx)
         chunk_payload = dict(payload)
         chunk_payload["orderQuantity"] = chunk_qty
         chunk_payload["orderUniqueIdentifier"] = chunk_ref
@@ -2136,7 +2156,7 @@ def panic_square_off_all():
                     "limitPrice": exec_price,
                     "stopPrice": 0,
                     "apiOrderSource": "WEBAPI",
-                    "orderUniqueIdentifier": order_ref,
+                    "orderUniqueIdentifier": format_order_ref_chunk(order_ref, 1),
                     "clientID": client_id,
                 }
                 try:
@@ -2410,7 +2430,7 @@ def square_off_single_position(symbol: str = "", instrument_id: int = None, quan
             "limitPrice": exec_price,
             "stopPrice": 0,
             "apiOrderSource": "WEBAPI",
-            "orderUniqueIdentifier": order_ref,
+            "orderUniqueIdentifier": format_order_ref_chunk(order_ref, 1),
             "clientID": client_id,
         }
         if not ORDER_RATE_LIMITER.acquire(timeout=3.0):

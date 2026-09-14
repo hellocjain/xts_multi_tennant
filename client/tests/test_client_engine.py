@@ -64,19 +64,19 @@ def test_tick_size_quantization():
     assert xts_api.apply_tick_size(83.2524, 0.0025, "SELL") == 83.2500
 
 def test_daily_notional_tracking():
-    # Initial state
+    """Confirms daily notional shield/RMS cap is bypassed so system strictly trades SuperTrend signals."""
     state = xts_api.get_daily_notional_state()
-    assert state["notional"] >= 0.0
+    assert state["notional"] == 0.0
 
-    # Reserve notional
+    # Reserving notional always succeeds without blocking
     allowed, total = xts_api.check_and_reserve_daily_notional(500000.0)
     assert allowed is True
-    assert total >= 500000.0
+    assert total == 0.0
 
-    # Refund notional
+    # Refund is a safe no-op
     xts_api.refund_daily_notional(500000.0)
     state2 = xts_api.get_daily_notional_state()
-    assert state2["notional"] == total - 500000.0
+    assert state2["notional"] == 0.0
 
 def test_symbol_resolution():
     assert xts_api.resolve_symbol_smart("MCX:CRUDEOIL1!") == "CRUDEOIL"

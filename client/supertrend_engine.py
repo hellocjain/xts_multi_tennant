@@ -27,6 +27,23 @@ from typing import List, Dict, Optional, Any, Callable
 from xts_api import slice_quantity_for_freeze
 
 try:
+    from xts_api import format_order_ref_chunk
+except ImportError:
+    def format_order_ref_chunk(base_ref: str, chunk_idx: int = 1, max_len: int = 50) -> str:
+        if not base_ref:
+            return ""
+        chunk_suffix = f"_{chunk_idx}" if chunk_idx > 1 else ""
+        full_ref = f"{base_ref}{chunk_suffix}"
+        if len(full_ref) <= max_len:
+            return full_ref
+        retry_suffix = "_RETRY" if "_RETRY" in str(base_ref) else ""
+        combined_suffix = f"{retry_suffix}{chunk_suffix}"
+        avail_prefix_len = max(1, max_len - len(combined_suffix))
+        base_str = str(base_ref)
+        base_clean = base_str[:-len(retry_suffix)] if retry_suffix else base_str
+        return f"{base_clean[:avail_prefix_len]}{combined_suffix}"
+
+try:
     import config
 except ImportError:
     config = None
@@ -457,7 +474,14 @@ class SingleSuperTrendRunner:
         if "id" in config_dict:
             self.id = str(config_dict["id"])
         if "symbol" in config_dict:
-            self.symbol = str(config_dict["symbol"]).strip().upper()
+            new_sym = str(config_dict["symbol"]).strip().upper()
+            if new_sym and new_sym != self.symbol:
+                self.symbol = new_sym
+                self.strategy_key = f"{self.symbol}_{self.timeframe}"
+                self.cached_candles = []
+                self.recent_trade_markers = []
+                self.current_broker_quantity = 0
+                self.broker_side = "FLAT"
         if "exchange_segment" in config_dict:
             self.exchange_segment = str(config_dict["exchange_segment"]).strip().upper()
         if "timeframe" in config_dict:
@@ -1424,11 +1448,8 @@ class SingleSuperTrendRunner:
         chunks = slice_quantity_for_freeze(abs_qty, freeze_limit)
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
-            order_ref = (
-                f"ST_REV_{self.symbol}_{self.timeframe.upper()}_DELTA_{action}_{candle_ts}"
-                if chunk_idx == 1
-                else f"ST_REV_{self.symbol}_{self.timeframe.upper()}_DELTA_{action}_{candle_ts}_{chunk_idx}"
-            )
+            base_ref = f"ST_REV_{self.symbol}_{self.timeframe.upper()}_DELTA_{action}_{candle_ts}"
+            order_ref = format_order_ref_chunk(base_ref, chunk_idx)
             sig_id = f"st_delta_{str(uuid.uuid4())[:8]}"
 
             payload = {
@@ -1504,7 +1525,8 @@ class SingleSuperTrendRunner:
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
-            order_ref = f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}_{chunk_idx}"
+            base_ref = f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}"
+            order_ref = format_order_ref_chunk(base_ref, chunk_idx)
             sig_id = f"st_exit_{str(uuid.uuid4())[:8]}"
             
             payload = {
@@ -1571,7 +1593,8 @@ class SingleSuperTrendRunner:
         chunks = slice_quantity_for_freeze(qty, freeze_limit)
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
-            order_ref = f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}" if chunk_idx == 1 else f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}_{chunk_idx}"
+            base_ref = f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}"
+            order_ref = format_order_ref_chunk(base_ref, chunk_idx)
             sig_id = f"st_entry_{str(uuid.uuid4())[:8]}"
             
             payload = {
@@ -2252,7 +2275,7 @@ class MultiSuperTrendEngine:
                 chunks = slice_quantity_for_freeze(abs_adj_lots, freeze_limit)
 
                 for chunk_idx, chunk_qty in enumerate(chunks, start=1):
-                    chunk_ref = f"{order_ref}_{chunk_idx}" if len(chunks) > 1 else order_ref
+                    chunk_ref = format_order_ref_chunk(order_ref, chunk_idx)
                     payload = {
                         "action": action,
                         "symbol": target_sym,
