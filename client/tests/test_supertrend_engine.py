@@ -1218,7 +1218,7 @@ async def test_supertrend_sync_trend_on_demand(monkeypatch):
 
     # Synthetic bearish candles (rally then sharp drop)
     prices_bearish = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 125, 50]
-    candles = generate_synthetic_candles(prices_bearish)
+    candles = generate_synthetic_candles(prices_bearish, interval=900)
     monkeypatch.setattr(xts_api, "fetch_ohlc_candles", lambda *a, **kw: candles)
 
     # 1. Sync from FLAT -> Should enter SHORT 2 lots

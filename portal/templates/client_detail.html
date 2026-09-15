@@ -2097,13 +2097,15 @@
                     const atrEl = document.getElementById('chart-atr-val');
                     if (atrEl) atrEl.innerText = '₹' + Number(data.atr).toFixed(2);
                 }
-                if (data.lower_band) {
+                if (data.last_lower_band !== undefined || data.lower_band) {
                     const upEl = document.getElementById('chart-up-val');
-                    if (upEl) upEl.innerText = '₹' + Number(data.lower_band).toFixed(2);
+                    const val = (data.last_lower_band !== undefined && data.last_lower_band > 0) ? data.last_lower_band : (Array.isArray(data.lower_band) && data.lower_band.length ? data.lower_band[data.lower_band.length - 1].value : data.lower_band);
+                    if (upEl && val && !isNaN(val)) upEl.innerText = '₹' + Number(val).toFixed(2);
                 }
-                if (data.upper_band) {
+                if (data.last_upper_band !== undefined || data.upper_band) {
                     const dnEl = document.getElementById('chart-dn-val');
-                    if (dnEl) dnEl.innerText = '₹' + Number(data.upper_band).toFixed(2);
+                    const val = (data.last_upper_band !== undefined && data.last_upper_band > 0) ? data.last_upper_band : (Array.isArray(data.upper_band) && data.upper_band.length ? data.upper_band[data.upper_band.length - 1].value : data.upper_band);
+                    if (dnEl && val && !isNaN(val)) dnEl.innerText = '₹' + Number(val).toFixed(2);
                 }
                 if (data.symbol) {
                     stActiveSymbol = data.symbol;

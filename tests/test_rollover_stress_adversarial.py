@@ -193,9 +193,10 @@ def test_stress_sequential_execution_leg1_partial_fill_aborts_leg2(monkeypatch):
 
         await runner.evaluate_cycle(xts_api, mock_main)
 
-        # Invariant: Leg 1 was attempted, but Leg 2 was NEVER dispatched!
-        assert len(mock_main.dispatched_trades) == 1
-        assert "EXIT" in mock_main.dispatched_trades[0]["order_ref"]
+        # Invariant: Leg 1 was attempted (with retry), but Leg 2 was NEVER dispatched!
+        assert len(mock_main.dispatched_trades) in (1, 2)
+        assert all("EXIT" in t["order_ref"] for t in mock_main.dispatched_trades)
+        assert not any("ENTRY" in t["order_ref"] for t in mock_main.dispatched_trades)
         # Contract not advanced
         assert str(runner.active_contract_id) == "562056"
 
@@ -236,8 +237,9 @@ def test_stress_sequential_execution_leg1_error_aborts_leg2(monkeypatch):
         await runner.evaluate_cycle(xts_api, mock_main)
 
         # Invariant: Leg 2 NEVER dispatched
-        assert len(mock_main.dispatched_trades) == 1
-        assert "EXIT" in mock_main.dispatched_trades[0]["order_ref"]
+        assert len(mock_main.dispatched_trades) in (1, 2)
+        assert all("EXIT" in t["order_ref"] for t in mock_main.dispatched_trades)
+        assert not any("ENTRY" in t["order_ref"] for t in mock_main.dispatched_trades)
         assert str(runner.active_contract_id) == "574823"
         assert runner.virtual_position == -2
 

@@ -797,7 +797,13 @@ class SingleSuperTrendRunner:
                 else:
                     return {"status": "ERROR", "error": "No candle data returned from broker OHLC API"}
 
-            st_res = calculate_supertrend(candles, self.atr_period, self.multiplier)
+            now_ts = int(time.time())
+            if not self.is_candle_closed(candles, tf_seconds, now_ts) and len(candles) > self.atr_period + 1:
+                eval_candles = candles[:-1]
+            else:
+                eval_candles = candles
+
+            st_res = calculate_supertrend(eval_candles, self.atr_period, self.multiplier)
             trend_name = st_res.get("trend_name", "INITIALIZING")
             if trend_name not in ("BULLISH", "BEARISH"):
                 return {"status": "ERROR", "error": f"Invalid trend state: {trend_name}"}
@@ -1290,7 +1296,6 @@ class SingleSuperTrendRunner:
             # so Lightweight Charts in portal always receives valid indicator series.
             self.cached_candles = st_res.get("candle_series") or list(candles)
 
-            self.active_trend = st_res["trend_name"]
             self.last_atr = st_res["atr"]
             self.upper_band = st_res["upper_band"]
             self.lower_band = st_res["lower_band"]
@@ -1303,6 +1308,7 @@ class SingleSuperTrendRunner:
             # telemetry / charts, but trade evaluation and order dispatches are strictly suppressed.
             if not market_open:
                 self.status = "MARKET_CLOSED"
+                self.active_trend = st_res["trend_name"]
                 return
 
             self.status = "RUNNING"
@@ -1320,6 +1326,9 @@ class SingleSuperTrendRunner:
                 eval_st_res = calculate_supertrend(closed_candles, self.atr_period, self.multiplier)
                 if eval_st_res.get("error"):
                     return
+
+            # Strictly base strategy's confirmed active trend on the closed candle
+            self.active_trend = eval_st_res["trend_name"]
 
             candle_ts = eval_st_res["last_candle_time"]
             is_flip = eval_st_res["is_flip"]
@@ -2033,7 +2042,6 @@ class MultiSuperTrendEngine:
                                 runner.last_atr = st_res["atr"]
                                 runner.upper_band = st_res["upper_band"]
                                 runner.lower_band = st_res["lower_band"]
-                                runner.active_trend = st_res["trend_name"]
 
                             candles_out = []
                             st_line_out = []
@@ -2071,9 +2079,11 @@ class MultiSuperTrendEngine:
                                 "timeframe_seconds": tf_seconds,
                                 "execution_mode": runner.execution_mode if runner else "LIVE",
                                 "status": runner.status if runner else "RUNNING",
-                                "current_trend": st_res["trend_name"],
+                                "current_trend": runner.active_trend if runner else st_res["trend_name"],
                                 "last_close": st_res["last_close"],
                                 "atr": st_res["atr"],
+                                "last_upper_band": st_res.get("upper_band", 0.0),
+                                "last_lower_band": st_res.get("lower_band", 0.0),
                                 "candlestick": candles_out,
                                 "supertrend_line": st_line_out,
                                 "bullish_line": bullish_line_out,
@@ -2381,31 +2391,7 @@ class MultiSuperTrendEngine:
                     is_market_open_fn = getattr(config, "is_market_open_ist", None)
                     market_open = is_market_open_fn("MCXFO") if is_market_open_fn else True
 
-                    # 1. Market-Open Auto-Alignment Watchdog:
-                    # When market is open, automatically checks if any active runner's virtual position
-                    # does not match its prevailing SuperTrend direction (e.g. ABK03, ABK06, ABK09, ABK12).
-                    # Runs with a 30s check interval and 60s per-runner cooldown.
-                    if market_open and (now_ts - self.last_open_align_ts >= 30):
-                        self.last_open_align_ts = now_ts
-                        for r in runners:
-                            if r.active_trend in ("BULLISH", "BEARISH"):
-                                target_pos = r.quantity if r.active_trend == "BULLISH" else -r.quantity
-                                if r.virtual_position != target_pos:
-                                    last_att = getattr(r, "last_auto_align_attempt", 0.0)
-                                    if now_ts - last_att >= 60.0:
-                                        r.last_auto_align_attempt = now_ts
-                                        logger.warning(
-                                            f"🚨 [MARKET-OPEN AUTO-ALIGN] Strategy {r.id} ({r.symbol} {r.timeframe}): "
-                                            f"Virtual position ({r.virtual_position} lots) != Target ({target_pos:+d} lots) in {r.active_trend} trend. "
-                                            f"Initiating automatic synchronization..."
-                                        )
-                                        try:
-                                            res = await r.sync_to_current_trend(xts_api_module, main_module)
-                                            logger.info(f"👉 [MARKET-OPEN AUTO-ALIGN RESULT] {r.id}: {res}")
-                                        except Exception as sync_err:
-                                            logger.error(f"❌ [MARKET-OPEN AUTO-ALIGN ERROR] {r.id}: {sync_err}")
-
-                    # 2. Periodic 60-second Closed-Loop Drift Auto-Heal Watchdog
+                    # 1. Periodic 60-second Closed-Loop Drift Auto-Heal Watchdog (Broker Net Position vs Strategy Target)
                     if now_ts - self.last_reconcile_ts >= 60:
                         self.last_reconcile_ts = now_ts
                         try:
