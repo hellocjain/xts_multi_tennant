@@ -21,8 +21,26 @@ import asyncio
 
 import config
 import xts_api
-from supertrend_engine import SuperTrendEngine
-from custom_strategy_engine import MultiCustomStrategyEngine
+from supertrend_engine import SuperTrendEngine, parse_timeframe_seconds
+from custom_strategy_engine import MultiCustomStrategyEngine, parse_timeframe_to_seconds
+
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+    _sentry_dsn = os.environ.get("SENTRY_DSN", "https://5b56a32b997e3fb79e616c8b0d1981ff@o4512086533865472.ingest.us.sentry.io/4512090896924672")
+    if _sentry_dsn:
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            environment=os.environ.get("APP_ENV", "production"),
+            release="v10.0-PRO",
+            traces_sample_rate=0.1,
+            integrations=[FastApiIntegration()],
+        )
+        sentry_sdk.set_tag("service", "xts_client")
+        sentry_sdk.set_tag("client_id", getattr(config, "CLIENT_ID", "unknown"))
+except Exception as _sentry_err:
+    logging.getLogger("uvicorn").warning(f"Sentry init bypassed: {_sentry_err}")
 
 supertrend_engine = SuperTrendEngine()
 custom_strategy_engine = MultiCustomStrategyEngine()
@@ -335,8 +353,11 @@ def send_execution_notification(action: str, symbol: str, quantity: int, price: 
 def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref, is_paper=False):
     db_update_status(sig_id, "processing")
     try:
-        result = xts_api.execute_trade_with_retry(action, symbol, quantity, price, order_ref, is_paper=is_paper)
-        is_paper_trade = is_paper or bool((result.get("result") or {}).get("IsPaperTrade")) or getattr(config, "PAPER_TRADE_MODE", False)
+        raw_res = xts_api.execute_trade_with_retry(action, symbol, quantity, price, order_ref, is_paper=is_paper)
+        result: Dict[str, Any] = raw_res if isinstance(raw_res, dict) else {"type": "error", "raw_result": str(raw_res)}
+        res_payload = result.get("result")
+        is_paper_broker = bool(res_payload.get("IsPaperTrade")) if isinstance(res_payload, dict) else False
+        is_paper_trade = is_paper or is_paper_broker or getattr(config, "PAPER_TRADE_MODE", False)
 
         if result.get("type") == "success":
             status = "paper_done" if is_paper_trade else "done"
@@ -514,7 +535,7 @@ def generate_order_ref(data: dict, action: str, symbol: str, quantity: int, pric
     sig_hash_id = hashlib.md5(sig_raw.encode()).hexdigest()[:14]
     return f"TVBot_{sig_hash_id}"
 
-def is_duplicate_signal(action: str, symbol: str, quantity: int, price: float, data: dict = None) -> bool:
+def is_duplicate_signal(action: str, symbol: str, quantity: int, price: float, data: Optional[dict] = None) -> bool:
     now = time.time()
     explicit_id = str(data.get("order_id") or data.get("alert_id") or data.get("order_ref") or "").strip() if data else ""
     if explicit_id:

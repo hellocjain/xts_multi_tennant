@@ -44,6 +44,11 @@ except ImportError:
         return f"{base_clean[:avail_prefix_len]}{combined_suffix}"
 
 try:
+    import sentry_sdk
+except ImportError:
+    sentry_sdk = None
+
+try:
     import config
 except ImportError:
     config = None
@@ -405,6 +410,7 @@ class SingleSuperTrendRunner:
         # Live Dynamic Telemetry
         self.status: str = "RUNNING" if self.is_enabled else "DISABLED"
         self.active_trend: str = "INITIALIZING"
+        self.forming_trend: str = "INITIALIZING"
         self.current_broker_quantity: int = 0
         self.broker_side: str = "FLAT"
         self.last_atr: float = 0.0
@@ -906,6 +912,8 @@ class SingleSuperTrendRunner:
                     self._save_virtual_position(main_module, -self.quantity)
                     return {"status": "SUCCESS", "message": f"Entered SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
 
+            return {"status": "NO_CHANGE", "message": f"Trend {trend_name} requires no synchronization", "trend": trend_name, "virtual_position": self.virtual_position}
+
     async def reset_to_flat(self, square_off_broker: bool, xts_api_module, main_module) -> dict:
         """
         Resets this strategy's target to FLAT (0 lots).
@@ -980,7 +988,7 @@ class SingleSuperTrendRunner:
             st_res = calculate_supertrend(live_candles, self.atr_period, self.multiplier)
             if not st_res.get("error"):
                 self.cached_candles = st_res.get("candle_series") or live_candles
-                self.active_trend = st_res["trend_name"]
+                self.forming_trend = st_res["trend_name"]
                 self.last_atr = st_res["atr"]
                 self.upper_band = st_res["upper_band"]
                 self.lower_band = st_res["lower_band"]
@@ -1521,10 +1529,17 @@ class SingleSuperTrendRunner:
         # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
         max_allowed_lots = max(self.quantity * 5, 50)
         if qty > max_allowed_lots or qty <= 0:
-            logger.critical(
+            guard_msg = (
                 f"🚨 CRITICAL SAFETY GUARD: Disallowed exit quantity {qty} lots for {self.symbol} ({self.timeframe}) "
                 f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
             )
+            logger.critical(guard_msg)
+            if sentry_sdk:
+                with sentry_sdk.isolation_scope() as scope:
+                    scope.set_tag("symbol", self.symbol)
+                    scope.set_tag("timeframe", self.timeframe)
+                    scope.set_tag("strategy_id", getattr(self, "id", "default"))
+                    sentry_sdk.capture_message(guard_msg, level="error")
             return False
 
         action = "BUY" if side.upper() == "SHORT" else "SELL"
@@ -1590,10 +1605,17 @@ class SingleSuperTrendRunner:
         # Defense-in-depth safety guard: refuse order if quantity exceeds unreasonable multiple of configured strategy quantity
         max_allowed_lots = max(self.quantity * 5, 50)
         if qty > max_allowed_lots or qty <= 0:
-            logger.critical(
+            guard_msg = (
                 f"🚨 CRITICAL SAFETY GUARD: Disallowed entry quantity {qty} lots for {self.symbol} ({self.timeframe}) "
                 f"(configured strategy quantity: {self.quantity} lots, limit: {max_allowed_lots}). Refusing dispatch!"
             )
+            logger.critical(guard_msg)
+            if sentry_sdk:
+                with sentry_sdk.isolation_scope() as scope:
+                    scope.set_tag("symbol", self.symbol)
+                    scope.set_tag("timeframe", self.timeframe)
+                    scope.set_tag("strategy_id", getattr(self, "id", "default"))
+                    sentry_sdk.capture_message(guard_msg, level="error")
             return False
 
         is_paper = (self.execution_mode == "PAPER")

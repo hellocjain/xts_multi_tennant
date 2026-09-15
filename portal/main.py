@@ -28,6 +28,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+    _sentry_dsn = os.environ.get("SENTRY_DSN", "https://5b56a32b997e3fb79e616c8b0d1981ff@o4512086533865472.ingest.us.sentry.io/4512090896924672")
+    if _sentry_dsn:
+        sentry_sdk.init(
+            dsn=_sentry_dsn,
+            environment=os.environ.get("APP_ENV", "production"),
+            release="v10.0-PRO",
+            traces_sample_rate=0.1,
+            integrations=[FastApiIntegration()],
+        )
+        sentry_sdk.set_tag("service", "xts_portal")
+except Exception as _sentry_err:
+    logger.warning(f"Sentry init bypassed: {_sentry_err}")
+
 PORTAL_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(PORTAL_DIR, "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -144,7 +161,7 @@ def clear_failed_logins(ip: str):
     LOGIN_ATTEMPTS.pop(ip, None)
 
 @app.get("/admin/login", response_class=HTMLResponse)
-async def login_page(request: Request, error: str = None):
+async def login_page(request: Request, error: Optional[str] = None):
     if get_current_user(request):
         return RedirectResponse(url="/admin/dashboard", status_code=303)
     return templates.TemplateResponse(request=request, name="login.html", context={"error": error, "current_user": None})
@@ -1506,7 +1523,7 @@ async def export_trades_csv(tenant_id: str = "", user: dict = Depends(require_au
             t["tenant_id"] = tenant_id
         all_trades.extend(trades)
     else:
-        tel = await telemetry_service.get_all_clients_telemetry()
+        tel = await telemetry_service.aggregate_all_telemetry()
         for client in tel.get("clients", []):
             c_id = client.get("id", "")
             for t in (client.get("broker_trades") or []):
