@@ -14,10 +14,20 @@ HOST = os.environ.get("VPS_HOST", "139.59.20.239")
 USER = os.environ.get("VPS_USER", "root")
 PASSWORD = os.environ.get("VPS_PASSWORD", "Check")
 
-CLIENTS = [
+DEFAULT_CLIENTS = [
     "abk01", "abk02", "abk03", "abk04", "abk05",
-    "abk06", "abk09", "abk10", "abk11", "abk12", "dm933"
+    "abk06", "abk07", "abk09", "abk10", "abk11", "abk12", "abk13", "abk14", "abk15", "dm933"
 ]
+
+def get_client_containers(client):
+    try:
+        stdin, stdout, stderr = client.exec_command('docker ps --filter name=xts_client_ --format "{{.Names}}"')
+        lines = [line.strip().replace("xts_client_", "") for line in stdout.read().decode('utf-8').splitlines() if line.strip().startswith("xts_client_")]
+        if lines:
+            return sorted(lines)
+    except Exception:
+        pass
+    return DEFAULT_CLIENTS
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -53,8 +63,9 @@ def main():
     sftp.close()
 
     # 2. Hot-patch all client containers
-    print("\n🤖 Step 2: Hot-patching and restarting 11 client containers...")
-    for c in CLIENTS:
+    clients = get_client_containers(client)
+    print(f"\n🤖 Step 2: Hot-patching and restarting {len(clients)} client containers...")
+    for c in clients:
         c_name = f"xts_client_{c}"
         print(f"  Patching {c_name}...")
         run_cmd(client, f"docker cp /opt/xts_multi/client/xts_api.py {c_name}:/app/xts_api.py")
