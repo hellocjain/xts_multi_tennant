@@ -1,6 +1,7 @@
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from typing import Optional, Dict, Any, List
 import datetime
 import logging
 import re
@@ -1134,14 +1135,91 @@ def check_order_status_by_ref(order_ref):
         return "NETWORK_ERROR"
     return "NOT_FOUND"
 
+def verify_order_rms_acceptance(order_ref: str, app_order_id: Optional[str] = None, wait_ms: int = 350, timeout_sec: float = 1.5) -> dict:
+    """
+    Asynchronous Post-Dispatch RMS Verification:
+    Symphony XTS POST /orders returns HTTP 200 'API Order Id sent' before RMS validation occurs.
+    This helper pauses briefly (wait_ms) to allow RMS evaluation and queries GET /orders
+    to verify whether the order was accepted or rejected by RMS.
+    """
+    if wait_ms > 0:
+        time.sleep(wait_ms / 1000.0)
+
+    token = get_interactive_token()
+    if not token:
+        return {"verified": False, "status": "UNKNOWN", "is_rejected": False, "reject_reason": "", "order_data": {}}
+
+    safe_url = get_safe_base_url()
+    url = f"{safe_url}/orders"
+    headers = {"authorization": token}
+    start_time = time.time()
+
+    while time.time() - start_time <= timeout_sec:
+        try:
+            resp = api_session.get(url, headers=headers, timeout=4)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get('type') == 'success':
+                    orders_list = data.get('result', [])
+                    if isinstance(orders_list, list):
+                        for ord_item in orders_list:
+                            ref_tag = str(ord_item.get('OrderUniqueIdentifier') or ord_item.get('orderUniqueIdentifier') or "")
+                            ord_app_id = str(ord_item.get('AppOrderID') or ord_item.get('appOrderID') or "")
+                            
+                            match = False
+                            if app_order_id and ord_app_id and str(app_order_id) == ord_app_id:
+                                match = True
+                            elif order_ref and ref_tag and str(order_ref) == ref_tag:
+                                match = True
+
+                            if match:
+                                raw_st = ord_item.get('OrderStatus')
+                                if isinstance(raw_st, int) or (isinstance(raw_st, str) and str(raw_st).isdigit()):
+                                    st_name = XTS_STATUS_CODE_MAP.get(int(raw_st), str(raw_st))
+                                else:
+                                    st_name = str(raw_st or "")
+
+                                is_rej = (st_name.upper() in ("REJECTED", "CANCELLED") or raw_st in (56, 52, "56", "52"))
+                                rej_reason = str(
+                                    ord_item.get('CancelRejectReason') or 
+                                    ord_item.get('cancelRejectReason') or 
+                                    ord_item.get('OrderGeneratedType') or ""
+                                ).strip()
+
+                                # If still in transitional Pending state, do another quick check if within timeout
+                                if st_name.upper() in ("PENDINGNEW", "PENDING_NEW") and (time.time() - start_time + 0.2) < timeout_sec:
+                                    time.sleep(0.2)
+                                    break
+
+                                return {
+                                    "verified": True,
+                                    "status": st_name,
+                                    "is_rejected": is_rej,
+                                    "reject_reason": rej_reason,
+                                    "app_order_id": ord_app_id or str(app_order_id or ""),
+                                    "order_data": ord_item
+                                }
+        except Exception as e:
+            logger.debug(f"verify_order_rms_acceptance check error for {order_ref}: {e}")
+
+        time.sleep(0.2)
+
+    return {"verified": False, "status": "UNKNOWN", "is_rejected": False, "reject_reason": "", "order_data": {}}
+
 def execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, attempt=1, is_paper=False):
     result = place_order(action, symbol, quantity, tv_price, order_ref, is_paper=is_paper)
 
-    if result.get("status") == "error" or result.get("type") == "error" or result.get("type") != "success":
-        err_msg = str(result.get("description") or result.get("message") or result.get("error") or result).lower()
+    if result.get("status") == "error" or result.get("type") == "error" or result.get("type") != "success" or result.get("status") == "rejected":
+        err_msg = str(result.get("description") or result.get("message") or result.get("reject_reason") or result.get("error") or result).lower()
         is_auth_issue = any(kw in err_msg for kw in ("token", "session", "auth"))
         is_transient = any(kw in err_msg for kw in ("connection", "expecting value"))
         is_timeout = any(kw in err_msg for kw in ("timeout", "timed out", "readtimeout", "bad gateway", "502", "503", "504"))
+        is_rms_reject = result.get("status") == "rejected" or any(kw in err_msg for kw in ("margin", "rms", "shortfall", "limit exceeds", "rejected", "insufficient"))
+
+        if is_rms_reject:
+            logger.critical(f"RMS REJECTION SHIELD: Order {order_ref} rejected by broker RMS ({err_msg}). Refusing retry.")
+            send_ops_alert(f"RMS REJECTION: Order {order_ref} ({action} {symbol} x{quantity}) rejected: {result.get('description') or err_msg}")
+            return result
 
         if is_timeout and attempt == 1:
             logger.critical(f"TIMEOUT/GATEWAY SHIELD: Order {order_ref} state unknown. Refusing blind retry.")
@@ -1157,7 +1235,7 @@ def execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, atte
             clear_tokens()
             return execute_trade_with_retry(action, symbol, quantity, tv_price, order_ref, attempt=2, is_paper=is_paper)
 
-    if result.get("status") == "error" or result.get("type") == "error":
+    if result.get("status") == "error" or result.get("type") == "error" or result.get("status") == "rejected":
         send_ops_alert(f"XTS bot: order FAILED for {symbol} ({action} x{quantity}) ref={order_ref}: {result}")
 
     return result
@@ -1365,7 +1443,25 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
             data = response.json()
 
             if data.get('type') == 'success':
-                logger.info(f"✅ BROKER ACCEPTED ORDER: {data}")
+                app_order_id = str(data.get("result", {}).get("AppOrderID") or "") if isinstance(data.get("result"), dict) else ""
+                chunk_ref = format_order_ref_chunk(order_ref, 1)
+                rms_res = verify_order_rms_acceptance(chunk_ref, app_order_id=app_order_id)
+                if rms_res.get("is_rejected"):
+                    rej_reason = rms_res.get("reject_reason") or "Broker RMS Rejection"
+                    logger.error(f"❌ BROKER RMS REJECTED ORDER {order_ref}: {rej_reason}")
+                    refund_daily_notional(order_val)
+                    return {
+                        "type": "error",
+                        "status": "rejected",
+                        "code": "e-rms-rejected",
+                        "description": rej_reason,
+                        "reject_reason": rej_reason,
+                        "order_status": "Rejected",
+                        "result": data.get("result"),
+                        "rms_telemetry": rms_res.get("order_data")
+                    }
+
+                logger.info(f"✅ BROKER ACCEPTED ORDER: {data} (RMS Status: {rms_res.get('status')})")
                 
                 if getattr(config, "CANCEL_LINGERING_PARTIAL_FILLS", True):
                     threading.Thread(
@@ -1407,7 +1503,26 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
             response = api_session.post(url, headers=headers, json=chunk_payload, timeout=8)
             data = response.json()
             if data.get('type') == 'success':
-                logger.info(f"✅ BROKER ACCEPTED SLICE [{idx}/{len(chunks)}]: {data}")
+                app_order_id = str(data.get("result", {}).get("AppOrderID") or "") if isinstance(data.get("result"), dict) else ""
+                rms_res = verify_order_rms_acceptance(chunk_ref, app_order_id=app_order_id)
+                if rms_res.get("is_rejected"):
+                    rej_reason = rms_res.get("reject_reason") or "Broker RMS Rejection"
+                    logger.error(f"❌ BROKER RMS REJECTED SLICE [{idx}/{len(chunks)}] {chunk_ref}: {rej_reason}")
+                    undispatched_val = base_price * (execution_qty - total_dispatched_qty) * contract_mult
+                    refund_daily_notional(undispatched_val)
+                    dispatched_results.append({
+                        "type": "error",
+                        "status": "rejected",
+                        "code": "e-rms-rejected",
+                        "description": rej_reason,
+                        "reject_reason": rej_reason,
+                        "order_status": "Rejected",
+                        "order_ref": chunk_ref,
+                        "qty": chunk_qty
+                    })
+                    break
+
+                logger.info(f"✅ BROKER ACCEPTED SLICE [{idx}/{len(chunks)}]: {data} (RMS Status: {rms_res.get('status')})")
                 total_dispatched_qty += chunk_qty
                 dispatched_results.append(data)
                 if getattr(config, "CANCEL_LINGERING_PARTIAL_FILLS", True):
@@ -1433,7 +1548,7 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
             dispatched_results.append({"status": "error", "message": str(e)})
             break
 
-    all_ok = all(d.get("type") == "success" for d in dispatched_results) and len(dispatched_results) == len(chunks)
+    all_ok = all(d.get("type") == "success" and d.get("status") != "rejected" for d in dispatched_results) and len(dispatched_results) == len(chunks)
     if all_ok:
         first_app_id = dispatched_results[0].get("result", {}).get("AppOrderID") if isinstance(dispatched_results[0].get("result"), dict) else "MULTI"
         return {
@@ -1458,6 +1573,9 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
             "slices": dispatched_results,
         }
     else:
+        rej_slice = next((d for d in dispatched_results if d.get("status") == "rejected"), None)
+        if rej_slice:
+            return rej_slice
         return dispatched_results[0] if dispatched_results else {"status": "error", "message": "Order slicing dispatch failed"}
 
 def _safe_float(val, default=0.0):

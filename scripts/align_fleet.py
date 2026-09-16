@@ -103,14 +103,32 @@ def main():
             trend = s.get("current_trend", "INITIALIZING")
             vpos = s.get("virtual_position", 0)
             bpos = s.get("current_broker_quantity", 0)
+            strat_status = s.get("status", "RUNNING")
+            last_err = s.get("last_error") or ""
             target_pos = -qty if trend == "BEARISH" else (qty if trend == "BULLISH" else 0)
 
-            is_aligned = (vpos == target_pos) and (bpos == target_pos)
-            status_icon = "✅" if is_aligned else "⚠️"
+            # Direct broker position cross-reference from positions telemetry
+            live_broker_qty = bpos
+            pos_list = t_data.get("positions", {}).get("positions", []) or t_data.get("positions", {}).get("all_positions", [])
+            for p in pos_list:
+                p_sym = str(p.get("symbol", "")).upper()
+                if sym.replace("1!", "").replace("!", "").upper() in p_sym:
+                    live_broker_qty = int(p.get("quantity", 0))
+                    break
 
-            print(f"  {status_icon} [{sym} ({tf})] Trend={trend} | Virtual={vpos:+d} | Broker={bpos:+d} | Target={target_pos:+d}")
+            is_aligned = (vpos == target_pos) and (live_broker_qty == target_pos)
+            
+            if strat_status == "MARGIN_SHORTFALL_PAUSED":
+                status_icon = "🛑"
+                print(f"  {status_icon} [{sym} ({tf})] MARGIN SHORTFALL PAUSED | Broker={live_broker_qty:+d} | Error: {last_err}")
+            elif not is_aligned:
+                status_icon = "⚠️"
+                print(f"  {status_icon} [{sym} ({tf})] Trend={trend} | Virtual={vpos:+d} | Broker={live_broker_qty:+d} | Target={target_pos:+d} | Status={strat_status}")
+            else:
+                status_icon = "✅"
+                print(f"  {status_icon} [{sym} ({tf})] Trend={trend} | Virtual={vpos:+d} | Broker={live_broker_qty:+d} | Target={target_pos:+d}")
 
-            if not is_aligned:
+            if not is_aligned and strat_status != "MARGIN_SHORTFALL_PAUSED":
                 misaligned_count += 1
                 if args.execute:
                     print(f"     [{ts_now()}] 🚀 Executing sync-trend for {strat_id}...")
@@ -123,7 +141,7 @@ def main():
                         exec_fail_count += 1
                 else:
                     print(f"     ℹ️ Needs alignment to target {target_pos:+d} lots (pass --execute to align).")
-            else:
+            elif is_aligned:
                 aligned_count += 1
 
     print("\n" + "=" * 75)

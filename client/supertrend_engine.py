@@ -839,10 +839,11 @@ class SingleSuperTrendRunner:
 
                     entry_ok = await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                     if not entry_ok:
-                        self.status = "ENTRY_FAILED_PAUSED"
+                        is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                        self.status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
                         self.is_enabled = False
-                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Entry failed! Position remains FLAT (0 lots). Strategy PAUSED.")
-                        return {"status": "ERROR", "error": "Entry leg failed. Position remains FLAT (0 lots)."}
+                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Entry failed ({self.last_error})! Position remains FLAT (0 lots). Strategy {self.status}.")
+                        return {"status": "ERROR", "error": f"Entry leg failed: {self.last_error}. Position remains FLAT (0 lots)."}
                     self.virtual_position = self.quantity
                     self._save_virtual_position(main_module, self.quantity)
                     return {"status": "SUCCESS", "message": f"Reversed from SHORT to LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
@@ -851,7 +852,9 @@ class SingleSuperTrendRunner:
                     if diff > 0:
                         entry_ok = await self._execute_entry("BUY", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                         if not entry_ok:
-                            return {"status": "ERROR", "error": "Top-up entry failed or was rejected by broker."}
+                            is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                            self.status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
+                            return {"status": "ERROR", "error": f"Top-up entry failed: {self.last_error}"}
                         self.virtual_position = self.quantity
                         self._save_virtual_position(main_module, self.quantity)
                         return {"status": "SUCCESS", "message": f"Topped up LONG by +{diff} lots (total +{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
@@ -860,9 +863,10 @@ class SingleSuperTrendRunner:
                     # Entry from flat
                     entry_ok = await self._execute_entry("BUY", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                     if not entry_ok:
-                        self.status = "ENTRY_FAILED_PAUSED"
+                        is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                        self.status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
                         self.is_enabled = False
-                        return {"status": "ERROR", "error": "Entry leg failed or was rejected by broker."}
+                        return {"status": "ERROR", "error": f"Entry leg failed or was rejected by broker: {self.last_error}"}
                     self.virtual_position = self.quantity
                     self._save_virtual_position(main_module, self.quantity)
                     return {"status": "SUCCESS", "message": f"Entered LONG (+{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
@@ -884,10 +888,11 @@ class SingleSuperTrendRunner:
 
                     entry_ok = await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                     if not entry_ok:
-                        self.status = "ENTRY_FAILED_PAUSED"
+                        is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                        self.status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
                         self.is_enabled = False
-                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Entry failed! Position remains FLAT (0 lots). Strategy PAUSED.")
-                        return {"status": "ERROR", "error": "Entry leg failed. Position remains FLAT (0 lots)."}
+                        logger.critical(f"SuperTrend [{self.symbol}]: sync_to_current_trend Entry failed ({self.last_error})! Position remains FLAT (0 lots). Strategy {self.status}.")
+                        return {"status": "ERROR", "error": f"Entry leg failed: {self.last_error}. Position remains FLAT (0 lots)."}
                     self.virtual_position = -self.quantity
                     self._save_virtual_position(main_module, -self.quantity)
                     return {"status": "SUCCESS", "message": f"Reversed from LONG to SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
@@ -896,7 +901,9 @@ class SingleSuperTrendRunner:
                     if diff > 0:
                         entry_ok = await self._execute_entry("SELL", diff, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                         if not entry_ok:
-                            return {"status": "ERROR", "error": "Top-up entry failed or was rejected by broker."}
+                            is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                            self.status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
+                            return {"status": "ERROR", "error": f"Top-up entry failed: {self.last_error}"}
                         self.virtual_position = -self.quantity
                         self._save_virtual_position(main_module, -self.quantity)
                         return {"status": "SUCCESS", "message": f"Topped up SHORT by -{diff} lots (total -{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
@@ -905,9 +912,10 @@ class SingleSuperTrendRunner:
                     # Entry from flat
                     entry_ok = await self._execute_entry("SELL", self.quantity, f"SYNC_ENTRY_{candle_ts}", main_module, freeze_limit)
                     if not entry_ok:
-                        self.status = "ENTRY_FAILED_PAUSED"
+                        is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                        self.status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
                         self.is_enabled = False
-                        return {"status": "ERROR", "error": "Entry leg failed or was rejected by broker."}
+                        return {"status": "ERROR", "error": f"Entry leg failed or was rejected by broker: {self.last_error}"}
                     self.virtual_position = -self.quantity
                     self._save_virtual_position(main_module, -self.quantity)
                     return {"status": "SUCCESS", "message": f"Entered SHORT (-{self.quantity} lots)", "trend": trend_name, "virtual_position": self.virtual_position}
@@ -1400,11 +1408,13 @@ class SingleSuperTrendRunner:
                             await asyncio.sleep(2.0)
                             entry_ok = await self._execute_entry("BUY", entry_qty, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
                         if not entry_ok:
-                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Entry failed after retry! Position is FLAT. Strategy PAUSED.")
-                            self.status = "ENTRY_FAILED_PAUSED"
+                            is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                            pause_status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
+                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Entry failed after retry! Position is {self.virtual_position} lots. Strategy {pause_status}.")
+                            self.status = pause_status
                             self.is_enabled = False
                             if hasattr(xts_api_module, "send_ops_alert"):
-                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Entry failed after retry. Strategy PAUSED.")
+                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Entry failed ({self.last_error}). Strategy {pause_status}. Broker position is {self.virtual_position} lots.")
                             return
                     else:
                         logger.info(f"SuperTrend [{self.symbol}]: Already LONG (+{self.virtual_position} lots). Skipping redundant entry.")
@@ -1434,11 +1444,13 @@ class SingleSuperTrendRunner:
                             await asyncio.sleep(2.0)
                             entry_ok = await self._execute_entry("SELL", entry_qty, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
                         if not entry_ok:
-                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Entry failed after retry! Position is FLAT. Strategy PAUSED.")
-                            self.status = "ENTRY_FAILED_PAUSED"
+                            is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
+                            pause_status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
+                            logger.critical(f"SuperTrend [{self.symbol}]: Reversal Entry failed after retry! Position is {self.virtual_position} lots. Strategy {pause_status}.")
+                            self.status = pause_status
                             self.is_enabled = False
                             if hasattr(xts_api_module, "send_ops_alert"):
-                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Entry failed after retry. Strategy PAUSED.")
+                                xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} Entry failed ({self.last_error}). Strategy {pause_status}. Broker position is {self.virtual_position} lots.")
                             return
                     else:
                         logger.info(f"SuperTrend [{self.symbol}]: Already SHORT ({self.virtual_position} lots). Skipping redundant entry.")
@@ -1577,8 +1589,21 @@ class SingleSuperTrendRunner:
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action, symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
                     is_rollover = "ROLL_" in str(ref_suffix).upper()
                     valid_statuses = ("done", "paper_done") if is_rollover else ("done", "paper_done", "partial_failure")
-                    if res and isinstance(res, dict) and res.get("status") not in valid_statuses:
-                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected/incomplete ({res.get('status')}). Halting further slices.")
+                    is_failed = (
+                        not res or 
+                        not isinstance(res, dict) or 
+                        res.get("status") not in valid_statuses or
+                        res.get("status") in ("failed", "rejected") or
+                        res.get("order_status") == "Rejected"
+                    )
+                    if is_failed:
+                        fail_desc = str(
+                            res.get("reject_reason") or 
+                            res.get("description") or 
+                            res.get("status") if isinstance(res, dict) else res
+                        )
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Exit order rejected/incomplete ({fail_desc}). Halting further slices.")
+                        self.last_error = f"Exit Rejected: {fail_desc[:120]}"
                         return False
                     chunk_delta = chunk_qty if side.upper() == "SHORT" else -chunk_qty
                     self.virtual_position += chunk_delta
@@ -1652,8 +1677,23 @@ class SingleSuperTrendRunner:
                     res = await asyncio.to_thread(main_module._dispatch_and_record, sig_id, action.upper(), symbol_to_trade, chunk_qty, 0.0, order_ref, is_paper)
                     is_rollover = "ROLL_" in str(ref_suffix).upper()
                     valid_statuses = ("done", "paper_done") if is_rollover else ("done", "paper_done", "partial_failure")
-                    if res and isinstance(res, dict) and res.get("status") not in valid_statuses:
-                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected/incomplete ({res.get('status')}). Halting further slices.")
+                    is_failed = (
+                        not res or 
+                        not isinstance(res, dict) or 
+                        res.get("status") not in valid_statuses or
+                        res.get("status") in ("failed", "rejected") or
+                        res.get("order_status") == "Rejected"
+                    )
+                    if is_failed:
+                        fail_desc = str(
+                            res.get("reject_reason") or 
+                            res.get("description") or 
+                            res.get("status") if isinstance(res, dict) else res
+                        )
+                        logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Entry order rejected/incomplete ({fail_desc}). Halting further slices.")
+                        self.last_error = f"Entry Rejected: {fail_desc[:120]}"
+                        if any(kw in fail_desc.lower() for kw in ("margin", "shortfall", "rms")):
+                            self.status = "MARGIN_SHORTFALL_PAUSED"
                         return False
                     chunk_delta = chunk_qty if action.upper() == "BUY" else -chunk_qty
                     self.virtual_position += chunk_delta
@@ -1690,6 +1730,7 @@ class MultiSuperTrendEngine:
         self._task: Optional[asyncio.Task] = None
         self.last_reconcile_ts: float = 0.0
         self.last_open_align_ts: float = 0.0
+        self._drift_rejection_history: Dict[str, dict] = {}
 
     @property
     def primary_runner(self) -> Optional[SingleSuperTrendRunner]:
@@ -2219,6 +2260,19 @@ class MultiSuperTrendEngine:
             if all(getattr(r, "execution_mode", "LIVE") == "PAPER" for r in runners_for_sym):
                 continue
 
+            # Circuit Breaker & Rejection Backoff Guard
+            hist = getattr(self, "_drift_rejection_history", {}).get(target_sym, {})
+            if hist.get("paused"):
+                logger.info(f"reconcile_portfolio_drift [{target_sym}]: Strategy circuit breaker tripped ({hist.get('reason')}). Suppressing auto-heal.")
+                continue
+            if hist.get("backoff_until", 0) > time.time():
+                rem = int(hist["backoff_until"] - time.time())
+                logger.info(f"reconcile_portfolio_drift [{target_sym}]: Rejection backoff active ({rem}s remaining). Suppressing auto-heal.")
+                continue
+            if any(r.status == "MARGIN_SHORTFALL_PAUSED" for r in runners_for_sym):
+                logger.info(f"reconcile_portfolio_drift [{target_sym}]: Runner in MARGIN_SHORTFALL_PAUSED. Suppressing auto-heal.")
+                continue
+
             primary_r = runners_for_sym[0]
             total_configured_lots = sum(r.quantity for r in runners_for_sym)
 
@@ -2266,6 +2320,12 @@ class MultiSuperTrendEngine:
                     break
 
             actual_broker_lots = (actual_raw_qty // lot_size) if (lot_size > 1 and actual_raw_qty % lot_size == 0) else actual_raw_qty
+            
+            # Sync authoritative broker position telemetry directly onto runners
+            for r in runners_for_sym:
+                r.current_broker_quantity = actual_broker_lots
+                r.broker_side = "LONG" if actual_broker_lots > 0 else ("SHORT" if actual_broker_lots < 0 else "FLAT")
+
             drift_lots = actual_broker_lots - target_lots
 
             if drift_lots != 0:
@@ -2343,8 +2403,12 @@ class MultiSuperTrendEngine:
                         )
 
                     order_ok = (
-                        res is None or 
-                        (isinstance(res, dict) and (res.get("status") in ("done", "paper_done", "partial_failure") or res.get("type") == "success"))
+                        res is not None and 
+                        isinstance(res, dict) and 
+                        res.get("status") not in ("failed", "rejected") and
+                        res.get("order_status") != "Rejected" and
+                        res.get("code") != "e-rms-rejected" and
+                        (res.get("status") in ("done", "paper_done", "partial_failure") or res.get("type") == "success")
                     )
 
                     if order_ok:
@@ -2356,15 +2420,51 @@ class MultiSuperTrendEngine:
                         if hasattr(xts_api_module, "send_ops_alert"):
                             xts_api_module.send_ops_alert(succ_msg)
                         actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "FILLED"})
+                        if target_sym in getattr(self, "_drift_rejection_history", {}):
+                            self._drift_rejection_history.pop(target_sym, None)
                     else:
+                        fail_desc = str(
+                            (res.get("reject_reason") if isinstance(res, dict) else "") or
+                            (res.get("description") if isinstance(res, dict) else "") or
+                            (res.get("error") if isinstance(res, dict) else "") or
+                            res
+                        )
+                        is_margin_issue = any(kw in fail_desc.lower() for kw in ("margin exceeds", "margin shortfall", "margin", "rms : margin", "insufficient margin"))
+
                         fail_msg = (
-                            f"❌ AUTO-HEAL ORDER REJECTED on {target_sym} ({action} {chunk_qty} lots): {res}. "
+                            f"❌ AUTO-HEAL ORDER REJECTED on {target_sym} ({action} {chunk_qty} lots): {fail_desc}. "
                             f"Check broker margin, RMS limits, or instrument status!"
                         )
                         logger.error(fail_msg)
                         if hasattr(xts_api_module, "send_ops_alert"):
                             xts_api_module.send_ops_alert(fail_msg)
                         actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "REJECTED", "details": res})
+
+                        if is_margin_issue:
+                            logger.critical(
+                                f"🚨 MARGIN SHORTFALL CIRCUIT BREAKER ACTIVATED on {target_sym}: "
+                                f"Extinguishing target drift (syncing virtual_position to broker {actual_broker_lots} lots) "
+                                f"and setting status to MARGIN_SHORTFALL_PAUSED."
+                            )
+                            for r in runners_for_sym:
+                                r.virtual_position = actual_broker_lots
+                                r.strategy_position = "FLAT" if actual_broker_lots == 0 else ("LONG" if actual_broker_lots > 0 else "SHORT")
+                                r.status = "MARGIN_SHORTFALL_PAUSED"
+                                r.last_error = f"RMS Margin Shortfall: {fail_desc[:120]}"
+                                r._save_virtual_position(main_module, actual_broker_lots)
+
+                            self._drift_rejection_history[target_sym] = {
+                                "paused": True,
+                                "reason": fail_desc,
+                                "timestamp": time.time(),
+                            }
+                        else:
+                            history = self._drift_rejection_history.setdefault(target_sym, {"count": 0, "backoff_until": 0})
+                            history["count"] += 1
+                            backoff_sec = min(60 * (2 ** history["count"]), 3600)
+                            history["backoff_until"] = time.time() + backoff_sec
+                            logger.warning(f"AUTO-HEAL COOLDOWN: Suppressing auto-heal for {target_sym} for {backoff_sec}s due to broker rejection.")
+
                         break
 
                     if chunk_idx < len(chunks):

@@ -359,13 +359,22 @@ def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref, is_
         is_paper_broker = bool(res_payload.get("IsPaperTrade")) if isinstance(res_payload, dict) else False
         is_paper_trade = is_paper or is_paper_broker or getattr(config, "PAPER_TRADE_MODE", False)
 
-        if result.get("type") == "success":
+        is_rejected = (
+            result.get("status") == "rejected" or 
+            result.get("order_status") == "Rejected" or
+            result.get("code") == "e-rms-rejected"
+        )
+
+        if is_rejected:
+            status = "failed"
+        elif result.get("type") == "success":
             status = "paper_done" if is_paper_trade else "done"
         elif result.get("status") == "partial_failure" or result.get("type") == "partial_failure":
             status = "partial_failure"
         else:
             status = "failed"
 
+        rej_reason = str(result.get("reject_reason") or result.get("description") or "").strip()
         audit_result = dict(result) if isinstance(result, dict) else {"raw_result": result}
         audit_result["_audit"] = {
             "action": action,
@@ -375,11 +384,18 @@ def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref, is_
             "order_ref": order_ref,
             "is_paper_trade": is_paper_trade,
             "dispatched_at": time.time(),
+            "reject_reason": rej_reason,
         }
 
         db_update_status(sig_id, status, audit_result)
         send_execution_notification(action, symbol, quantity, price, status, audit_result)
-        return {"status": status, "result": audit_result}
+        return {
+            "status": status,
+            "result": audit_result,
+            "reject_reason": rej_reason,
+            "is_rejected": is_rejected,
+            "description": rej_reason
+        }
     except Exception as e:
         logger.error(f"UNCAUGHT ERROR dispatching signal {sig_id}: {e}")
         err_res = {"error": str(e), "code": "e-uncaught"}
