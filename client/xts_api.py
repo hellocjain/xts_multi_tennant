@@ -1593,10 +1593,17 @@ def get_margin_telemetry():
     if getattr(config, "PAPER_TRADE_MODE", False):
         return {
             "available_margin": 1000000.0,
+            "broker_rms_limit": 1000000.0,
+            "gross_mcx_cash": 1000000.0,
+            "broker_hold_amount": 0.0,
+            "has_broker_hold": False,
             "margin_used": 0.0,
             "total_collateral": 500000.0,
             "net_margin_available": 1000000.0,
+            "free_headroom": 1000000.0,
             "total_account_value": 1500000.0,
+            "margin_utilization_pct": 0.0,
+            "margin_health_status": "HEALTHY",
             "is_simulated": True,
             "error": None
         }
@@ -1604,8 +1611,11 @@ def get_margin_telemetry():
     token = get_interactive_token()
     if not token:
         return {
-            "available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0,
-            "net_margin_available": 0.0, "total_account_value": 0.0,
+            "available_margin": 0.0, "broker_rms_limit": 0.0, "gross_mcx_cash": 0.0,
+            "broker_hold_amount": 0.0, "has_broker_hold": False,
+            "margin_used": 0.0, "total_collateral": 0.0,
+            "net_margin_available": 0.0, "free_headroom": 0.0, "total_account_value": 0.0,
+            "margin_utilization_pct": 0.0, "margin_health_status": "CRITICAL",
             "is_simulated": False, "error": "Broker Auth Failed"
         }
 
@@ -1613,8 +1623,8 @@ def get_margin_telemetry():
     safe_url = get_safe_base_url()
     headers = {"authorization": token}
 
-    # Primary XTS endpoint: /user/limits
-    for endpoint in [f"{safe_url}/user/limits?dayOrNet=DayWise&clientID={client_id}", f"{safe_url}/user/balance"]:
+    # Primary XTS endpoint: /user/limits or fallback to /user/balance
+    for endpoint in [f"{safe_url}/user/balance", f"{safe_url}/user/limits?dayOrNet=DayWise&clientID={client_id}"]:
         try:
             resp = api_session.get(endpoint, headers=headers, timeout=4)
             if resp.status_code in (400, 401, 403):
@@ -1629,11 +1639,11 @@ def get_margin_telemetry():
                 if data.get('type') == 'success':
                     bal_list = data.get('result', {}).get('BalanceList', [])
                     if bal_list and isinstance(bal_list, list):
-                        best_entry = None
-                        best_avail = -1.0
-                        
                         mcx_entry = {
                             "available_margin": 0.0,
+                            "gross_cash": 0.0,
+                            "notional_cash": 0.0,
+                            "broker_hold": 0.0,
                             "margin_used": 0.0,
                             "total_collateral": 0.0,
                             "net_margin_available": 0.0,
@@ -1643,6 +1653,9 @@ def get_margin_telemetry():
                         }
                         unified_entry = {
                             "available_margin": 0.0,
+                            "gross_cash": 0.0,
+                            "notional_cash": 0.0,
+                            "broker_hold": 0.0,
                             "margin_used": 0.0,
                             "total_collateral": 0.0,
                             "net_margin_available": 0.0,
@@ -1650,29 +1663,45 @@ def get_margin_telemetry():
                             "pay_in_amount": 0.0,
                             "total_account_value": 0.0
                         }
-                        
+                        overall_margin_used = 0.0
+                        overall_collateral = 0.0
+
                         for item in bal_list:
                             limit_obj = item.get('limitObject', {})
                             rms = limit_obj.get('RMSSubLimits', {})
                             margin_avail_obj = limit_obj.get('marginAvailable', {})
-                            
+
                             cash_avail = _safe_float(rms.get('cashAvailable'))
                             pay_in = _safe_float(margin_avail_obj.get('PayInAmount'))
                             adhoc = _safe_float(margin_avail_obj.get('AdhocMargin'))
+                            # Symphony XTS can spell it 'NotinalCash' or 'NotionalCash'
+                            notional_val = _safe_float(margin_avail_obj.get('NotinalCash') if margin_avail_obj.get('NotinalCash') is not None else margin_avail_obj.get('NotionalCash'))
                             collateral = _safe_float(rms.get('collateral') or rms.get('collateralMargin'))
                             margin_used = _safe_float(rms.get('marginUtilized'))
-                            
+
+                            if margin_used > overall_margin_used:
+                                overall_margin_used = margin_used
+                            if collateral > overall_collateral:
+                                overall_collateral = collateral
+
+                            # Calculate true segment net cash after negative notional holds
+                            hold_amt = abs(notional_val) if notional_val < 0 else 0.0
+                            segment_net_cash = max(0.0, cash_avail + notional_val + pay_in + adhoc)
+                            total_acct_val = max(0.0, cash_avail + notional_val + pay_in + adhoc + collateral)
+
                             raw_net_avail = rms.get('netMarginAvailable')
                             if raw_net_avail is not None:
-                                net_avail = _safe_float(raw_net_avail, default=cash_avail + pay_in + adhoc + collateral - margin_used)
+                                net_avail = _safe_float(raw_net_avail, default=segment_net_cash + collateral - margin_used)
                             else:
-                                net_avail = cash_avail + pay_in + adhoc + collateral - margin_used
-                            
+                                net_avail = segment_net_cash + collateral - margin_used
+
                             effective_avail = max(0.0, net_avail)
-                            total_acct_val = max(0.0, cash_avail + pay_in + adhoc + collateral)
-                            
+
                             entry_data = {
-                                "available_margin": max(0.0, cash_avail + pay_in + adhoc),
+                                "available_margin": segment_net_cash,
+                                "gross_cash": cash_avail,
+                                "notional_cash": notional_val,
+                                "broker_hold": hold_amt,
                                 "margin_used": max(0.0, margin_used),
                                 "total_collateral": max(0.0, collateral),
                                 "net_margin_available": effective_avail,
@@ -1682,37 +1711,80 @@ def get_margin_telemetry():
                                 "is_simulated": False,
                                 "error": None
                             }
-                            
+
                             header = str(item.get('limitHeader', '')).upper()
                             if 'COMMODITIES' in header or 'MCX' in header:
                                 mcx_entry = entry_data
                             elif 'ALL|ALL|ALL' in header or 'NSE' in header:
                                 unified_entry = entry_data
-                            
-                            if ('COMMODITIES' in header or 'MCX' in header) and effective_avail > 0:
-                                best_entry = entry_data
-                                best_avail = effective_avail
-                            elif effective_avail > best_avail and best_entry is None:
-                                best_entry = entry_data
-                                best_avail = effective_avail
-                            elif best_entry is None:
-                                best_entry = entry_data
-                        
-                        # Determine if margin shift to MCX is needed
-                        mcx_avail = mcx_entry.get("available_margin", 0.0)
-                        unified_avail = unified_entry.get("available_margin", 0.0)
-                        shift_needed = bool(unified_avail > 0 and mcx_avail <= 1000.0)
-                        shift_msg = f"₹{unified_avail:,.2f} in Unified account — shift funds to MCX segment before executing commodity trades" if shift_needed else ""
-                        
-                        chosen = best_entry or unified_entry or mcx_entry
+
+                        # Compute True Usable Broker RMS Limit
+                        mcx_gross = mcx_entry.get("gross_cash", 0.0)
+                        mcx_net_cash = mcx_entry.get("available_margin", 0.0)
+                        mcx_hold = mcx_entry.get("broker_hold", 0.0)
+                        unified_net_cash = unified_entry.get("available_margin", 0.0)
+
+                        if unified_net_cash > 0 and mcx_net_cash > 0:
+                            broker_rms_limit = min(mcx_net_cash, unified_net_cash)
+                            broker_hold_total = max(mcx_hold, max(0.0, mcx_gross - unified_net_cash))
+                        elif unified_net_cash > 0:
+                            broker_rms_limit = unified_net_cash
+                            broker_hold_total = mcx_hold
+                        elif mcx_net_cash > 0:
+                            broker_rms_limit = mcx_net_cash
+                            broker_hold_total = mcx_hold
+                        elif mcx_gross > 0:
+                            broker_rms_limit = max(0.0, mcx_gross - mcx_hold)
+                            broker_hold_total = mcx_hold
+                        else:
+                            broker_rms_limit = 0.0
+                            broker_hold_total = 0.0
+
+                        active_margin_used = max(overall_margin_used, mcx_entry.get("margin_used", 0.0), unified_entry.get("margin_used", 0.0))
+                        active_collateral = max(overall_collateral, mcx_entry.get("total_collateral", 0.0), unified_entry.get("total_collateral", 0.0))
+
+                        # Net free headroom after active positions
+                        true_free_headroom = max(0.0, broker_rms_limit - active_margin_used)
+
+                        # Utilization percentage against the true usable limit
+                        if broker_rms_limit > 0:
+                            util_pct = min(100.0, round((active_margin_used / broker_rms_limit) * 100, 1))
+                        else:
+                            util_pct = 0.0
+
+                        # Determine Margin Health Status
+                        if broker_rms_limit <= 0 or true_free_headroom <= 0:
+                            health_status = "CRITICAL"
+                        else:
+                            free_pct = (true_free_headroom / broker_rms_limit) * 100
+                            if free_pct >= 30.0:
+                                health_status = "HEALTHY"
+                            elif free_pct >= 10.0:
+                                health_status = "WARNING"
+                            else:
+                                health_status = "CRITICAL"
+
+                        # Determine if cross-segment margin shift is needed
+                        shift_needed = bool(unified_net_cash > 0 and mcx_net_cash <= 1000.0)
+                        shift_msg = f"₹{unified_net_cash:,.2f} in Unified account — shift funds to MCX segment before executing commodity trades" if shift_needed else ""
+
+                        total_acct_val = max(broker_rms_limit + active_collateral, mcx_entry.get("total_account_value", 0.0))
+
                         return {
-                            "available_margin": chosen.get("available_margin", 0.0),
-                            "margin_used": chosen.get("margin_used", 0.0),
-                            "total_collateral": chosen.get("total_collateral", 0.0),
-                            "net_margin_available": chosen.get("net_margin_available", 0.0),
-                            "cash_available": chosen.get("cash_available", 0.0),
-                            "pay_in_amount": chosen.get("pay_in_amount", 0.0),
-                            "total_account_value": chosen.get("total_account_value", 0.0),
+                            "available_margin": broker_rms_limit,
+                            "broker_rms_limit": broker_rms_limit,
+                            "gross_mcx_cash": mcx_gross,
+                            "broker_hold_amount": broker_hold_total,
+                            "has_broker_hold": bool(broker_hold_total > 0),
+                            "margin_used": active_margin_used,
+                            "total_collateral": active_collateral,
+                            "net_margin_available": true_free_headroom,
+                            "free_headroom": true_free_headroom,
+                            "cash_available": broker_rms_limit,
+                            "pay_in_amount": mcx_entry.get("pay_in_amount", 0.0),
+                            "total_account_value": total_acct_val,
+                            "margin_utilization_pct": util_pct,
+                            "margin_health_status": health_status,
                             "mcx_margin": dict(mcx_entry),
                             "unified_margin": dict(unified_entry),
                             "shift_margin_needed": shift_needed,
@@ -1724,13 +1796,24 @@ def get_margin_telemetry():
             pass
 
     return {
-        "available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0,
-        "net_margin_available": 0.0, "total_account_value": 0.0,
+        "available_margin": 0.0,
+        "broker_rms_limit": 0.0,
+        "gross_mcx_cash": 0.0,
+        "broker_hold_amount": 0.0,
+        "has_broker_hold": False,
+        "margin_used": 0.0,
+        "total_collateral": 0.0,
+        "net_margin_available": 0.0,
+        "free_headroom": 0.0,
+        "total_account_value": 0.0,
+        "margin_utilization_pct": 0.0,
+        "margin_health_status": "CRITICAL",
         "mcx_margin": {"available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0, "net_margin_available": 0.0, "cash_available": 0.0, "pay_in_amount": 0.0, "total_account_value": 0.0},
         "unified_margin": {"available_margin": 0.0, "margin_used": 0.0, "total_collateral": 0.0, "net_margin_available": 0.0, "cash_available": 0.0, "pay_in_amount": 0.0, "total_account_value": 0.0},
         "shift_margin_needed": False,
         "shift_margin_message": "",
-        "is_simulated": False, "error": "Margin API Unavailable from Broker Feed"
+        "is_simulated": False,
+        "error": "Margin API Unavailable from Broker Feed"
     }
 
 def get_positions_telemetry():

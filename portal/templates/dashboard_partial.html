@@ -190,53 +190,68 @@
             </div>
         </div>
 
-        <!-- 3. Broker Margin & Daily Notional Progress -->
+        <!-- 3. Broker Margin & True Usable Headroom -->
         <div class="space-y-2 text-xs">
-            <div class="grid grid-cols-2 gap-3">
-                <!-- MCX Commodity Margin Block -->
-                {% set mcx_avail = c.mcx_margin.available_margin if (c.mcx_margin and c.mcx_margin.available_margin is defined and c.mcx_margin.available_margin is not none) else 0.0 %}
-                {% set mcx_used = c.mcx_margin.margin_used if (c.mcx_margin and c.mcx_margin.margin_used is defined and c.mcx_margin.margin_used is not none) else (c.margin_used or 0.0) %}
-                {% set uni_avail = c.unified_margin.available_margin if (c.unified_margin and c.unified_margin.available_margin is defined and c.unified_margin.available_margin is not none) else (c.available_margin or 0.0) %}
-                {% set uni_payin = c.unified_margin.pay_in_amount if (c.unified_margin and c.unified_margin.pay_in_amount is defined and c.unified_margin.pay_in_amount is not none) else 0.0 %}
-                
-                <div class="bg-slate-950/60 border {% if (mcx_avail or 0) > 0 %}border-emerald-500/30{% else %}border-bordercolor/80{% endif %} rounded-xl p-3 space-y-1">
-                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
-                        <span class="flex items-center gap-1">
-                            <span class="w-1.5 h-1.5 rounded-full {% if (mcx_avail or 0) > 0 %}bg-emerald-400{% else %}bg-slate-600{% endif %}"></span>
-                            MCX Margin
-                        </span>
-                        <span class="text-slate-400 font-mono text-[9px]">Commodity</span>
-                    </div>
-                    <div class="font-mono {% if (mcx_avail or 0) > 0 %}text-emerald-300 font-bold{% else %}text-slate-400{% endif %} text-sm">
-                        ₹{{ mcx_avail|inr }}
-                    </div>
-                    <div class="text-[10px] text-slate-400 font-mono truncate">Used: ₹{{ mcx_used|inr }}</div>
-                </div>
+            {% set c_usable = c.broker_rms_limit if (c.broker_rms_limit is defined and c.broker_rms_limit is not none and c.broker_rms_limit > 0) else (c.available_margin or 0.0) %}
+            {% set c_used = c.margin_used or 0.0 %}
+            {% set c_free = c.free_headroom if (c.free_headroom is defined and c.free_headroom is not none) else (c.net_margin_available or 0.0) %}
+            {% set c_hold = c.broker_hold_amount if (c.broker_hold_amount is defined and c.broker_hold_amount is not none) else 0.0 %}
+            {% set c_has_hold = c.has_broker_hold or (c_hold > 0) %}
 
-                <!-- Unified / All Segments Margin Block -->
-                <div class="bg-slate-950/60 border border-bordercolor/80 rounded-xl p-3 space-y-1">
+            <div class="grid grid-cols-2 gap-3">
+                <!-- Usable Broker RMS Limit -->
+                <div class="bg-slate-950/60 border border-cyan-500/30 rounded-xl p-3 space-y-1">
                     <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
                         <span class="flex items-center gap-1">
                             <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
-                            Unified / All
+                            Usable Limit
                         </span>
-                        <span class="text-cyan-400 font-mono text-[9px]">UPI / Eq</span>
+                        <span class="text-cyan-400 font-mono text-[9px]">RMS</span>
                     </div>
                     <div class="font-mono text-cyan-300 font-bold text-sm">
-                        ₹{{ uni_avail|inr }}
+                        ₹{{ c_usable|inr }}
                     </div>
-                    <div class="text-[10px] text-slate-400 font-mono truncate">Pay-In: ₹{{ uni_payin|inr }}</div>
+                    <div class="text-[10px] text-slate-400 font-mono truncate">Used: ₹{{ c_used|inr }}</div>
+                </div>
+
+                <!-- Free Trading Headroom -->
+                <div class="bg-slate-950/60 border {% if c_free <= 1000 %}border-rose-500/50{% elif c_free <= 25000 %}border-amber-500/40{% else %}border-emerald-500/30{% endif %} rounded-xl p-3 space-y-1">
+                    <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between">
+                        <span class="flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full {% if c_free <= 1000 %}bg-rose-400{% elif c_free <= 25000 %}bg-amber-400{% else %}bg-emerald-400{% endif %}"></span>
+                            Free Headroom
+                        </span>
+                        <span class="{% if c_free <= 1000 %}text-rose-400{% elif c_free <= 25000 %}text-amber-400{% else %}text-emerald-400{% endif %} font-mono text-[9px]">Cash</span>
+                    </div>
+                    <div class="font-mono {% if c_free <= 1000 %}text-rose-400{% elif c_free <= 25000 %}text-amber-400{% else %}text-emerald-400{% endif %} font-bold text-sm">
+                        ₹{{ c_free|inr }}
+                    </div>
+                    <div class="text-[10px] text-slate-400 font-mono truncate">
+                        {% if c_has_hold %}
+                            <span class="text-rose-400 font-bold">-₹{{ c_hold|inr }} Hold</span>
+                        {% else %}
+                            <span class="text-emerald-400">No Holds</span>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
 
-            <!-- Smart Margin Shift Alert Banner -->
-            {% if c.shift_margin_needed %}
-            <div class="bg-amber-950/70 border border-amber-500/50 text-amber-300 px-3 py-2 rounded-xl text-[11px] font-mono flex items-center justify-between shadow-sm animate-pulse">
+            <!-- Dedicated Broker Hold Alert Banner -->
+            {% if c_has_hold %}
+            <div class="bg-amber-950/70 border border-amber-500/50 text-amber-300 px-3 py-2 rounded-xl text-[11px] font-mono flex items-center justify-between shadow-sm">
                 <span class="flex items-center gap-1.5">
-                    <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-400 shrink-0"></i>
-                    <span><strong>Shift to MCX:</strong> ₹{{ uni_avail|inr }} in Unified</span>
+                    <i data-lucide="shield-alert" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                    <span><strong>Broker Hold:</strong> -₹{{ c_hold|inr }}</span>
                 </span>
-                <span class="text-[10px] text-amber-400/80 font-sans font-semibold">Action Required</span>
+                <span class="text-[10px] text-amber-400/80 font-sans font-semibold">Capped at ₹{{ c_usable|inr }}</span>
+            </div>
+            {% elif c.shift_margin_needed %}
+            <div class="bg-blue-950/70 border border-blue-500/50 text-blue-300 px-3 py-2 rounded-xl text-[11px] font-mono flex items-center justify-between shadow-sm">
+                <span class="flex items-center gap-1.5">
+                    <i data-lucide="arrow-right-left" class="w-4 h-4 text-blue-400 shrink-0"></i>
+                    <span><strong>Shift to MCX:</strong> Fund Commodity</span>
+                </span>
+                <span class="text-[10px] text-blue-400/80 font-sans font-semibold">Action Required</span>
             </div>
             {% endif %}
         </div>
@@ -441,19 +456,39 @@
                     <td class="px-4 py-3 text-right text-slate-300">
                         ₹{{ c.realized_pnl|inr }}
                     </td>
-                    <td class="px-4 py-3 text-right">
-                        {% set t_mcx = c.mcx_margin.available_margin if (c.mcx_margin and c.mcx_margin.available_margin is defined and c.mcx_margin.available_margin is not none) else 0.0 %}
-                        {% set t_uni = c.unified_margin.available_margin if (c.unified_margin and c.unified_margin.available_margin is defined and c.unified_margin.available_margin is not none) else (c.available_margin or 0.0) %}
-                        <div class="font-mono text-xs font-bold {% if (t_mcx or 0) > 0 %}text-emerald-400{% else %}text-slate-400{% endif %}">
-                            MCX: ₹{{ t_mcx|inr(0) }}
+                    <td class="px-4 py-3 text-right font-mono">
+                        {% set d_usable = c.broker_rms_limit if (c.broker_rms_limit is defined and c.broker_rms_limit is not none and c.broker_rms_limit > 0) else (c.available_margin or 0.0) %}
+                        {% set d_free = c.free_headroom if (c.free_headroom is defined and c.free_headroom is not none) else (c.net_margin_available or 0.0) %}
+                        {% set d_hold = c.broker_hold_amount if (c.broker_hold_amount is defined and c.broker_hold_amount is not none) else 0.0 %}
+                        {% set d_has_hold = c.has_broker_hold or (d_hold > 0) %}
+                        
+                        <div class="flex items-center justify-end gap-1.5">
+                            {% if c.margin_health_status == "HEALTHY" %}
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400" title="Healthy Margin (>30% free)"></span>
+                            {% elif c.margin_health_status == "WARNING" %}
+                                <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" title="Tight Margin Headroom (10-30% free)"></span>
+                            {% else %}
+                                <span class="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" title="Critical Margin Headroom (<10% free)"></span>
+                            {% endif %}
+                            <span class="font-bold text-xs text-slate-100">
+                                ₹{{ d_usable|inr(0) }}
+                            </span>
                         </div>
-                        <div class="font-mono text-[11px] text-cyan-400/80">
-                            Uni: ₹{{ t_uni|inr(0) }}
+                        <div class="text-[11px] {% if d_free <= 1000 %}text-rose-400 font-bold{% elif d_free <= 25000 %}text-amber-400{% else %}text-emerald-400/90{% endif %}">
+                            Free: ₹{{ d_free|inr(0) }}
                         </div>
-                        {% if c.shift_margin_needed %}
-                        <span class="inline-block bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] px-1 rounded mt-0.5 font-mono">
-                            ⚠️ Shift Req
-                        </span>
+                        {% if d_has_hold %}
+                        <div class="mt-0.5">
+                            <span class="inline-flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[9px] px-1.5 py-0.2 rounded font-mono" title="Broker RMS Hold / Debit: -₹{{ d_hold|inr }}">
+                                ⚠️ Hold: -₹{{ d_hold|inr(0) }}
+                            </span>
+                        </div>
+                        {% elif c.shift_margin_needed %}
+                        <div class="mt-0.5">
+                            <span class="inline-block bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[9px] px-1 rounded font-mono">
+                                🔄 Shift Req
+                            </span>
+                        </div>
                         {% endif %}
                     </td>
                     <td class="px-3 py-3 text-center font-bold text-slate-200">

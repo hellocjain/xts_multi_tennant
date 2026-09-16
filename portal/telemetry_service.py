@@ -44,6 +44,13 @@ def build_client_telemetry_dict(
     unified_margin: dict = None,
     shift_margin_needed: bool = False,
     shift_margin_message: str = "",
+    broker_rms_limit: float = 0.0,
+    gross_mcx_cash: float = 0.0,
+    broker_hold_amount: float = 0.0,
+    has_broker_hold: bool = False,
+    free_headroom: float = 0.0,
+    margin_utilization_pct: float = 0.0,
+    margin_health_status: str = "HEALTHY",
     error: str = None
 ) -> dict:
     pos_list = positions or []
@@ -80,10 +87,17 @@ def build_client_telemetry_dict(
         "closed_positions": closed_pos_list,
         "holdings": holdings_dict,
         "available_margin": float(available_margin or 0.0),
+        "broker_rms_limit": float(broker_rms_limit or available_margin or 0.0),
+        "gross_mcx_cash": float(gross_mcx_cash or (mcx_dict.get("cash_available", 0.0) if mcx_dict else 0.0) or 0.0),
+        "broker_hold_amount": float(broker_hold_amount or 0.0),
+        "has_broker_hold": bool(has_broker_hold or (broker_hold_amount and broker_hold_amount > 0)),
         "margin_used": float(margin_used or 0.0),
         "total_collateral": float(total_collateral or 0.0),
         "net_margin_available": float(net_margin_available or 0.0),
+        "free_headroom": float(free_headroom or net_margin_available or 0.0),
         "total_account_value": float(total_account_value or 0.0),
+        "margin_utilization_pct": float(margin_utilization_pct or margin_pct or 0.0),
+        "margin_health_status": str(margin_health_status or "HEALTHY"),
         "mcx_margin": mcx_dict,
         "unified_margin": unified_dict,
         "shift_margin_needed": bool(shift_margin_needed),
@@ -192,11 +206,17 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
 
     # Margin Metrics
     avail_margin = float(margin.get("available_margin", 0.0))
+    broker_rms_limit = float(margin.get("broker_rms_limit", avail_margin))
+    gross_mcx_cash = float(margin.get("gross_mcx_cash", margin.get("mcx_margin", {}).get("cash_available", 0.0)))
+    broker_hold_amt = float(margin.get("broker_hold_amount", 0.0))
+    has_hold = bool(margin.get("has_broker_hold", broker_hold_amt > 0))
     margin_used = float(margin.get("margin_used", 0.0))
     collateral = float(margin.get("total_collateral", 0.0))
     net_avail = float(margin.get("net_margin_available", 0.0))
+    free_head = float(margin.get("free_headroom", net_avail))
     tot_val = float(margin.get("total_account_value", 0.0))
-    margin_pct = min(100.0, round((margin_used / tot_val) * 100, 1)) if tot_val > 0 else 0.0
+    margin_pct = float(margin.get("margin_utilization_pct", min(100.0, round((margin_used / broker_rms_limit) * 100, 1)) if broker_rms_limit > 0 else (round((margin_used / tot_val) * 100, 1) if tot_val > 0 else 0.0)))
+    health_status = str(margin.get("margin_health_status", "HEALTHY"))
 
     holdings = data.get("holdings", {})
     all_pos = pos.get("all_positions", pos.get("positions", []))
@@ -218,10 +238,17 @@ async def fetch_single_client_telemetry(client_session: httpx.AsyncClient, tenan
         closed_positions=closed_pos,
         holdings=holdings,
         available_margin=avail_margin,
+        broker_rms_limit=broker_rms_limit,
+        gross_mcx_cash=gross_mcx_cash,
+        broker_hold_amount=broker_hold_amt,
+        has_broker_hold=has_hold,
         margin_used=margin_used,
         total_collateral=collateral,
         net_margin_available=net_avail,
+        free_headroom=free_head,
         total_account_value=tot_val,
+        margin_utilization_pct=margin_pct,
+        margin_health_status=health_status,
         mcx_margin=margin.get("mcx_margin", {}),
         unified_margin=margin.get("unified_margin", {}),
         shift_margin_needed=bool(margin.get("shift_margin_needed", False)),

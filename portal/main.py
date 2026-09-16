@@ -73,6 +73,8 @@ templates.env.filters["inr"] = format_inr
 templates.env.filters["num"] = lambda v: format_inr(v, decimals=0)
 templates.env.filters["abs"] = lambda v: abs(float(v)) if v is not None else 0.0
 templates.env.filters["epoch_to_ist"] = format_epoch_to_ist
+templates.env.globals["min"] = min
+templates.env.globals["max"] = max
 
 DOMAIN_NAME = os.environ.get("DOMAIN_NAME", "trading.yourdomain.com")
 

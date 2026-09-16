@@ -588,63 +588,167 @@
     <!-- TAB 3: Risk & RMS Margin -->
     <div id="client-tab-risk" class="tab-pane hidden space-y-5">
         <!-- 1. Symphony RMS Broker Margin Balances (Segment-Wise Breakdown) -->
-        <div class="bg-cardbg border border-bordercolor p-6 rounded-2xl space-y-4 shadow-xl">
+        <div class="bg-cardbg border border-bordercolor p-6 rounded-2xl space-y-5 shadow-xl">
             <div class="flex items-center justify-between border-b border-bordercolor pb-3">
                 <div class="flex items-center space-x-2">
                     <i data-lucide="wallet" class="w-4 h-4 text-brand-400"></i>
-                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Symphony XTS RMS Margin Balances (Segment Breakdown)</h3>
+                    <h3 class="font-bold text-sm text-slate-100 uppercase tracking-wider">Symphony XTS RMS Margin Balances & Health</h3>
                 </div>
-                <span class="text-xs font-mono text-brand-400">{{ client.margin_pct|num }}% Margin Utilized</span>
+                <div class="flex items-center gap-2">
+                    {% if client.margin_health_status == "HEALTHY" %}
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Healthy Margin
+                        </span>
+                    {% elif client.margin_health_status == "WARNING" %}
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">
+                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Tight Headroom
+                        </span>
+                    {% else %}
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse">
+                            <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> Critical Shortfall
+                        </span>
+                    {% endif %}
+                    <span class="text-xs font-mono text-slate-400">({{ client.margin_utilization_pct or client.margin_pct|num }}% Used)</span>
+                </div>
             </div>
 
-            {% set c_mcx_avail = client.mcx_margin.available_margin if (client.mcx_margin and client.mcx_margin.available_margin is defined and client.mcx_margin.available_margin is not none) else 0.0 %}
-            {% set c_mcx_used = client.mcx_margin.margin_used if (client.mcx_margin and client.mcx_margin.margin_used is defined and client.mcx_margin.margin_used is not none) else (client.margin_used or 0.0) %}
-            {% set c_mcx_collat = client.mcx_margin.total_collateral if (client.mcx_margin and client.mcx_margin.total_collateral is defined and client.mcx_margin.total_collateral is not none) else (client.total_collateral or 0.0) %}
-            {% set c_uni_avail = client.unified_margin.available_margin if (client.unified_margin and client.unified_margin.available_margin is defined and client.unified_margin.available_margin is not none) else (client.available_margin or 0.0) %}
-            {% set c_uni_payin = client.unified_margin.pay_in_amount if (client.unified_margin and client.unified_margin.pay_in_amount is defined and client.unified_margin.pay_in_amount is not none) else 0.0 %}
-            {% set c_uni_total = client.unified_margin.total_account_value if (client.unified_margin and client.unified_margin.total_account_value is defined and client.unified_margin.total_account_value is not none) else (client.total_account_value or 0.0) %}
+            {% set c_usable = client.broker_rms_limit if (client.broker_rms_limit is defined and client.broker_rms_limit is not none and client.broker_rms_limit > 0) else (client.available_margin or 0.0) %}
+            {% set c_used = client.margin_used or 0.0 %}
+            {% set c_free = client.free_headroom if (client.free_headroom is defined and client.free_headroom is not none) else (client.net_margin_available or 0.0) %}
+            {% set c_mcx_gross = client.gross_mcx_cash if (client.gross_mcx_cash is defined and client.gross_mcx_cash is not none and client.gross_mcx_cash > 0) else (client.mcx_margin.cash_available if (client.mcx_margin and client.mcx_margin.cash_available is defined) else c_usable) %}
+            {% set c_hold = client.broker_hold_amount if (client.broker_hold_amount is defined and client.broker_hold_amount is not none) else 0.0 %}
+            {% set c_has_hold = client.has_broker_hold or (c_hold > 0) %}
+            {% set c_free_pct = (((c_free / c_usable) * 100)|round(1)) if c_usable > 0 else 0.0 %}
+            {% set c_used_pct = (((c_used / c_usable) * 100)|round(1)) if c_usable > 0 else 0.0 %}
 
-            <!-- Smart Shift Alert Banner -->
-            {% if client.shift_margin_needed %}
-            <div class="bg-amber-950/80 border border-amber-500/50 text-amber-300 p-4 rounded-xl text-xs font-mono flex items-start gap-3 shadow-md">
-                <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400 shrink-0 mt-0.5 animate-bounce"></i>
+            <!-- Dedicated Broker Hold / Negative Notional Alert Banner -->
+            {% if c_has_hold %}
+            <div class="bg-amber-950/80 border border-amber-500/50 text-amber-300 p-4 rounded-xl text-xs font-mono flex items-start gap-3 shadow-lg">
+                <i data-lucide="shield-alert" class="w-5 h-5 text-amber-400 shrink-0 mt-0.5"></i>
                 <div class="space-y-1">
-                    <div class="font-bold text-amber-200 text-sm">Action Required: Margin Shift Needed for MCX Trading</div>
+                    <div class="font-bold text-amber-200 text-sm flex items-center gap-2">
+                        <span>⚠️ Broker RMS Hold / Cross-Segment Offset Detected</span>
+                        <span class="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-[10px]">-₹{{ c_hold|inr }}</span>
+                    </div>
                     <p class="text-slate-300 font-sans text-xs">
-                        This client account has <strong class="text-cyan-300 font-mono">₹{{ c_uni_avail|inr }}</strong> in the Unified/Equity balance pool, but only <strong class="text-rose-400 font-mono">₹{{ c_mcx_avail|inr }}</strong> allocated to the MCX Commodity segment. Please shift funds to MCX in the broker portal before executing commodity strategies to prevent order rejections.
+                        Your MCX commodity ledger has gross cash of <strong class="text-emerald-400 font-mono">₹{{ c_mcx_gross|inr }}</strong>, but the broker's Risk Management System (RMS) is holding <strong class="text-rose-400 font-mono">₹{{ c_hold|inr }}</strong> across segments (Notional Cash debit / cross-segment hold). 
+                        Your <strong>true usable trading limit</strong> is strictly enforced at <strong class="text-cyan-300 font-mono">₹{{ c_usable|inr }}</strong>. Contact your broker to clear this hold if you wish to trade the full MCX balance.
                     </p>
                 </div>
             </div>
             {% endif %}
 
+            <!-- Smart Shift Alert Banner (If Funds in Unified but MCX is Empty) -->
+            {% if client.shift_margin_needed and not c_has_hold %}
+            <div class="bg-blue-950/80 border border-blue-500/50 text-blue-300 p-4 rounded-xl text-xs font-mono flex items-start gap-3 shadow-md">
+                <i data-lucide="arrow-right-left" class="w-5 h-5 text-blue-400 shrink-0 mt-0.5 animate-pulse"></i>
+                <div class="space-y-1">
+                    <div class="font-bold text-blue-200 text-sm">Action Required: Shift Funds to MCX Segment</div>
+                    <p class="text-slate-300 font-sans text-xs">
+                        {{ client.shift_margin_message or "Please shift funds to the MCX segment in the broker portal before executing commodity strategies." }}
+                    </p>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- 4-Card Transparent Metrics Grid -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <!-- Card 1: True Usable Margin (RMS Limit) -->
+                <div class="bg-slate-950/80 border border-cyan-500/30 p-4 rounded-xl space-y-1">
+                    <div class="flex items-center justify-between text-slate-400 text-xs uppercase font-bold">
+                        <span>True Usable Limit</span>
+                        <i data-lucide="shield-check" class="w-3.5 h-3.5 text-cyan-400"></i>
+                    </div>
+                    <div class="text-xl font-bold font-mono text-cyan-300">₹{{ c_usable|inr }}</div>
+                    <div class="text-[10px] text-slate-400">Enforced by broker RMS</div>
+                </div>
+
+                <!-- Card 2: Active Margin Utilized -->
+                <div class="bg-slate-950/80 border border-bordercolor p-4 rounded-xl space-y-1">
+                    <div class="flex items-center justify-between text-slate-400 text-xs uppercase font-bold">
+                        <span>Margin In Use</span>
+                        <i data-lucide="lock" class="w-3.5 h-3.5 text-amber-400"></i>
+                    </div>
+                    <div class="text-xl font-bold font-mono text-amber-400">₹{{ c_used|inr }}</div>
+                    <div class="text-[10px] text-slate-400">{{ c_used_pct }}% of usable limit</div>
+                </div>
+
+                <!-- Card 3: Free Trading Headroom -->
+                <div class="bg-slate-950/80 border {% if c_free <= 1000 %}border-rose-500/50{% elif c_free <= 25000 %}border-amber-500/40{% else %}border-emerald-500/30{% endif %} p-4 rounded-xl space-y-1">
+                    <div class="flex items-center justify-between text-slate-400 text-xs uppercase font-bold">
+                        <span>Free Headroom</span>
+                        <i data-lucide="zap" class="w-3.5 h-3.5 {% if c_free <= 1000 %}text-rose-400{% elif c_free <= 25000 %}text-amber-400{% else %}text-emerald-400{% endif %}"></i>
+                    </div>
+                    <div class="text-xl font-bold font-mono {% if c_free <= 1000 %}text-rose-400{% elif c_free <= 25000 %}text-amber-400{% else %}text-emerald-400{% endif %}">
+                        ₹{{ c_free|inr }}
+                    </div>
+                    <div class="text-[10px] text-slate-400">{{ c_free_pct }}% unblocked cash</div>
+                </div>
+
+                <!-- Card 4: Gross MCX Ledger / Broker Hold -->
+                <div class="bg-slate-950/80 border border-bordercolor p-4 rounded-xl space-y-1">
+                    <div class="flex items-center justify-between text-slate-400 text-xs uppercase font-bold">
+                        <span>Gross MCX Ledger</span>
+                        <i data-lucide="landmark" class="w-3.5 h-3.5 text-slate-400"></i>
+                    </div>
+                    <div class="text-xl font-bold font-mono text-slate-200">₹{{ c_mcx_gross|inr }}</div>
+                    <div class="text-[10px] font-mono">
+                        {% if c_has_hold %}
+                            <span class="text-rose-400 font-bold">-₹{{ c_hold|inr }} Hold</span>
+                        {% else %}
+                            <span class="text-emerald-400">100% Usable</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic Segmented Margin Health Bar -->
+            <div class="bg-slate-950/60 border border-bordercolor/60 p-4 rounded-xl space-y-2">
+                <div class="flex justify-between items-center text-xs font-mono">
+                    <div class="flex items-center gap-3">
+                        <span class="flex items-center gap-1.5 text-amber-400">
+                            <span class="w-2.5 h-2.5 rounded-sm bg-amber-500"></span> Utilized: ₹{{ c_used|inr }} ({{ c_used_pct }}%)
+                        </span>
+                        <span class="flex items-center gap-1.5 text-emerald-400">
+                            <span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span> Free: ₹{{ c_free|inr }} ({{ c_free_pct }}%)
+                        </span>
+                    </div>
+                    <span class="text-slate-400">Limit: ₹{{ c_usable|inr }}</span>
+                </div>
+                <div class="w-full bg-slate-900 rounded-full h-3 flex overflow-hidden border border-bordercolor">
+                    <div class="h-3 bg-amber-500 transition-all duration-500" style="width: {{ c_used_pct if c_used_pct <= 100 else 100 }}%" title="Margin Used: {{ c_used_pct }}%"></div>
+                    <div class="h-3 bg-emerald-500 transition-all duration-500" style="width: {{ c_free_pct if c_free_pct <= 100 else 100 }}%" title="Free Headroom: {{ c_free_pct }}%"></div>
+                </div>
+            </div>
+
             <!-- 2-Column Segment Pool Breakdown -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- Column 1: MCX Commodity Segment Pool -->
-                <div class="bg-slate-950/80 border {% if (c_mcx_avail or 0) > 0 %}border-emerald-500/40{% else %}border-slate-800{% endif %} p-4 rounded-xl space-y-3">
+                <div class="bg-slate-950/80 border {% if (c_mcx_gross or 0) > 0 %}border-emerald-500/40{% else %}border-slate-800{% endif %} p-4 rounded-xl space-y-3">
                     <div class="flex items-center justify-between border-b border-bordercolor pb-2">
                         <span class="flex items-center gap-1.5 text-xs font-bold text-slate-200 uppercase tracking-wider">
-                            <span class="w-2 h-2 rounded-full {% if (c_mcx_avail or 0) > 0 %}bg-emerald-400{% else %}bg-slate-600{% endif %}"></span>
+                            <span class="w-2 h-2 rounded-full {% if (c_mcx_gross or 0) > 0 %}bg-emerald-400{% else %}bg-slate-600{% endif %}"></span>
                             MCX Commodity Pool
                         </span>
                         <span class="text-[10px] bg-slate-900 text-slate-400 px-2 py-0.5 rounded font-mono">COMMODITIES|MCX</span>
                     </div>
                     <div class="grid grid-cols-3 gap-2 text-center">
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
-                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Available</span>
-                            <span class="font-mono text-sm font-bold {% if (c_mcx_avail or 0) > 0 %}text-emerald-400{% else %}text-slate-400{% endif %}">
-                                ₹{{ c_mcx_avail|inr }}
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Gross Cash</span>
+                            <span class="font-mono text-sm font-bold text-emerald-400">
+                                ₹{{ c_mcx_gross|inr }}
                             </span>
                         </div>
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
-                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Blocked/Used</span>
-                            <span class="font-mono text-sm font-bold text-amber-400">
-                                ₹{{ c_mcx_used|inr }}
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Notional Hold</span>
+                            <span class="font-mono text-sm font-bold {% if c_has_hold %}text-rose-400{% else %}text-slate-400{% endif %}">
+                                {% if c_has_hold %}-₹{{ c_hold|inr }}{% else %}₹0{% endif %}
                             </span>
                         </div>
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
                             <span class="text-[9px] text-slate-400 uppercase font-bold block">Collateral</span>
                             <span class="font-mono text-sm font-bold text-slate-300">
-                                ₹{{ c_mcx_collat|inr }}
+                                ₹{{ (client.total_collateral or client.mcx_margin.total_collateral or 0.0)|inr }}
                             </span>
                         </div>
                     </div>
@@ -661,36 +765,24 @@
                     </div>
                     <div class="grid grid-cols-3 gap-2 text-center">
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
-                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Net Available</span>
+                            <span class="text-[9px] text-slate-400 uppercase font-bold block">Unified Limit</span>
                             <span class="font-mono text-sm font-bold text-cyan-400">
-                                ₹{{ c_uni_avail|inr }}
+                                ₹{{ (client.unified_margin.available_margin or c_usable)|inr }}
                             </span>
                         </div>
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
                             <span class="text-[9px] text-slate-400 uppercase font-bold block">Pay-In Amount</span>
                             <span class="font-mono text-sm font-bold text-slate-300">
-                                ₹{{ c_uni_payin|inr }}
+                                ₹{{ (client.unified_margin.pay_in_amount or 0.0)|inr }}
                             </span>
                         </div>
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
                             <span class="text-[9px] text-slate-400 uppercase font-bold block">Total Account</span>
                             <span class="font-mono text-sm font-bold text-slate-300">
-                                ₹{{ c_uni_total|inr }}
+                                ₹{{ (client.unified_margin.total_account_value or client.total_account_value or 0.0)|inr }}
                             </span>
                         </div>
                     </div>
-                </div>
-            </div>
-
-            <!-- Margin Progress Bar -->
-            <div class="space-y-1.5 pt-2">
-                <div class="flex justify-between text-xs text-slate-400 font-mono">
-                    <span>Overall Margin Utilization: ₹{{ client.margin_used|inr }} of ₹{{ client.total_account_value|inr }}</span>
-                    <span>{{ client.margin_pct|num }}%</span>
-                </div>
-                <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-bordercolor">
-                    <div class="h-2 rounded-full {% if (client.margin_pct or 0) >= 85 %}bg-rose-500{% elif (client.margin_pct or 0) >= 65 %}bg-amber-500{% else %}bg-emerald-500{% endif %}" 
-                         style="width: {{ (client.margin_pct or 0) }}%"></div>
                 </div>
             </div>
         </div>
