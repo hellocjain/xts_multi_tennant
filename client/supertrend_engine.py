@@ -60,39 +60,39 @@ IST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: Optional[float] = None, force_check: bool = False) -> bool:
     """
     Evaluates whether the specified Indian exchange segment is currently open for trading.
-    - Indian Standard Time (IST) = UTC+5:30
-    - Monday to Friday only (weekday 0-4). Saturday (5) & Sunday (6) are strictly closed.
-    - MCX (MCXFO, MCXCOM): 09:00:00 to 23:55:00 IST (covers standard and US DST sessions)
-    - NSE/BSE (NSEFO, NSECM, BSEFO, BSECM): 09:15:00 to 15:30:00 IST
-    - Respects config.ENFORCE_MARKET_HOURS.
+    Delegates to config.is_market_open_ist for session-aware holiday checking.
     """
+    if config is not None and hasattr(config, "is_market_open_ist"):
+        return config.is_market_open_ist(exch_seg, now_ts=now_ts, force_check=force_check)
+
     if not force_check and config is not None and not getattr(config, "ENFORCE_MARKET_HOURS", True):
         return True
 
-    # In automated test runs without explicit market hour enforcement, allow bypass
     if not force_check and "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_MARKET_HOURS_IN_TESTS", "").lower() not in ("true", "1", "yes"):
         return True
 
     ts = now_ts if now_ts is not None else time.time()
     dt = datetime.datetime.fromtimestamp(ts, tz=IST_TIMEZONE)
-
-    # 1. Weekday Check (Monday = 0 ... Friday = 4; Saturday = 5, Sunday = 6)
     if dt.weekday() >= 5:
         return False
 
-    # 2. Segment-specific Trading Hours Check
     seg_upper = str(exch_seg or "").upper()
     cur_hms = (dt.hour, dt.minute, dt.second)
-
     if "MCX" in seg_upper or "COMMODITY" in seg_upper:
-        # 09:00:00 to 23:55:00 IST
         return (9, 0, 0) <= cur_hms <= (23, 55, 0)
     elif any(eq in seg_upper for eq in ("NSE", "BSE", "CM", "CASH")):
-        # 09:15:00 to 15:30:00 IST
         return (9, 15, 0) <= cur_hms <= (15, 30, 0)
     else:
-        # Default Indian broad trading hours (09:00:00 to 23:55:00 IST)
         return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+
+def is_market_opening_stabilizing(exch_seg: str = "MCXFO", now_ts: Optional[float] = None) -> bool:
+    """
+    Returns True if the market has just opened and is within the 60-second stabilization window.
+    Delegates to config.is_market_opening_stabilizing.
+    """
+    if config is not None and hasattr(config, "is_market_opening_stabilizing"):
+        return config.is_market_opening_stabilizing(exch_seg, now_ts=now_ts)
+    return False
 
 
 TIMEFRAME_SECONDS_MAP = {
@@ -434,6 +434,7 @@ class SingleSuperTrendRunner:
         # Resolved Contract Tracking (Autonomous Rollover)
         self.last_resolved_inst_id: Optional[Any] = self.active_contract_id
         self.last_resolved_symbol_desc: Optional[str] = self.active_contract_desc
+        self.pending_rollover: bool = False
 
     @property
     def virtual_position(self) -> int:
@@ -1053,6 +1054,17 @@ class SingleSuperTrendRunner:
 
                     if self.virtual_position != 0:
                         if market_open:
+                            # 60-Second Opening Bell Spread Stabilization Buffer
+                            if is_market_opening_stabilizing(exch_seg, now_ts=now_ts):
+                                self.pending_rollover = True
+                                logger.info(
+                                    f"⏳ SuperTrend [{self.symbol}]: Rollover waiting for opening spread stabilization "
+                                    f"(60s buffer until 09:01:00 / 17:01:00 IST). Preserving active contract {old_desc}."
+                                )
+                                return
+
+                            # Market is open and stabilized!
+                            self.pending_rollover = False
                             current_pos_side = self.strategy_position
                             roll_qty = abs(self.virtual_position)
                             roll_ts = int(time.time())
@@ -1088,6 +1100,7 @@ class SingleSuperTrendRunner:
                                 )
                                 self.status = "ROLLOVER_FAILED_PAUSED"
                                 self.is_enabled = False
+                                self.pending_rollover = False
                                 if hasattr(xts_api_module, "send_ops_alert"):
                                     xts_api_module.send_ops_alert(f"CRITICAL: Rollover Exit failed on {old_desc} for {self.symbol}. Strategy PAUSED.")
                                 return
@@ -1121,6 +1134,7 @@ class SingleSuperTrendRunner:
                                 self.virtual_position = 0
                                 self.status = "ROLLOVER_FAILED_PAUSED"
                                 self.is_enabled = False
+                                self.pending_rollover = False
                                 self.active_contract_id = inst_id
                                 self.active_contract_desc = inst_desc
                                 self.last_resolved_inst_id = inst_id
@@ -1143,6 +1157,7 @@ class SingleSuperTrendRunner:
                             self.active_contract_desc = inst_desc
                             self.last_resolved_inst_id = inst_id
                             self.last_resolved_symbol_desc = inst_desc
+                            self.pending_rollover = False
                             self._save_virtual_position(main_module, self.virtual_position, active_contract_id=inst_id, active_contract_desc=inst_desc)
                             # Purge cached candles & indicators so the new contract starts fresh without mixed series
                             self.cached_candles = []
@@ -1160,10 +1175,11 @@ class SingleSuperTrendRunner:
                                 xts_api_module.send_ops_alert(f"✅ Rollover Complete: {self.symbol} rolled from {old_desc} -> {inst_desc} ({self.virtual_position} lots).")
                         else:
                             # Market is CLOSED: do NOT overwrite active_contract_id!
-                            # Leave active_contract_id as old contract so rollover executes at 09:00:00 AM bell.
+                            # Leave active_contract_id as old contract so rollover executes upon market open bell.
+                            self.pending_rollover = True
                             logger.info(
                                 f"⏳ SuperTrend [{self.symbol}]: Rollover queued for {old_desc} -> {inst_desc}. "
-                                f"Market is currently closed. Will execute immediately upon market open bell."
+                                f"Market is currently closed. Will execute upon market open bell."
                             )
                     else:
                         # Position is FLAT (0 lots): seamlessly update contract pointer without trading
@@ -1172,6 +1188,7 @@ class SingleSuperTrendRunner:
                         self.active_contract_desc = inst_desc
                         self.last_resolved_inst_id = inst_id
                         self.last_resolved_symbol_desc = inst_desc
+                        self.pending_rollover = False
                         self._save_virtual_position(main_module, 0, active_contract_id=inst_id, active_contract_desc=inst_desc)
                         # Purge cached candles & indicators so the new contract starts fresh without mixed series
                         self.cached_candles = []
@@ -2565,7 +2582,8 @@ class MultiSuperTrendEngine:
                                 min_remaining = sec_rem
                             # Within 20s of candle close or within 10s after boundary (candle close confirmation window)
                             # Or if uninitialized (no cached candles yet)
-                            if sec_rem <= 20 or sec_into_bar <= 10 or not r.cached_candles:
+                            # Or if a continuous contract rollover is queued (priority dispatch upon market open)
+                            if sec_rem <= 20 or sec_into_bar <= 10 or not r.cached_candles or getattr(r, "pending_rollover", False):
                                 closing_runners.append(r)
                             else:
                                 mid_candle_runners.append(r)
@@ -2576,7 +2594,8 @@ class MultiSuperTrendEngine:
                     # 4. Adaptive Execution Branch:
                     if not market_open:
                         # Outside market hours: perform baseline cycle for any uninitialized runner
-                        uninit = [r for r in runners if not r.cached_candles]
+                        # or runner with a pending contract switch check
+                        uninit = [r for r in runners if not r.cached_candles or getattr(r, "pending_rollover", False)]
                         if uninit:
                             await asyncio.gather(*[r.evaluate_cycle(xts_api_module, main_module) for r in uninit], return_exceptions=True)
                         await asyncio.sleep(15.0)

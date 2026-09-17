@@ -12,7 +12,11 @@ if client_path not in sys.path:
 
 import config
 import xts_api
-import main as client_main
+import importlib.util
+_client_main_path = Path(__file__).parent.parent / "client" / "main.py"
+_spec = importlib.util.spec_from_file_location("client_main_isolated", _client_main_path)
+client_main = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(client_main)
 from supertrend_engine import SingleSuperTrendRunner, MultiSuperTrendEngine
 
 

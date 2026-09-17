@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import time
+from typing import Optional
 
 # If a custom data directory is mounted (e.g. /app/data), ensure it is in sys.path
 DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
@@ -83,13 +84,56 @@ import datetime
 
 IST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
-def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: float = None, force_check: bool = False) -> bool:
+# Full-Day Trading Holidays (MCX Closed for both Morning & Evening sessions: 09:00 - 23:55)
+MCX_FULL_DAY_HOLIDAYS = {
+    # 2026
+    datetime.date(2026, 1, 26),   # Republic Day
+    datetime.date(2026, 8, 15),   # Independence Day
+    datetime.date(2026, 10, 2),   # Mahatma Gandhi Jayanti
+    datetime.date(2026, 12, 25),  # Christmas
+    # 2027
+    datetime.date(2027, 1, 26),   # Republic Day
+    datetime.date(2027, 8, 15),   # Independence Day
+    datetime.date(2027, 10, 2),   # Mahatma Gandhi Jayanti
+    datetime.date(2027, 12, 25),  # Christmas
+}
+
+# Morning Session Holidays (MCX Morning Session Closed: 09:00 - 17:00 IST | Evening Session Open: 17:00 - 23:55 IST)
+MCX_MORNING_SESSION_HOLIDAYS = {
+    # 2026
+    datetime.date(2026, 2, 17),   # Mahashivratri
+    datetime.date(2026, 3, 6),    # Holi
+    datetime.date(2026, 3, 20),   # Id-Ul-Fitr
+    datetime.date(2026, 4, 3),    # Good Friday
+    datetime.date(2026, 4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
+    datetime.date(2026, 5, 1),    # Maharashtra Day
+    datetime.date(2026, 5, 27),   # Bakri Id / Eid ul-Adha
+    datetime.date(2026, 6, 26),   # Muharram
+    datetime.date(2026, 10, 20),  # Dussehra
+    datetime.date(2026, 11, 8),   # Diwali-Laxmi Pujan (Muhurat session evening only)
+    datetime.date(2026, 11, 24),  # Gurunanak Jayanti
+    # 2027
+    datetime.date(2027, 3, 22),   # Holi
+    datetime.date(2027, 3, 26),   # Good Friday
+    datetime.date(2027, 4, 14),   # Ambedkar Jayanti
+    datetime.date(2027, 5, 1),    # Maharashtra Day
+}
+
+# Unified set of all holidays (used for daylight 14:00 cutoff pullback calculations where market must be open at 14:00)
+MCX_HOLIDAYS = MCX_FULL_DAY_HOLIDAYS | MCX_MORNING_SESSION_HOLIDAYS
+
+def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: Optional[float] = None, force_check: bool = False) -> bool:
     """
     Evaluates whether the specified Indian exchange segment is currently open for trading.
     - Indian Standard Time (IST) = UTC+5:30
     - Monday to Friday only (weekday 0-4). Saturday (5) & Sunday (6) are strictly closed.
-    - MCX (MCXFO, MCXCOM): 09:00:00 to 23:55:00 IST (covers standard and US DST sessions)
-    - NSE/BSE (NSEFO, NSECM, BSEFO, BSECM): 09:15:00 to 15:30:00 IST
+    - MCX (MCXFO, MCXCOM):
+        * Standard trading days: 09:00:00 to 23:55:00 IST
+        * Morning Session Holidays: Closed 09:00:00 to 17:00:00 IST; Open 17:00:00 to 23:55:00 IST
+        * Full-Day Holidays: Closed all day (00:00:00 to 24:00:00 IST)
+    - NSE/BSE (NSEFO, NSECM, BSEFO, BSECM):
+        * Standard trading days: 09:15:00 to 15:30:00 IST
+        * Holidays: Closed all day
     - Respects config.ENFORCE_MARKET_HOURS.
     """
     if not force_check and not ENFORCE_MARKET_HOURS:
@@ -101,53 +145,61 @@ def is_market_open_ist(exch_seg: str = "MCXFO", now_ts: float = None, force_chec
 
     ts = now_ts if now_ts is not None else time.time()
     dt = datetime.datetime.fromtimestamp(ts, tz=IST_TIMEZONE)
+    d_date = dt.date()
 
     # 1. Weekday Check (Monday = 0 ... Friday = 4; Saturday = 5, Sunday = 6)
     if dt.weekday() >= 5:
         return False
 
-    # 2. Segment-specific Trading Hours Check
     seg_upper = str(exch_seg or "").upper()
     cur_hms = (dt.hour, dt.minute, dt.second)
+    is_mcx = ("MCX" in seg_upper or "COMMODITY" in seg_upper)
 
-    if "MCX" in seg_upper or "COMMODITY" in seg_upper:
-        # 09:00:00 to 23:55:00 IST
+    # 2. Segment-specific Holiday & Trading Hours Evaluation
+    if is_mcx:
+        if d_date in MCX_FULL_DAY_HOLIDAYS:
+            return False
+        if d_date in MCX_MORNING_SESSION_HOLIDAYS:
+            # Morning closed, Evening open from 17:00:00 to 23:55:00 IST
+            return (17, 0, 0) <= cur_hms <= (23, 55, 0)
+        # Standard weekday trading session
         return (9, 0, 0) <= cur_hms <= (23, 55, 0)
-    elif any(eq in seg_upper for eq in ("NSE", "BSE", "CM", "CASH")):
-        # 09:15:00 to 15:30:00 IST
-        return (9, 15, 0) <= cur_hms <= (15, 30, 0)
     else:
-        # Default Indian broad trading hours (09:00:00 to 23:55:00 IST)
-        return (9, 0, 0) <= cur_hms <= (23, 55, 0)
+        # NSE / BSE Equity & Derivatives: Closed on all Indian market holidays
+        if d_date in MCX_HOLIDAYS:
+            return False
+        if any(eq in seg_upper for eq in ("NSE", "BSE", "CM", "CASH")):
+            return (9, 15, 0) <= cur_hms <= (15, 30, 0)
+        else:
+            return (9, 0, 0) <= cur_hms <= (23, 55, 0)
 
-# Standard Indian Exchange Trading Holidays (MCX/NSE/NCDEX)
-MCX_HOLIDAYS = {
-    # 2026
-    datetime.date(2026, 1, 26),   # Republic Day
-    datetime.date(2026, 2, 17),   # Mahashivratri
-    datetime.date(2026, 3, 6),    # Holi
-    datetime.date(2026, 3, 20),   # Id-Ul-Fitr
-    datetime.date(2026, 4, 3),    # Good Friday
-    datetime.date(2026, 4, 14),   # Dr. Baba Saheb Ambedkar Jayanti
-    datetime.date(2026, 5, 1),    # Maharashtra Day
-    datetime.date(2026, 5, 27),   # Bakri Id / Eid ul-Adha
-    datetime.date(2026, 6, 26),   # Muharram
-    datetime.date(2026, 8, 15),   # Independence Day
-    datetime.date(2026, 10, 2),   # Mahatma Gandhi Jayanti
-    datetime.date(2026, 10, 20),  # Dussehra
-    datetime.date(2026, 11, 8),   # Diwali-Laxmi Pujan
-    datetime.date(2026, 11, 24),  # Gurunanak Jayanti
-    datetime.date(2026, 12, 25),  # Christmas
-    # 2027
-    datetime.date(2027, 1, 26),   # Republic Day
-    datetime.date(2027, 3, 22),   # Holi
-    datetime.date(2027, 3, 26),   # Good Friday
-    datetime.date(2027, 4, 14),   # Ambedkar Jayanti
-    datetime.date(2027, 5, 1),    # Maharashtra Day
-    datetime.date(2027, 8, 15),   # Independence Day
-    datetime.date(2027, 10, 2),   # Gandhi Jayanti
-    datetime.date(2027, 12, 25),  # Christmas
-}
+def is_market_opening_stabilizing(exch_seg: str = "MCXFO", now_ts: Optional[float] = None) -> bool:
+    """
+    Returns True if the market has just opened and is within the 60-second stabilization window:
+    - Standard MCX day: between 09:00:00 and 09:01:00 IST
+    - Morning-Holiday MCX day: between 17:00:00 and 17:01:00 IST
+    During this 60-second window, automated rollover orders should pause to avoid
+    opening auction orderbook imbalances, wide bid-ask spreads, and excessive slippage.
+    """
+    if "PYTEST_CURRENT_TEST" in os.environ and os.environ.get("ENFORCE_MARKET_HOURS_IN_TESTS", "").lower() not in ("true", "1", "yes"):
+        return False
+
+    ts = now_ts if now_ts is not None else time.time()
+    dt = datetime.datetime.fromtimestamp(ts, tz=IST_TIMEZONE)
+    d_date = dt.date()
+    cur_hms = (dt.hour, dt.minute, dt.second)
+
+    seg_upper = str(exch_seg or "").upper()
+    is_mcx = ("MCX" in seg_upper or "COMMODITY" in seg_upper)
+
+    if is_mcx:
+        if d_date in MCX_MORNING_SESSION_HOLIDAYS:
+            # Evening session open is 17:00:00 -> buffer is 17:00:00 to 17:01:00 IST
+            return (17, 0, 0) <= cur_hms < (17, 1, 0)
+        elif d_date not in MCX_FULL_DAY_HOLIDAYS:
+            # Standard session open is 09:00:00 -> buffer is 09:00:00 to 09:01:00 IST
+            return (9, 0, 0) <= cur_hms < (9, 1, 0)
+    return False
 
 def get_commodity_rollover_cutoff(exp_date, exch_seg: str = "MCXFO") -> datetime.datetime:
     """
@@ -174,7 +226,7 @@ def get_commodity_rollover_cutoff(exp_date, exch_seg: str = "MCXFO") -> datetime
         tzinfo=IST_TIMEZONE
     )
 
-def is_commodity_past_rollover(exp_date, exch_seg: str = "MCXFO", now_dt: datetime.datetime = None) -> bool:
+def is_commodity_past_rollover(exp_date, exch_seg: str = "MCXFO", now_dt: Optional[datetime.datetime] = None) -> bool:
     """
     Determines if a commodity contract has crossed its rollover cutoff:
     1. Returns True if now_dt >= get_commodity_rollover_cutoff(exp_date, exch_seg).

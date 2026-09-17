@@ -473,8 +473,8 @@ def _extract_expiry(parts, desc):
         
         c = calendar.Calendar(firstweekday=calendar.MONDAY)
         try:
-            last_thurs = [day for week in c.monthdatescalendar(year, month) 
-                          if day.weekday() == calendar.THURSDAY and day.month == month][-1]
+            last_thurs = [d for week in c.monthdatescalendar(year, month) for d in week 
+                          if d.weekday() == calendar.THURSDAY and d.month == month][-1]
             return last_thurs, None
         except IndexError:
             pass
@@ -1325,6 +1325,11 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
             contract_expiry = datetime.date.today()
         else:
             return {"status": "error", "message": f"Instrument resolution failed for {symbol}"}
+
+    lot_size = int(lot_size or 1)
+    freeze_qty = int(freeze_qty or getattr(config, "DEFAULT_FREEZE_QTY_IF_UNKNOWN", 100000))
+    tick_size = float(tick_size or 0.05)
+    exch_seg = str(exch_seg or "MCXFO")
 
     # 0. Market Hours & Weekend Gateway Hard Gate (Defense-in-depth API wall)
     if not is_paper and getattr(config, "ENFORCE_MARKET_HOURS", True):

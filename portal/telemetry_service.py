@@ -1,4 +1,6 @@
 import os
+import time
+import datetime
 import asyncio
 import httpx
 import logging
@@ -377,7 +379,7 @@ async def aggregate_all_telemetry() -> dict:
     for idx, res in enumerate(results):
         t = tenants[idx]
         t_id = t["id"]
-        if isinstance(res, Exception):
+        if isinstance(res, (Exception, BaseException)) or not isinstance(res, dict):
             res = build_client_telemetry_dict(
                 tenant_id=t_id,
                 name=t["name"],
@@ -385,7 +387,7 @@ async def aggregate_all_telemetry() -> dict:
                 docker_status="UNKNOWN",
                 healthy=False,
                 paper_mode=bool(t.get("paper_trade_mode", False)),
-                error=str(res)
+                error=str(res) if res is not None else "Unknown error"
             )
         
         # Merge authoritative strategies from Portal DB enriched with live runner telemetry

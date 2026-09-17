@@ -65,10 +65,13 @@ def main():
     sftp = client.open_sftp()
     
     sync_files = [
+        ("client/config.py", "/opt/xts_multi/client/config.py"),
+        ("client/xts_api.py", "/opt/xts_multi/client/xts_api.py"),
         ("client/supertrend_engine.py", "/opt/xts_multi/client/supertrend_engine.py"),
         ("client/tests/test_auto_rollover_future_months.py", "/opt/xts_multi/client/tests/test_auto_rollover_future_months.py"),
         ("portal/main.py", "/opt/xts_multi/portal/main.py"),
         ("portal/telemetry_service.py", "/opt/xts_multi/portal/telemetry_service.py"),
+        ("portal/templates/client_detail.html", "/opt/xts_multi/portal/templates/client_detail.html"),
         ("portal/tests/test_portal.py", "/opt/xts_multi/portal/tests/test_portal.py"),
         ("portal/frontend/src/components/views/ClientDetailView.tsx", "/opt/xts_multi/portal/frontend/src/components/views/ClientDetailView.tsx"),
     ]
@@ -89,6 +92,8 @@ def main():
     print("\n🧪 Step 2: Running auto-rollover verification tests inside xts_client_abk01...")
     copy_test = (
         "docker exec xts_client_abk01 mkdir -p /app/tests && "
+        "docker cp /opt/xts_multi/client/config.py xts_client_abk01:/app/config.py && "
+        "docker cp /opt/xts_multi/client/xts_api.py xts_client_abk01:/app/xts_api.py && "
         "docker cp /opt/xts_multi/client/supertrend_engine.py xts_client_abk01:/app/supertrend_engine.py && "
         "docker cp /opt/xts_multi/client/tests/test_auto_rollover_future_months.py xts_client_abk01:/app/tests/test_auto_rollover_future_months.py"
     )
@@ -106,7 +111,12 @@ def main():
     print(f"\n🔄 Step 3: Hot-patching {len(clients)} client containers sequentially...")
     for c in clients:
         c_name = f"xts_client_{c}"
-        cmd = f"docker cp /opt/xts_multi/client/supertrend_engine.py {c_name}:/app/supertrend_engine.py && docker restart {c_name}"
+        cmd = (
+            f"docker cp /opt/xts_multi/client/config.py {c_name}:/app/config.py && "
+            f"docker cp /opt/xts_multi/client/xts_api.py {c_name}:/app/xts_api.py && "
+            f"docker cp /opt/xts_multi/client/supertrend_engine.py {c_name}:/app/supertrend_engine.py && "
+            f"docker restart {c_name}"
+        )
         st, out, err = run_cmd(client, cmd)
         if st == 0:
             print(f"  ✓ {c_name} patched & restarted successfully.")
@@ -119,7 +129,7 @@ def main():
     portal_cmd = (
         "docker cp /opt/xts_multi/portal/main.py xts_portal:/app/main.py && "
         "docker cp /opt/xts_multi/portal/telemetry_service.py xts_portal:/app/telemetry_service.py && "
-        "docker cp /opt/xts_multi/portal/frontend/dist xts_portal:/app/frontend/ && "
+        "docker cp /opt/xts_multi/portal/templates/client_detail.html xts_portal:/app/templates/client_detail.html && "
         "docker restart xts_portal"
     )
     st, out, err = run_cmd(client, portal_cmd)

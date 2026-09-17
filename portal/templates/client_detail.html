@@ -748,7 +748,7 @@
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
                             <span class="text-[9px] text-slate-400 uppercase font-bold block">Collateral</span>
                             <span class="font-mono text-sm font-bold text-slate-300">
-                                ₹{{ (client.total_collateral or client.mcx_margin.total_collateral or 0.0)|inr }}
+                                ₹{{ (client.total_collateral or (client.mcx_margin.total_collateral if (client.mcx_margin and client.mcx_margin.total_collateral is defined) else 0.0) or 0.0)|inr }}
                             </span>
                         </div>
                     </div>
@@ -767,19 +767,19 @@
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
                             <span class="text-[9px] text-slate-400 uppercase font-bold block">Unified Limit</span>
                             <span class="font-mono text-sm font-bold text-cyan-400">
-                                ₹{{ (client.unified_margin.available_margin or c_usable)|inr }}
+                                ₹{{ ((client.unified_margin.available_margin if (client.unified_margin and client.unified_margin.available_margin is defined) else None) or c_usable)|inr }}
                             </span>
                         </div>
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
                             <span class="text-[9px] text-slate-400 uppercase font-bold block">Pay-In Amount</span>
                             <span class="font-mono text-sm font-bold text-slate-300">
-                                ₹{{ (client.unified_margin.pay_in_amount or 0.0)|inr }}
+                                ₹{{ ((client.unified_margin.pay_in_amount if (client.unified_margin and client.unified_margin.pay_in_amount is defined) else 0.0) or 0.0)|inr }}
                             </span>
                         </div>
                         <div class="bg-slate-900/60 p-2.5 rounded-lg">
                             <span class="text-[9px] text-slate-400 uppercase font-bold block">Total Account</span>
                             <span class="font-mono text-sm font-bold text-slate-300">
-                                ₹{{ (client.unified_margin.total_account_value or client.total_account_value or 0.0)|inr }}
+                                ₹{{ ((client.unified_margin.total_account_value if (client.unified_margin and client.unified_margin.total_account_value is defined) else None) or client.total_account_value or 0.0)|inr }}
                             </span>
                         </div>
                     </div>
