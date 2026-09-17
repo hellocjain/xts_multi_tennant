@@ -164,9 +164,9 @@ def _strategy_process_worker(code_content: str, strategy_id: str, eval_candle: d
 
         instance = target_cls()
         sig = instance.on_candle(eval_candle, history, strategy_position)
-        conn.send({"result": sig})
+        conn.send({"result": str(sig)[:100] if sig is not None else None})
     except Exception as e:
-        conn.send({"error": str(e)})
+        conn.send({"error": str(e)[:4000]})
     finally:
         try:
             conn.close()
@@ -225,6 +225,10 @@ async def run_strategy_in_isolated_process(
         if proc.is_alive():
             proc.kill()
             proc.join()
+        try:
+            proc.close()
+        except Exception:
+            pass
 
 
 class SingleCustomStrategyRunner:

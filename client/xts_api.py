@@ -61,6 +61,7 @@ REFRESH_COOLDOWN_SECONDS = 15
 MIN_SANE_INSTRUMENT_COUNT = 500
 _LAST_RESOLUTION_ERROR_TIME: Dict[str, float] = {}
 _LAST_MD_TOKEN_ERROR_TIME: float = 0.0
+_LAST_INTERACTIVE_TOKEN_ERROR_TIME: float = 0.0
 
 class TokenBucketRateLimiter:
     """Thread-safe Token Bucket Rate Limiter enforcing max 8 req/sec for order-mutating endpoints."""
@@ -208,7 +209,7 @@ def get_last_auth_error():
     return LAST_INTERACTIVE_AUTH_ERROR
 
 def get_interactive_token(force_refresh=False):
-    global INTERACTIVE_TOKEN, REFRESHING_INTERACTIVE, LAST_INTERACTIVE_AUTH_ATTEMPT, LAST_INTERACTIVE_AUTH_ERROR, INTERACTIVE_TOKEN_ACQUIRED_AT
+    global INTERACTIVE_TOKEN, REFRESHING_INTERACTIVE, LAST_INTERACTIVE_AUTH_ATTEMPT, LAST_INTERACTIVE_AUTH_ERROR, INTERACTIVE_TOKEN_ACQUIRED_AT, _LAST_INTERACTIVE_TOKEN_ERROR_TIME
     wait_timeout = getattr(config, "TOKEN_REFRESH_WAIT_TIMEOUT", 8.0)
     now = time.time()
 
@@ -248,15 +249,28 @@ def get_interactive_token(force_refresh=False):
                 INTERACTIVE_TOKEN = data['result']['token']
                 INTERACTIVE_TOKEN_ACQUIRED_AT = time.time()
                 LAST_INTERACTIVE_AUTH_ERROR = None
+            if _LAST_INTERACTIVE_TOKEN_ERROR_TIME > 0:
+                logger.info("Interactive login recovered successfully.")
+                _LAST_INTERACTIVE_TOKEN_ERROR_TIME = 0.0
             return INTERACTIVE_TOKEN
         else:
             err_desc = data.get('description', 'Auth rejected')
             err_code = data.get('code', 'e-auth')
             LAST_INTERACTIVE_AUTH_ERROR = f"{err_code}: {err_desc}"
-            logger.error(f"Interactive login rejected: {data}")
+            now_err = time.time()
+            if now_err - _LAST_INTERACTIVE_TOKEN_ERROR_TIME > 300.0:
+                logger.error(f"Interactive login rejected: {data}")
+                _LAST_INTERACTIVE_TOKEN_ERROR_TIME = now_err
+            else:
+                logger.debug(f"Interactive login rejected: {data} (throttled)")
     except Exception as e:
         LAST_INTERACTIVE_AUTH_ERROR = str(e)
-        logger.error(f"Interactive Login error: {e}")
+        now_err = time.time()
+        if now_err - _LAST_INTERACTIVE_TOKEN_ERROR_TIME > 300.0:
+            logger.error(f"Interactive Login error: {e}")
+            _LAST_INTERACTIVE_TOKEN_ERROR_TIME = now_err
+        else:
+            logger.debug(f"Interactive Login error: {e} (throttled)")
     finally:
         with INTERACTIVE_REFRESH_CV:
             REFRESHING_INTERACTIVE = False
@@ -1309,6 +1323,7 @@ def _monitor_and_clean_partial_fills(order_ref, client_id, token):
     timeout_sec = getattr(config, "PARTIAL_FILL_TIMEOUT_SECONDS", 2.0)
     time.sleep(timeout_sec)
     
+    target_ref = format_order_ref_chunk(str(order_ref), 1)
     safe_url = get_safe_base_url()
     url = f"{safe_url}/orders"
     headers = {"authorization": token}
@@ -1319,7 +1334,7 @@ def _monitor_and_clean_partial_fills(order_ref, client_id, token):
             if data.get('type') == 'success':
                 for ord in data.get('result', []):
                     ref_tag = ord.get('OrderUniqueIdentifier') or ord.get('orderUniqueIdentifier')
-                    if ref_tag and str(ref_tag) == str(order_ref):
+                    if ref_tag and (str(ref_tag) == str(order_ref) or str(ref_tag) == str(target_ref)):
                         status = ord.get('OrderStatus')
                         app_order_id = ord.get('AppOrderID')
                         if status in ("PartiallyFilled", "Open", "New", "PendingNew", "Replaced") and app_order_id:
@@ -1557,7 +1572,7 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
                 if getattr(config, "CANCEL_LINGERING_PARTIAL_FILLS", True):
                     threading.Thread(
                         target=_monitor_and_clean_partial_fills,
-                        args=(order_ref, client_id, token),
+                        args=(chunk_ref, client_id, token),
                         daemon=True
                     ).start()
             else:
@@ -2389,10 +2404,15 @@ def panic_square_off_all():
             qty = int(p.get("Quantity", 0))
             if qty == 0: continue
             
-            inst_id = int(p.get("ExchangeInstrumentId", 0))
+            inst_id = int(p.get("ExchangeInstrumentId", 0) or p.get("InstrumentId", 0) or 0)
             exch_seg = p.get("ExchangeSegment", "MCXFO")
             prod_type = p.get("ProductType", "NRML")
             sym = p.get("TradingSymbol", "")
+            if inst_id == 0 and sym:
+                clean_sym = re.sub(r'[\s\-]+', '', sym)
+                c_info = get_dynamic_contract_info(clean_sym)
+                if c_info and c_info[0]:
+                    inst_id = int(c_info[0])
 
             action = "SELL" if qty > 0 else "BUY"
             square_qty = abs(qty)

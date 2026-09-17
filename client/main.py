@@ -28,8 +28,15 @@ try:
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
 
+    _is_container_or_prod = (
+        os.path.exists("/.dockerenv")
+        or os.path.exists("/app")
+        or os.path.exists("/opt/xts_multi")
+        or "SENTRY_DSN" in os.environ
+    )
     _is_testing = (
-        "PYTEST_CURRENT_TEST" in os.environ
+        not _is_container_or_prod
+        or "PYTEST_CURRENT_TEST" in os.environ
         or os.environ.get("TESTING_MODE") == "1"
         or os.environ.get("ENVIRONMENT", "").lower() in ("test", "testing")
         or os.environ.get("APP_ENV", "").lower() in ("test", "testing", "local")
