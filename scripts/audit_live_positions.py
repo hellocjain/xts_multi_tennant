@@ -3,7 +3,7 @@ import sys
 import os
 import paramiko
 
-clients = ['abk01', 'abk02', 'abk03', 'abk04', 'abk05', 'abk06', 'abk07', 'abk09', 'abk10', 'abk11', 'abk12', 'abk13', 'abk14', 'abk15', 'dm933']
+clients = ['abk01', 'abk02', 'abk03', 'abk04', 'abk05', 'abk06', 'abk07', 'abk09', 'abk10', 'abk11', 'abk12', 'abk13', 'abk14', 'abk15', 'abk16', 'abk17', 'dm933']
 print("| Client | Broker NetWise Positions | Strategy Positions |")
 print("|:---|:---|:---|")
 
