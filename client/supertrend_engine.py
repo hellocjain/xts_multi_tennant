@@ -568,6 +568,8 @@ class SingleSuperTrendRunner:
             "cached_candles_count": len(self.cached_candles),
             "resolved_inst_id": self.last_resolved_inst_id,
             "resolved_symbol_desc": self.last_resolved_symbol_desc,
+            "active_contract_id": self.active_contract_id,
+            "active_contract_desc": self.active_contract_desc,
             "last_error": self.last_error,
         }
 
@@ -1090,33 +1092,30 @@ class SingleSuperTrendRunner:
                                     xts_api_module.send_ops_alert(f"CRITICAL: Rollover Exit failed on {old_desc} for {self.symbol}. Strategy PAUSED.")
                                 return
 
-                            # Brief safety pause for margin release
-                            await asyncio.sleep(0.5)
+                            # Brief safety pause for margin release (allow broker RMS collateral processing)
+                            await asyncio.sleep(1.5)
 
-                            # Leg 2: Enter new next-month contract in same direction
+                            # Leg 2: Enter new next-month contract in same direction with up to 3 retries
                             entry_action = "BUY" if current_pos_side == "LONG" else "SELL"
-                            entry_ok = await self._execute_entry(
-                                entry_action,
-                                roll_qty,
-                                f"ROLL_ENTRY_{roll_ts}",
-                                main_module,
-                                freeze_limit,
-                                target_symbol=inst_desc
-                            )
-                            if not entry_ok:
-                                logger.warning(f"SuperTrend [{self.symbol}]: Rollover Entry failed, retrying once after 2.0s...")
-                                await asyncio.sleep(2.0)
+                            entry_ok = False
+                            for attempt in range(1, 4):
+                                roll_ref = f"ROLL_ENTRY_{roll_ts}" if attempt == 1 else f"ROLL_ENTRY_{roll_ts}_RETRY{attempt}"
                                 entry_ok = await self._execute_entry(
                                     entry_action,
                                     roll_qty,
-                                    f"ROLL_ENTRY_{roll_ts}_RETRY",
+                                    roll_ref,
                                     main_module,
                                     freeze_limit,
                                     target_symbol=inst_desc
                                 )
+                                if entry_ok:
+                                    break
+                                logger.warning(f"SuperTrend [{self.symbol}]: Rollover Entry attempt {attempt}/3 failed. Waiting 2.0s for margin release...")
+                                await asyncio.sleep(2.0)
+
                             if not entry_ok:
                                 logger.critical(
-                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 2 (Entry) on {inst_desc} failed after retry! "
+                                    f"🚨 SuperTrend [{self.symbol}]: Rollover Leg 2 (Entry) on {inst_desc} failed after 3 attempts! "
                                     f"Old contract {old_desc} was squared off. Marking position FLAT and PAUSING strategy."
                                 )
                                 self.virtual_position = 0
@@ -1127,8 +1126,16 @@ class SingleSuperTrendRunner:
                                 self.last_resolved_inst_id = inst_id
                                 self.last_resolved_symbol_desc = inst_desc
                                 self._save_virtual_position(main_module, 0, active_contract_id=inst_id, active_contract_desc=inst_desc)
+                                # Purge cached candles & indicators to prevent dirty state
+                                self.cached_candles = []
+                                self.last_candle_time = 0
+                                self.last_processed_candle_time = 0
+                                self.last_close = 0.0
+                                self.last_atr = 0.0
+                                self.upper_band = 0.0
+                                self.lower_band = 0.0
                                 if hasattr(xts_api_module, "send_ops_alert"):
-                                    xts_api_module.send_ops_alert(f"CRITICAL: Rollover Entry failed on {inst_desc} for {self.symbol}. Position FLAT. Strategy PAUSED.")
+                                    xts_api_module.send_ops_alert(f"CRITICAL: Rollover Entry failed on {inst_desc} for {self.symbol} after 3 attempts. Position FLAT. Strategy PAUSED.")
                                 return
 
                             # Both legs completed successfully!
@@ -1137,10 +1144,20 @@ class SingleSuperTrendRunner:
                             self.last_resolved_inst_id = inst_id
                             self.last_resolved_symbol_desc = inst_desc
                             self._save_virtual_position(main_module, self.virtual_position, active_contract_id=inst_id, active_contract_desc=inst_desc)
+                            # Purge cached candles & indicators so the new contract starts fresh without mixed series
+                            self.cached_candles = []
+                            self.last_candle_time = 0
+                            self.last_processed_candle_time = 0
+                            self.last_close = 0.0
+                            self.last_atr = 0.0
+                            self.upper_band = 0.0
+                            self.lower_band = 0.0
                             logger.info(
                                 f"✅ SuperTrend [{self.symbol}]: Autonomous Rollover Complete! "
                                 f"Holding {self.virtual_position} lots on {inst_desc} (ID: {inst_id})."
                             )
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(f"✅ Rollover Complete: {self.symbol} rolled from {old_desc} -> {inst_desc} ({self.virtual_position} lots).")
                         else:
                             # Market is CLOSED: do NOT overwrite active_contract_id!
                             # Leave active_contract_id as old contract so rollover executes at 09:00:00 AM bell.
@@ -1156,6 +1173,14 @@ class SingleSuperTrendRunner:
                         self.last_resolved_inst_id = inst_id
                         self.last_resolved_symbol_desc = inst_desc
                         self._save_virtual_position(main_module, 0, active_contract_id=inst_id, active_contract_desc=inst_desc)
+                        # Purge cached candles & indicators so the new contract starts fresh without mixed series
+                        self.cached_candles = []
+                        self.last_candle_time = 0
+                        self.last_processed_candle_time = 0
+                        self.last_close = 0.0
+                        self.last_atr = 0.0
+                        self.upper_band = 0.0
+                        self.lower_band = 0.0
                 else:
                     self.last_resolved_inst_id = inst_id
                     self.last_resolved_symbol_desc = inst_desc

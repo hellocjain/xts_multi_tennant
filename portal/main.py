@@ -548,6 +548,20 @@ async def add_client_action(
                   max_daily_loss_inr, telegram_bot_token.strip(), telegram_chat_id.strip(), discord_webhook_url.strip(),
                   slippage_buffer_pct, min_days_before_expiry_mcx, paper_trade_mode, now))
 
+            # Auto-seed default continuous commodity strategies (SILVER1001! on 15m & GOLDPETAL1! on 20m)
+            default_strats = [
+                (f"{clean_id}_st_silver100_15m", clean_id, "SILVER1001!", "MCXFO", "15m", 1, "NRML", 10, 3.0, "PAPER" if paper_trade_mode else "LIVE", 1, now, now),
+                (f"{clean_id}_st_goldpetal_20m", clean_id, "GOLDPETAL1!", "MCXFO", "20m", 1, "NRML", 10, 3.0, "PAPER" if paper_trade_mode else "LIVE", 1, now, now),
+            ]
+            for s in default_strats:
+                conn.execute("""
+                    INSERT OR IGNORE INTO tenant_supertrend_strategies (
+                        id, tenant_id, symbol, exchange_segment, timeframe,
+                        quantity, product_type, atr_period, multiplier, execution_mode,
+                        is_enabled, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, s)
+
     docker_manager.provision_client_container(clean_id)
     caddy_ok = caddy_manager.sync_caddy_config()
 
@@ -605,6 +619,9 @@ async def view_client_detail(tenant_id: str, request: Request, user: dict = Depe
                 strat["current_trend"] = live_s.get("current_trend", "INITIALIZING")
                 strat["last_close"] = live_s.get("last_close", 0.0)
                 strat["supertrend"] = live_s.get("supertrend", 0.0)
+                strat["active_contract_id"] = live_s.get("active_contract_id") or live_s.get("resolved_inst_id")
+                strat["active_contract_desc"] = live_s.get("active_contract_desc") or live_s.get("resolved_symbol_desc")
+                strat["resolved_symbol_desc"] = live_s.get("resolved_symbol_desc")
 
     supertrend_config = dict(st_row) if st_row else {
         "tenant_id": tenant_id,

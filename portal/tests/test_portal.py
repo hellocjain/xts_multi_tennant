@@ -876,5 +876,60 @@ def test_database_schema_auto_migration_multi_timeframe():
         assert len(rows) == 2
 
 
+def test_add_client_auto_seeds_continuous_strategies(monkeypatch):
+    """Verifies that provisioning a new client automatically pre-seeds SILVER1001! (15m) and GOLDPETAL1! (20m)."""
+    with closing(database.get_db_connection()) as conn:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO admin_users (id, username, password_hash, is_2fa_enabled, created_at) VALUES ('admin_autoseed', 'admin_autoseed', 'hash', 1, 100)")
+
+    token = security.create_session("admin_autoseed", "testclient", "testclient")
+    client = TestClient(app, cookies={"admin_session": token})
+
+    monkeypatch.setattr("docker_manager.provision_client_container", lambda tid: True)
+    monkeypatch.setattr("caddy_manager.sync_caddy_config", lambda: True)
+
+    payload = {
+        "tenant_id": "test_autoseed",
+        "name": "Auto Seed Test Client",
+        "api_key": "dummy_api_key",
+        "api_secret": "dummy_api_secret",
+        "client_id": "CLIENT_AUTO",
+        "webhook_secret": "secret123",
+        "max_lots_limit": "50",
+        "max_order_value_inr": "2000000.0",
+        "daily_notional_cap_inr": "5000000.0",
+        "max_daily_loss_inr": "25000.0",
+        "telegram_bot_token": "",
+        "telegram_chat_id": "",
+        "discord_webhook_url": "",
+        "slippage_buffer_pct": "0.005",
+        "min_days_before_expiry_mcx": "7",
+        "paper_trade_mode": "0"
+    }
+
+    res = client.post("/admin/clients/add", data=payload, follow_redirects=False)
+    assert res.status_code == 303
+
+    with closing(database.get_db_connection()) as conn:
+        strats = [dict(r) for r in conn.execute(
+            "SELECT * FROM tenant_supertrend_strategies WHERE tenant_id='test_autoseed' ORDER BY symbol ASC"
+        ).fetchall()]
+
+        assert len(strats) == 2, f"Expected 2 auto-seeded strategies, found {len(strats)}"
+        gold = next(s for s in strats if "GOLDPETAL" in s["symbol"])
+        silver = next(s for s in strats if "SILVER100" in s["symbol"])
+
+        assert gold["symbol"] == "GOLDPETAL1!"
+        assert gold["timeframe"] == "20m"
+        assert gold["is_enabled"] == 1
+        assert gold["execution_mode"] == "LIVE"
+
+        assert silver["symbol"] == "SILVER1001!"
+        assert silver["timeframe"] == "15m"
+        assert silver["is_enabled"] == 1
+        assert silver["execution_mode"] == "LIVE"
+
+
+
 
 

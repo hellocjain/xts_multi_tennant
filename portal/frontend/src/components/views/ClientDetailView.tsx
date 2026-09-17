@@ -1259,7 +1259,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 
             <form onSubmit={handleAddStrategy} className="space-y-3.5 text-xs font-mono">
               <div className="space-y-1">
-                <label className="text-slate-400">Symbol (e.g. CRUDEOIL1!, GOLDPETAL1!, SILVER100)</label>
+                <label className="text-slate-400">Symbol (e.g. CRUDEOIL1!, GOLDPETAL1!, SILVER1001!)</label>
                 <input
                   type="text"
                   required
@@ -1269,7 +1269,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
                 />
                 {/* 1-Click Symbol Presets */}
                 <div className="flex flex-wrap gap-1.5 pt-1">
-                  {['CRUDEOIL1!', 'GOLD1!', 'GOLDPETAL1!', 'SILVER1!', 'SILVER100', 'NATURALGAS1!', 'COPPER1!'].map((sym) => (
+                  {['CRUDEOIL1!', 'GOLD1!', 'GOLDPETAL1!', 'SILVER1!', 'SILVER1001!', 'NATURALGAS1!', 'COPPER1!'].map((sym) => (
                     <button
                       key={sym}
                       type="button"

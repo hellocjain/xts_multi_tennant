@@ -314,6 +314,9 @@ async def get_single_client_telemetry(tenant_id: str) -> dict:
             strat["current_trend"] = live_s.get("current_trend", "INITIALIZING")
             strat["last_close"] = live_s.get("last_close", 0.0)
             strat["supertrend"] = live_s.get("supertrend", 0.0)
+            strat["active_contract_id"] = live_s.get("active_contract_id") or live_s.get("resolved_inst_id")
+            strat["active_contract_desc"] = live_s.get("active_contract_desc") or live_s.get("resolved_symbol_desc")
+            strat["resolved_symbol_desc"] = live_s.get("resolved_symbol_desc")
 
     if "supertrend" not in res or not isinstance(res["supertrend"], dict):
         res["supertrend"] = {}
