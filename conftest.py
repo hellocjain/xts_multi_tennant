@@ -34,5 +34,15 @@ def global_test_suite_sandbox():
     os.environ["CADDY_CONFIG_PATH"] = os.path.join(caddy_data, "Caddyfile")
     os.environ["PORTAL_MASTER_KEY"] = "uYvN3lM8k9P2w4X6Z8a0b2c4d6e8f0g2h4j6k8m0n2p="
     os.environ["TESTING_MODE"] = "1"
+    os.environ["DISABLE_SENTRY"] = "1"
+    os.environ["SENTRY_DSN"] = ""
+
+    try:
+        import sentry_sdk
+        s_client = sentry_sdk.get_client()
+        if s_client.is_active():
+            s_client.close(timeout=0)
+    except Exception:
+        pass
 
     yield temp_sandbox

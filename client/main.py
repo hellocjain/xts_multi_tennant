@@ -28,7 +28,14 @@ try:
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
 
-    _sentry_dsn = os.environ.get("SENTRY_DSN", "https://5b56a32b997e3fb79e616c8b0d1981ff@o4512086533865472.ingest.us.sentry.io/4512090896924672")
+    _is_testing = (
+        "PYTEST_CURRENT_TEST" in os.environ
+        or os.environ.get("TESTING_MODE") == "1"
+        or os.environ.get("ENVIRONMENT", "").lower() in ("test", "testing")
+        or os.environ.get("APP_ENV", "").lower() in ("test", "testing", "local")
+        or os.environ.get("DISABLE_SENTRY", "").lower() in ("true", "1", "yes")
+    )
+    _sentry_dsn = None if _is_testing else os.environ.get("SENTRY_DSN", "https://5b56a32b997e3fb79e616c8b0d1981ff@o4512086533865472.ingest.us.sentry.io/4512090896924672")
     if _sentry_dsn:
         sentry_sdk.init(
             dsn=_sentry_dsn,
@@ -39,6 +46,13 @@ try:
         )
         sentry_sdk.set_tag("service", "xts_client")
         sentry_sdk.set_tag("client_id", getattr(config, "CLIENT_ID", "unknown"))
+    else:
+        try:
+            s_client = sentry_sdk.get_client()
+            if s_client.is_active():
+                s_client.close(timeout=0)
+        except Exception:
+            pass
 except Exception as _sentry_err:
     logging.getLogger("uvicorn").warning(f"Sentry init bypassed: {_sentry_err}")
 
