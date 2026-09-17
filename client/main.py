@@ -880,6 +880,61 @@ async def reset_supertrend_strategy_flat_endpoint(
     res = await supertrend_engine.reset_strategy_to_flat(target_id, square_off_broker, xts_api, this_mod)
     return res
 
+@app.post("/internal/strategies/toggle-all")
+async def toggle_all_strategies_endpoint(request: Request):
+    """
+    Bulk toggles all strategy runners in memory (enables or freezes).
+    Keeps telemetry streaming and container running.
+    """
+    internal_auth_token = str(getattr(config, "INTERNAL_AUTH_TOKEN", "")).strip()
+    if internal_auth_token:
+        req_token = request.headers.get("X-Internal-Token", "").strip()
+        if not hmac.compare_digest(req_token, internal_auth_token):
+            return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    is_enabled = bool(body.get("is_enabled", True))
+    updated_strats = []
+
+    # 1. Update all SuperTrend runners
+    if hasattr(supertrend_engine, "strategies"):
+        for sid, runner in supertrend_engine.strategies.items():
+            runner.is_enabled = is_enabled and runner.is_configured
+            runner.status = "RUNNING" if runner.is_enabled else "PAUSED"
+            updated_strats.append({
+                "id": sid,
+                "symbol": runner.symbol,
+                "timeframe": runner.timeframe,
+                "is_enabled": runner.is_enabled,
+                "status": runner.status
+            })
+
+    # 2. Update all Custom Strategy runners if any
+    if hasattr(custom_strategy_engine, "strategies"):
+        for cs_id, cs_runner in custom_strategy_engine.strategies.items():
+            cs_runner.is_enabled = is_enabled
+            updated_strats.append({
+                "id": cs_id,
+                "symbol": cs_runner.symbol,
+                "timeframe": cs_runner.timeframe,
+                "is_enabled": cs_runner.is_enabled,
+                "status": "RUNNING" if cs_runner.is_enabled else "PAUSED"
+            })
+
+    action = "RESUMED" if is_enabled else "PAUSED"
+    logger.info(f"Bulk strategy toggle: {action} {len(updated_strats)} strategy runners")
+    return {
+        "status": "ok",
+        "action": action,
+        "is_enabled": is_enabled,
+        "strategies_updated": len(updated_strats),
+        "strategies": updated_strats
+    }
+
 # =========================================================================
 # Custom Python Strategy Internal Endpoints
 # =========================================================================

@@ -104,6 +104,11 @@
         <div class="flex items-start justify-between gap-3 border-b border-bordercolor/60 pb-3.5">
             <div>
                 <div class="flex items-center space-x-2">
+                    <input type="checkbox" class="client-select-checkbox rounded border-slate-700 bg-slate-900 text-brand-500 focus:ring-brand-500 w-4 h-4 cursor-pointer" 
+                           data-tenant-id="{{ c.id }}" 
+                           data-client-name="{{ c.name }}" 
+                           data-headroom="{{ c.free_headroom|default(c.available_margin, true)|default(0) }}" 
+                           onchange="handleClientCheckboxChange(this)">
                     <a href="/admin/clients/{{ c.id }}" class="text-base font-bold text-slate-100 hover:text-brand-400 transition">{{ c.name }}</a>
                     {% if c.paper_mode %}
                     <span class="bg-blue-500/10 text-blue-400 text-[10px] font-semibold px-2 py-0.5 rounded border border-blue-500/30 flex items-center gap-1 font-mono">
@@ -381,6 +386,9 @@
         <table class="w-full text-left text-xs font-mono">
             <thead class="bg-slate-950 font-semibold text-slate-400 uppercase tracking-wider border-b border-bordercolor">
                 <tr>
+                    <th class="w-10 px-3 py-3 text-center">
+                        <input type="checkbox" id="masterClientSelectTable" onchange="toggleMasterSelection(this)" class="rounded border-slate-700 bg-slate-900 text-brand-500 focus:ring-brand-500 cursor-pointer">
+                    </th>
                     <th class="px-4 py-3">Status</th>
                     <th class="px-5 py-3">Client Account</th>
                     <th class="px-4 py-3">Broker ID</th>
@@ -403,6 +411,13 @@
                     data-name="{{ c.name|lower }}" data-id="{{ c.id|lower }}" data-client-id="{{ c.client_id|lower }}"
                     data-paper="{{ '1' if c.paper_mode else '0' }}" data-net-mtm="{{ c.net_mtm }}"
                     style="{% if not is_match %}display: none;{% endif %}">
+                    <td class="w-10 px-3 py-3 text-center">
+                        <input type="checkbox" class="client-select-checkbox rounded border-slate-700 bg-slate-900 text-brand-500 focus:ring-brand-500 cursor-pointer" 
+                               data-tenant-id="{{ c.id }}" 
+                               data-client-name="{{ c.name }}" 
+                               data-headroom="{{ c.free_headroom|default(c.available_margin, true)|default(0) }}" 
+                               onchange="handleClientCheckboxChange(this)">
+                    </td>
                     <td class="px-4 py-3">
                         {% if c.status == 'HEALTHY' %}
                         <span class="inline-flex items-center text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">

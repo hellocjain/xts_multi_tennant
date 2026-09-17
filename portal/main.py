@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager, closing
@@ -20,6 +20,7 @@ import docker_manager
 import caddy_manager
 import telemetry_service
 import strategy_parser
+import bulk_operations_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -278,6 +279,63 @@ async def dashboard_partial(
         "domain": DOMAIN_NAME,
         "server_info": get_server_info()
     })
+
+# =====================================================================
+# Multi-Account Bulk Operations Endpoints
+# =====================================================================
+
+@app.post("/admin/bulk-operations")
+async def bulk_operations_action(request: Request, user: dict = Depends(require_auth)):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    action = str(body.get("action", "")).strip().lower()
+    tenant_ids = body.get("tenant_ids", [])
+    if not isinstance(tenant_ids, list) or not tenant_ids:
+        raise HTTPException(status_code=400, detail="tenant_ids list is required")
+
+    if action not in ("pause", "resume_and_sync"):
+        raise HTTPException(status_code=400, detail=f"Unsupported bulk action: '{action}'. Must be 'pause' or 'resume_and_sync'.")
+
+    try:
+        job_id = bulk_operations_service.start_bulk_operation(action, tenant_ids, user.get("username", "admin"))
+        return {
+            "status": "ok",
+            "job_id": job_id,
+            "action": action,
+            "tenant_count": len(tenant_ids)
+        }
+    except Exception as e:
+        logger.exception("Failed to start bulk operation")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/admin/bulk-operations/stream/{job_id}")
+async def bulk_operations_stream(job_id: str, request: Request, user: dict = Depends(require_auth)):
+    return StreamingResponse(
+        bulk_operations_service.stream_bulk_job_events(job_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@app.get("/admin/bulk-operations/status/{job_id}")
+async def bulk_operations_status(job_id: str, user: dict = Depends(require_auth)):
+    job = bulk_operations_service.ACTIVE_BULK_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "job_id": job["job_id"],
+        "action": job["action"],
+        "total": job["total"],
+        "completed": job["completed"],
+        "status": job["status"],
+        "results": job.get("results", [])
+    }
 
 def get_server_info() -> dict:
     server_ip = os.environ.get("SERVER_PUBLIC_IP", "").strip()

@@ -41,6 +41,14 @@
 
         <!-- Right: Filter Badges & Segmented View Switcher -->
         <div class="flex flex-wrap items-center gap-2" id="filterButtonsGroup">
+            <!-- Master Client Selection Badge -->
+            <div class="flex items-center space-x-2 bg-cardbg px-3 py-1.5 rounded-xl border border-bordercolor">
+                <input type="checkbox" id="masterClientSelect" onchange="toggleMasterSelection(this)" class="rounded border-slate-700 bg-slate-900 text-brand-500 focus:ring-brand-500 w-4 h-4 cursor-pointer">
+                <label for="masterClientSelect" class="text-xs font-semibold text-slate-400 cursor-pointer select-none">
+                    Select All (<span id="cnt-visible">{{ clients|length }}</span>)
+                </label>
+            </div>
+
             <!-- Filter Pills -->
             <div class="flex items-center space-x-1 bg-cardbg p-1 rounded-xl border border-bordercolor">
                 <button onclick="setClientFilter('all')" id="filter-btn-all" class="client-filter-btn bg-brand-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap">
@@ -132,6 +140,101 @@
                 </button>
             </div>
         </form>
+    </div>
+<!-- Floating Glassmorphic Bulk Action Dock -->
+<div id="bulkActionDock" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 transition-all duration-300 ease-out transform translate-y-28 opacity-0 pointer-events-none">
+    <div class="bg-slate-900/90 backdrop-blur-xl border border-slate-700/80 shadow-2xl rounded-2xl px-5 py-3 flex items-center gap-3 sm:gap-4 text-slate-100 ring-1 ring-white/10">
+        <!-- Selection Info & Aggregated Headroom -->
+        <div class="flex items-center space-x-2.5 sm:space-x-3 pr-2 border-r border-slate-700/60">
+            <div class="w-8 h-8 rounded-xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center text-brand-400 shrink-0">
+                <i data-lucide="layers" class="w-4 h-4"></i>
+            </div>
+            <div>
+                <div class="text-xs font-bold text-slate-200 whitespace-nowrap flex items-center gap-1.5">
+                    <span id="bulk-selected-count" class="font-mono text-brand-400 font-extrabold text-sm">0</span>
+                    <span class="text-slate-400 font-medium">Selected</span>
+                </div>
+                <div class="text-[10px] text-slate-400 font-mono flex items-center gap-1 whitespace-nowrap">
+                    <span>Free:</span>
+                    <strong id="bulk-headroom" class="text-emerald-400 font-bold">₹0</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center space-x-2">
+            <!-- 1. Pause Trading -->
+            <button type="button" onclick="triggerBulkAction('pause')" 
+                    class="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition flex items-center gap-1.5 shadow-md shadow-amber-950/20 whitespace-nowrap active:scale-95">
+                <i data-lucide="pause-circle" class="w-3.5 h-3.5 text-amber-400"></i>
+                <span>Pause Trading</span>
+            </button>
+
+            <!-- 2. Resume & Sync Trend (Unified Smart Duo) -->
+            <button type="button" onclick="triggerBulkAction('resume_and_sync')" 
+                    class="px-3.5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white transition flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 whitespace-nowrap active:scale-95">
+                <i data-lucide="play-circle" class="w-3.5 h-3.5"></i>
+                <span>Resume &amp; Sync Trend</span>
+            </button>
+
+            <!-- Deselect / Clear -->
+            <button type="button" onclick="clearAllSelections()" title="Deselect All (Esc)"
+                    class="w-7 h-7 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 flex items-center justify-center transition">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Live Bulk Operations Progress Modal -->
+<div id="bulkProgressModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-cardbg border border-bordercolor w-full max-w-lg rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4">
+        <!-- Header -->
+        <div class="flex items-start justify-between border-b border-bordercolor/60 pb-3">
+            <div class="flex items-center space-x-3">
+                <div id="bulkModalIconContainer" class="w-10 h-10 rounded-xl bg-brand-500/20 border border-brand-500/30 flex items-center justify-center text-brand-400 shrink-0">
+                    <i id="bulkModalHeaderIcon" data-lucide="loader-2" class="w-5 h-5 animate-spin text-brand-400"></i>
+                </div>
+                <div>
+                    <h3 id="bulkModalTitle" class="font-bold text-sm sm:text-base text-slate-100">Executing Bulk Action...</h3>
+                    <p id="bulkModalSubtitle" class="text-xs text-slate-400 mt-0.5">Processing accounts across containers</p>
+                </div>
+            </div>
+            <span id="bulkModalStatusBadge" class="text-[10px] font-mono px-2.5 py-1 rounded bg-brand-500/10 text-brand-400 border border-brand-500/30 font-bold">
+                IN PROGRESS
+            </span>
+        </div>
+
+        <!-- Progress Bar & Counter -->
+        <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+                <span>Completed: <strong id="bulkProgressCompleted" class="text-slate-200">0</strong> / <span id="bulkProgressTotal">0</span></span>
+                <span id="bulkProgressPct" class="text-brand-400 font-bold">0%</span>
+            </div>
+            <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-bordercolor">
+                <div id="bulkProgressBar" class="h-2.5 rounded-full bg-gradient-to-r from-brand-600 via-teal-500 to-emerald-500 transition-all duration-300" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Live Streaming Activity Log / Checklist -->
+        <div class="space-y-1">
+            <span class="text-[10px] font-mono uppercase tracking-wider text-slate-500">Live Execution Log</span>
+            <div id="bulkProgressList" class="bg-obsidian/80 border border-bordercolor/70 rounded-xl p-3 max-h-56 overflow-y-auto space-y-2 font-mono text-xs text-slate-300">
+                <!-- Dynamically populated via SSE stream -->
+            </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="flex items-center justify-between pt-2 border-t border-bordercolor/60">
+            <div class="text-[11px] text-slate-500 font-mono" id="bulkModalFooterNote">
+                Rate-limited worker pool active (max 3 req/s)
+            </div>
+            <button type="button" id="bulkModalDoneBtn" onclick="closeBulkModal()" 
+                    class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1.5">
+                <i data-lucide="check" id="bulkModalDoneIcon" class="w-3.5 h-3.5"></i>
+                <span id="bulkModalDoneBtnText">Run in Background</span>
+            </button>
+        </div>
     </div>
 </div>
 
@@ -310,6 +413,9 @@
         updateActiveFilterButtonUI();
         applyViewMode();
         applyFilters();
+        if (typeof syncBulkUI === 'function') {
+            syncBulkUI();
+        }
         if (window.lucide) {
             lucide.createIcons();
         }
@@ -417,6 +523,438 @@
                 btnIcon.classList.remove('animate-spin');
                 if (typeof lucide !== 'undefined') lucide.createIcons();
             }
+        }
+    }
+
+    // =========================================================================
+    // MULTI-ACCOUNT BULK OPERATIONS STATE & CONTROLLER
+    // =========================================================================
+    window.BulkState = {
+        selectedIds: new Set(),
+        lastClickedCb: null,
+        activeJobId: null,
+        eventSource: null,
+        isRunning: false
+    };
+
+    function handleClientCheckboxInteraction(cb, event) {
+        const id = cb.getAttribute('data-tenant-id');
+        if (!id) return;
+
+        // Shift+Click range selection
+        if (event && event.shiftKey && window.BulkState.lastClickedCb) {
+            const isTable = window.DashboardState.viewMode === 'denseTable';
+            const containerSelector = isTable ? '#denseTableViewContainer' : '#cardsViewContainer';
+            const container = document.querySelector(containerSelector);
+            if (container) {
+                const allCheckboxes = Array.from(container.querySelectorAll('.client-select-checkbox')).filter(c => {
+                    const row = c.closest('.client-table-row') || c.closest('.client-card');
+                    return row && row.style.display !== 'none';
+                });
+                const idx1 = allCheckboxes.indexOf(window.BulkState.lastClickedCb);
+                const idx2 = allCheckboxes.indexOf(cb);
+                if (idx1 !== -1 && idx2 !== -1) {
+                    const start = Math.min(idx1, idx2);
+                    const end = Math.max(idx1, idx2);
+                    const shouldCheck = cb.checked;
+                    for (let i = start; i <= end; i++) {
+                        const curCb = allCheckboxes[i];
+                        const curId = curCb.getAttribute('data-tenant-id');
+                        if (shouldCheck) {
+                            window.BulkState.selectedIds.add(curId);
+                        } else {
+                            window.BulkState.selectedIds.delete(curId);
+                        }
+                    }
+                }
+            }
+        } else {
+            if (cb.checked) {
+                window.BulkState.selectedIds.add(id);
+            } else {
+                window.BulkState.selectedIds.delete(id);
+            }
+        }
+
+        window.BulkState.lastClickedCb = cb;
+        syncBulkUI();
+    }
+
+    // Called onchange from inline checkbox attribute
+    function handleClientCheckboxChange(cb) {
+        const id = cb.getAttribute('data-tenant-id');
+        if (!id) return;
+        if (cb.checked) {
+            window.BulkState.selectedIds.add(id);
+        } else {
+            window.BulkState.selectedIds.delete(id);
+        }
+        window.BulkState.lastClickedCb = cb;
+        syncBulkUI();
+    }
+
+    function toggleMasterSelection(masterCb) {
+        const isTable = window.DashboardState.viewMode === 'denseTable';
+        const containerSelector = isTable ? '#denseTableViewContainer' : '#cardsViewContainer';
+        const container = document.querySelector(containerSelector);
+        if (!container) return;
+
+        const visibleCheckboxes = Array.from(container.querySelectorAll('.client-select-checkbox')).filter(c => {
+            const row = c.closest('.client-table-row') || c.closest('.client-card');
+            return row && row.style.display !== 'none';
+        });
+
+        const shouldCheck = masterCb.checked;
+        visibleCheckboxes.forEach(cb => {
+            const id = cb.getAttribute('data-tenant-id');
+            if (!id) return;
+            if (shouldCheck) {
+                window.BulkState.selectedIds.add(id);
+            } else {
+                window.BulkState.selectedIds.delete(id);
+            }
+        });
+
+        syncBulkUI();
+    }
+
+    function clearAllSelections() {
+        window.BulkState.selectedIds.clear();
+        syncBulkUI();
+    }
+
+    function syncBulkUI() {
+        // 1. Sync all checkboxes across cards and dense table
+        document.querySelectorAll('.client-select-checkbox').forEach(cb => {
+            const id = cb.getAttribute('data-tenant-id');
+            cb.checked = window.BulkState.selectedIds.has(id);
+        });
+
+        // 2. Compute aggregate headroom and update counter
+        const count = window.BulkState.selectedIds.size;
+        const countEl = document.getElementById('bulk-selected-count');
+        if (countEl) countEl.innerText = count;
+
+        let totalHeadroom = 0;
+        const counted = new Set();
+        document.querySelectorAll('.client-select-checkbox:checked').forEach(cb => {
+            const id = cb.getAttribute('data-tenant-id');
+            if (!counted.has(id)) {
+                counted.add(id);
+                totalHeadroom += parseFloat(cb.getAttribute('data-headroom') || '0') || 0;
+            }
+        });
+
+        const headroomEl = document.getElementById('bulk-headroom');
+        if (headroomEl) {
+            headroomEl.innerText = '₹' + Math.round(totalHeadroom).toLocaleString('en-IN');
+        }
+
+        // 3. Show/hide floating action dock
+        const dock = document.getElementById('bulkActionDock');
+        if (dock) {
+            if (count > 0) {
+                dock.classList.remove('translate-y-28', 'opacity-0', 'pointer-events-none');
+                dock.classList.add('translate-y-0', 'opacity-100', 'pointer-events-auto');
+            } else {
+                dock.classList.add('translate-y-28', 'opacity-0', 'pointer-events-none');
+                dock.classList.remove('translate-y-0', 'opacity-100', 'pointer-events-auto');
+            }
+        }
+
+        // 4. Update master select checkboxes (Card view and Table view)
+        const isTable = window.DashboardState.viewMode === 'denseTable';
+        const containerSelector = isTable ? '#denseTableViewContainer' : '#cardsViewContainer';
+        const container = document.querySelector(containerSelector);
+
+        let visibleIds = new Set();
+        if (container) {
+            container.querySelectorAll('.client-select-checkbox').forEach(c => {
+                const row = c.closest('.client-table-row') || c.closest('.client-card');
+                if (row && row.style.display !== 'none') {
+                    visibleIds.add(c.getAttribute('data-tenant-id'));
+                }
+            });
+        }
+
+        let selectedVisibleCount = 0;
+        visibleIds.forEach(id => {
+            if (window.BulkState.selectedIds.has(id)) selectedVisibleCount++;
+        });
+
+        const masterInputs = [document.getElementById('masterClientSelect'), document.getElementById('masterClientSelectTable')];
+        masterInputs.forEach(master => {
+            if (!master) return;
+            if (visibleIds.size > 0 && selectedVisibleCount === visibleIds.size) {
+                master.checked = true;
+                master.indeterminate = false;
+            } else if (selectedVisibleCount > 0) {
+                master.checked = false;
+                master.indeterminate = true;
+            } else {
+                master.checked = false;
+                master.indeterminate = false;
+            }
+        });
+
+        const cntVis = document.getElementById('cnt-visible');
+        if (cntVis) cntVis.innerText = visibleIds.size;
+
+        if (window.lucide) lucide.createIcons();
+    }
+
+    // Capture Shift+Click on checkboxes seamlessly
+    document.addEventListener('click', function(e) {
+        const cb = e.target.closest('.client-select-checkbox');
+        if (cb) {
+            handleClientCheckboxInteraction(cb, e);
+        }
+    });
+
+    // Escape key shortcuts
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('bulkProgressModal');
+            if (modal && !modal.classList.contains('hidden') && !window.BulkState.isRunning) {
+                closeBulkModal();
+            } else if (window.BulkState.selectedIds.size > 0) {
+                clearAllSelections();
+            }
+        }
+    });
+
+    // =========================================================================
+    // BULK ACTIONS EXECUTION & STREAMING CONTROLLER
+    // =========================================================================
+    async function triggerBulkAction(action) {
+        const selectedList = Array.from(window.BulkState.selectedIds);
+        if (!selectedList.length) {
+            if (typeof showToast === 'function') showToast('Please select at least one account.', 'info');
+            return;
+        }
+
+        // Open modal and show initial state
+        openBulkModal(action, selectedList.length);
+
+        try {
+            const res = await fetch('/admin/bulk-operations', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    action: action,
+                    tenant_ids: selectedList
+                })
+            });
+
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.detail || errData.message || 'Failed to start bulk operation');
+            }
+
+            const data = await res.json();
+            const jobId = data.job_id;
+            window.BulkState.activeJobId = jobId;
+            connectBulkEventSource(jobId, action);
+        } catch (err) {
+            window.BulkState.isRunning = false;
+            const titleEl = document.getElementById('bulkModalTitle');
+            const badgeEl = document.getElementById('bulkModalStatusBadge');
+            const listEl = document.getElementById('bulkProgressList');
+            const doneBtnText = document.getElementById('bulkModalDoneBtnText');
+
+            if (titleEl) titleEl.innerText = 'Action Failed to Start';
+            if (badgeEl) {
+                badgeEl.innerText = 'FAILED';
+                badgeEl.className = 'text-[10px] font-mono px-2.5 py-1 rounded bg-rose-500/10 text-rose-400 border border-rose-500/30 font-bold';
+            }
+            if (listEl) {
+                listEl.innerHTML = `<div class="p-2 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300 font-sans">${err.message}</div>`;
+            }
+            if (doneBtnText) doneBtnText.innerText = 'Close';
+            if (typeof showToast === 'function') showToast(err.message, 'error');
+        }
+    }
+
+    function openBulkModal(action, totalCount) {
+        window.BulkState.isRunning = true;
+        const modal = document.getElementById('bulkProgressModal');
+        const titleEl = document.getElementById('bulkModalTitle');
+        const subtitleEl = document.getElementById('bulkModalSubtitle');
+        const badgeEl = document.getElementById('bulkModalStatusBadge');
+        const barEl = document.getElementById('bulkProgressBar');
+        const pctEl = document.getElementById('bulkProgressPct');
+        const compEl = document.getElementById('bulkProgressCompleted');
+        const totalEl = document.getElementById('bulkProgressTotal');
+        const listEl = document.getElementById('bulkProgressList');
+        const doneBtn = document.getElementById('bulkModalDoneBtn');
+        const doneBtnText = document.getElementById('bulkModalDoneBtnText');
+
+        if (action === 'pause') {
+            if (titleEl) titleEl.innerText = `Pausing Trading across ${totalCount} Accounts...`;
+            if (subtitleEl) subtitleEl.innerText = 'Freezing in-memory runners (container telemetry stays live)';
+        } else {
+            if (titleEl) titleEl.innerText = `Resuming & Syncing ${totalCount} Accounts...`;
+            if (subtitleEl) subtitleEl.innerText = 'Unfreezing engines and synchronizing positions with SuperTrend';
+        }
+
+        if (badgeEl) {
+            badgeEl.innerText = 'IN PROGRESS';
+            badgeEl.className = 'text-[10px] font-mono px-2.5 py-1 rounded bg-brand-500/10 text-brand-400 border border-brand-500/30 font-bold';
+        }
+        if (barEl) barEl.style.width = '0%';
+        if (pctEl) pctEl.innerText = '0%';
+        if (compEl) compEl.innerText = '0';
+        if (totalEl) totalEl.innerText = totalCount;
+        if (listEl) listEl.innerHTML = '<div class="text-slate-500 text-[11px] italic">Dispatching job to container cluster...</div>';
+        if (doneBtnText) doneBtnText.innerText = 'Run in Background';
+        if (doneBtn) {
+            doneBtn.className = 'px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1.5';
+        }
+
+        if (modal) modal.classList.remove('hidden');
+        if (window.lucide) lucide.createIcons();
+    }
+
+    function connectBulkEventSource(jobId, action) {
+        if (window.BulkState.eventSource) {
+            window.BulkState.eventSource.close();
+            window.BulkState.eventSource = null;
+        }
+
+        const es = new EventSource('/admin/bulk-operations/stream/' + jobId);
+        window.BulkState.eventSource = es;
+
+        const listEl = document.getElementById('bulkProgressList');
+        const barEl = document.getElementById('bulkProgressBar');
+        const pctEl = document.getElementById('bulkProgressPct');
+        const compEl = document.getElementById('bulkProgressCompleted');
+        const titleEl = document.getElementById('bulkModalTitle');
+        const badgeEl = document.getElementById('bulkModalStatusBadge');
+        const doneBtn = document.getElementById('bulkModalDoneBtn');
+        const doneBtnText = document.getElementById('bulkModalDoneBtnText');
+        const iconHeader = document.getElementById('bulkModalHeaderIcon');
+
+        let isFirstItem = true;
+
+        es.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'INIT') {
+                    if (listEl) listEl.innerHTML = '';
+                } else if (data.type === 'PROGRESS') {
+                    if (isFirstItem && listEl) {
+                        listEl.innerHTML = '';
+                        isFirstItem = false;
+                    }
+                    if (compEl) compEl.innerText = data.current;
+                    if (pctEl) pctEl.innerText = data.pct + '%';
+                    if (barEl) barEl.style.width = data.pct + '%';
+
+                    const item = data.client_result;
+                    if (item && listEl) {
+                        const row = document.createElement('div');
+                        row.className = 'flex items-center justify-between gap-2 py-1 border-b border-bordercolor/40 text-[11px]';
+                        
+                        let badgeClass = 'bg-slate-700 text-slate-300';
+                        let badgeText = item.status;
+                        if (item.status === 'SYNCED') {
+                            badgeClass = 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+                        } else if (item.status === 'ALREADY_SYNCED') {
+                            badgeClass = 'bg-blue-500/20 text-blue-300 border border-blue-500/40';
+                        } else if (item.status === 'PAUSED') {
+                            badgeClass = 'bg-amber-500/20 text-amber-300 border border-amber-500/40';
+                        } else if (item.status === 'RMS_SHORTFALL') {
+                            badgeClass = 'bg-rose-500/20 text-rose-300 border border-rose-500/40';
+                        } else if (item.status === 'ERROR') {
+                            badgeClass = 'bg-rose-600/30 text-rose-200 border border-rose-600/50';
+                        }
+
+                        row.innerHTML = `
+                            <div class="flex items-center space-x-2 truncate">
+                                <span class="px-1.5 py-0.5 rounded font-mono text-[9px] uppercase ${badgeClass}">${badgeText}</span>
+                                <span class="font-bold text-slate-200">${item.name || item.tenant_id.toUpperCase()}</span>
+                                <span class="text-slate-400 truncate">${item.message || ''}</span>
+                            </div>
+                            <span class="text-[10px] text-slate-500 shrink-0 font-mono">${item.latency_ms || 0}ms</span>
+                        `;
+                        listEl.appendChild(row);
+                        listEl.scrollTop = listEl.scrollHeight;
+                    }
+                } else if (data.type === 'COMPLETE') {
+                    es.close();
+                    window.BulkState.eventSource = null;
+                    window.BulkState.isRunning = false;
+
+                    if (barEl) barEl.style.width = '100%';
+                    if (pctEl) pctEl.innerText = '100%';
+                    if (compEl) compEl.innerText = data.total;
+
+                    if (badgeEl) {
+                        badgeEl.innerText = 'COMPLETED';
+                        badgeEl.className = 'text-[10px] font-mono px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold';
+                    }
+                    if (titleEl) {
+                        titleEl.innerText = `Bulk Action Complete (${data.success_count}/${data.total} Succeeded)`;
+                    }
+                    if (iconHeader) {
+                        iconHeader.classList.remove('animate-spin');
+                        iconHeader.setAttribute('data-lucide', 'check-circle-2');
+                    }
+                    if (doneBtn) {
+                        doneBtn.className = 'px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition flex items-center gap-1.5 active:scale-95';
+                    }
+                    if (doneBtnText) doneBtnText.innerText = 'Done';
+
+                    // Deselect cleared accounts and refresh dashboard in-place
+                    clearAllSelections();
+                    const stream = document.getElementById('dashboardStreamContainer');
+                    if (stream && typeof htmx !== 'undefined') {
+                        htmx.trigger(stream, 'refresh');
+                    }
+                    if (typeof showToast === 'function') {
+                        showToast(`Bulk operation finished: ${data.success_count} accounts processed successfully!`, 'success');
+                    }
+                    if (window.lucide) lucide.createIcons();
+                }
+            } catch (err) {
+                console.error('Error parsing SSE bulk progress event:', err);
+            }
+        };
+
+        es.onerror = function() {
+            if (es.readyState === EventSource.CLOSED) return;
+            es.close();
+            window.BulkState.eventSource = null;
+            window.BulkState.isRunning = false;
+
+            if (badgeEl) {
+                badgeEl.innerText = 'COMPLETED';
+                badgeEl.className = 'text-[10px] font-mono px-2.5 py-1 rounded bg-slate-700 text-slate-300';
+            }
+            if (doneBtnText) doneBtnText.innerText = 'Close';
+            const stream = document.getElementById('dashboardStreamContainer');
+            if (stream && typeof htmx !== 'undefined') {
+                htmx.trigger(stream, 'refresh');
+            }
+        };
+    }
+
+    function closeBulkModal() {
+        if (window.BulkState.eventSource) {
+            window.BulkState.eventSource.close();
+            window.BulkState.eventSource = null;
+        }
+        window.BulkState.isRunning = false;
+        const modal = document.getElementById('bulkProgressModal');
+        if (modal) modal.classList.add('hidden');
+
+        // Trigger HTMX refresh
+        const stream = document.getElementById('dashboardStreamContainer');
+        if (stream && typeof htmx !== 'undefined') {
+            htmx.trigger(stream, 'refresh');
         }
     }
 
