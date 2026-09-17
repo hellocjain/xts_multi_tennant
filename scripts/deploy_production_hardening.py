@@ -51,9 +51,11 @@ def main():
         ("client/config.py", "/opt/xts_multi/client/config.py"),
         ("client/xts_api.py", "/opt/xts_multi/client/xts_api.py"),
         ("client/supertrend_engine.py", "/opt/xts_multi/client/supertrend_engine.py"),
+        ("client/custom_strategy_engine.py", "/opt/xts_multi/client/custom_strategy_engine.py"),
         ("client/main.py", "/opt/xts_multi/client/main.py"),
         ("client/tests/test_production_hardening_audit.py", "/opt/xts_multi/client/tests/test_production_hardening_audit.py"),
         ("client/tests/test_auto_rollover_future_months.py", "/opt/xts_multi/client/tests/test_auto_rollover_future_months.py"),
+        ("client/tests/test_saas_production_audit_edge_cases.py", "/opt/xts_multi/client/tests/test_saas_production_audit_edge_cases.py"),
     ]
     for local_rel, remote_path in sync_files:
         local_path = os.path.join(REPO_ROOT, local_rel)
@@ -69,13 +71,15 @@ def main():
         "docker cp /opt/xts_multi/client/config.py xts_client_abk01:/app/config.py && "
         "docker cp /opt/xts_multi/client/xts_api.py xts_client_abk01:/app/xts_api.py && "
         "docker cp /opt/xts_multi/client/supertrend_engine.py xts_client_abk01:/app/supertrend_engine.py && "
+        "docker cp /opt/xts_multi/client/custom_strategy_engine.py xts_client_abk01:/app/custom_strategy_engine.py && "
         "docker cp /opt/xts_multi/client/main.py xts_client_abk01:/app/main.py && "
         "docker cp /opt/xts_multi/client/tests/test_production_hardening_audit.py xts_client_abk01:/app/tests/test_production_hardening_audit.py && "
-        "docker cp /opt/xts_multi/client/tests/test_auto_rollover_future_months.py xts_client_abk01:/app/tests/test_auto_rollover_future_months.py"
+        "docker cp /opt/xts_multi/client/tests/test_auto_rollover_future_months.py xts_client_abk01:/app/tests/test_auto_rollover_future_months.py && "
+        "docker cp /opt/xts_multi/client/tests/test_saas_production_audit_edge_cases.py xts_client_abk01:/app/tests/test_saas_production_audit_edge_cases.py"
     )
     run_cmd(client, copy_test)
 
-    test_cmd = "docker exec -w /app -e PYTHONPATH=/app xts_client_abk01 python3 -m pytest /app/tests/test_production_hardening_audit.py /app/tests/test_auto_rollover_future_months.py -v"
+    test_cmd = "docker exec -w /app -e PYTHONPATH=/app xts_client_abk01 python3 -m pytest /app/tests/test_production_hardening_audit.py /app/tests/test_auto_rollover_future_months.py /app/tests/test_saas_production_audit_edge_cases.py -v"
     st, out, err = run_cmd(client, test_cmd)
     print(out)
     if st != 0:
@@ -92,6 +96,7 @@ def main():
             f"docker cp /opt/xts_multi/client/config.py {c_name}:/app/config.py && "
             f"docker cp /opt/xts_multi/client/xts_api.py {c_name}:/app/xts_api.py && "
             f"docker cp /opt/xts_multi/client/supertrend_engine.py {c_name}:/app/supertrend_engine.py && "
+            f"docker cp /opt/xts_multi/client/custom_strategy_engine.py {c_name}:/app/custom_strategy_engine.py && "
             f"docker cp /opt/xts_multi/client/main.py {c_name}:/app/main.py && "
             f"docker restart {c_name}"
         )

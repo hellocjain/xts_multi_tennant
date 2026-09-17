@@ -59,6 +59,8 @@ REFRESHING_MD = False
 LAST_REFRESH_ATTEMPT = 0
 REFRESH_COOLDOWN_SECONDS = 15
 MIN_SANE_INSTRUMENT_COUNT = 500
+_LAST_RESOLUTION_ERROR_TIME: Dict[str, float] = {}
+_LAST_MD_TOKEN_ERROR_TIME: float = 0.0
 
 class TokenBucketRateLimiter:
     """Thread-safe Token Bucket Rate Limiter enforcing max 8 req/sec for order-mutating endpoints."""
@@ -192,7 +194,11 @@ def clear_tokens():
     with MD_REFRESH_CV:
         MARKET_DATA_TOKEN = None
         MARKET_DATA_TOKEN_ACQUIRED_AT = 0
-    logger.info("Session tokens cleared.")
+    try:
+        api_session.cookies.clear()
+    except Exception:
+        pass
+    logger.info("Session tokens and cookies cleared.")
 
 LAST_INTERACTIVE_AUTH_ATTEMPT = 0
 LAST_INTERACTIVE_AUTH_ERROR = None
@@ -351,7 +357,13 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
     """
     token, base_md_url = get_marketdata_token()
     if not token or not base_md_url:
-        logger.error(f"OHLC: Failed to acquire Market Data token for {exchange_segment}:{exchange_instrument_id}")
+        now_ts = time.time()
+        global _LAST_MD_TOKEN_ERROR_TIME
+        if now_ts - _LAST_MD_TOKEN_ERROR_TIME > 300.0:
+            logger.error(f"OHLC: Failed to acquire Market Data token for {exchange_segment}:{exchange_instrument_id}")
+            _LAST_MD_TOKEN_ERROR_TIME = now_ts
+        else:
+            logger.debug(f"OHLC: Failed to acquire Market Data token for {exchange_segment}:{exchange_instrument_id} (throttled)")
         return []
 
     IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
@@ -551,8 +563,14 @@ def refresh_master_cache(force=False):
 
         md_token, md_base_url = get_marketdata_token()
         if not md_token:
-            logger.error("Failed to acquire Market Data token.")
-            send_ops_alert("XTS bot: failed to acquire market-data token during master refresh.")
+            now_ts = time.time()
+            global _LAST_MD_TOKEN_ERROR_TIME
+            if now_ts - _LAST_MD_TOKEN_ERROR_TIME > 300.0:
+                logger.error("Failed to acquire Market Data token.")
+                send_ops_alert("XTS bot: failed to acquire market-data token during master refresh.")
+                _LAST_MD_TOKEN_ERROR_TIME = now_ts
+            else:
+                logger.debug("Failed to acquire Market Data token (throttled).")
             return bool(FUT_MASTER or CASH_MASTER)
 
         url = f"{md_base_url}/instruments/master"
@@ -689,6 +707,15 @@ def cache_is_healthy():
         today = datetime.datetime.now(IST).date()
         return bool((FUT_MASTER or CASH_MASTER) and CACHE_DATE == today)
 
+def get_cache_counts():
+    """Thread-safe query of master cache sizes and total contract counts."""
+    with CACHE_LOCK:
+        fut_len = len(FUT_MASTER)
+        fut_contracts = sum(len(contracts) for contracts in FUT_MASTER.values())
+        cash_len = len(CASH_MASTER)
+        cash_contracts = sum(len(contracts) for contracts in CASH_MASTER.values())
+        return fut_len, fut_contracts, cash_len, cash_contracts
+
 def start_cache_watchdog():
     interval = getattr(config, "CACHE_WATCHDOG_INTERVAL_SECONDS", 30)
     def _loop():
@@ -776,16 +803,31 @@ def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
 
                 candidates = valid_contracts if valid_contracts else available_contracts
                 if not candidates:
-                    logger.error(f"Cannot resolve active contract for '{symbol}': no candidate contracts found.")
+                    now_err_ts = time.time()
+                    last_err_ts = _LAST_RESOLUTION_ERROR_TIME.get(symbol, 0.0)
+                    if now_err_ts - last_err_ts > 300.0:
+                        logger.error(f"Cannot resolve active contract for '{symbol}': no candidate contracts found.")
+                        _LAST_RESOLUTION_ERROR_TIME[symbol] = now_err_ts
+                    else:
+                        logger.debug(f"Cannot resolve active contract for '{symbol}': no candidate contracts found (throttled).")
                     return None, None, None, None, None, None, None
                 idx = min(max(0, depth - 1), len(candidates) - 1)
                 front = candidates[idx]
                 exp_date, exch_id, exch_seg, desc, tick_size, lot_size, freeze_qty = front
                 prod_type = "MIS" if exch_seg in ["NSECM", "BSECM"] else "NRML"
+                if symbol in _LAST_RESOLUTION_ERROR_TIME:
+                    _LAST_RESOLUTION_ERROR_TIME.pop(symbol, None)
+                    logger.info(f"Contract resolution restored for '{symbol}'.")
                 logger.info(f"FRONT-MONTH MATCH -> {symbol} => {matched} [{desc}] : ID {exch_id} | Seg {exch_seg} | Expiry {exp_date}")
                 return exch_id, exch_seg, prod_type, tick_size, lot_size, freeze_qty, exp_date
 
-    logger.error(f"Cannot resolve active contract for '{symbol}'. Trade aborted.")
+    now_err_ts = time.time()
+    last_err_ts = _LAST_RESOLUTION_ERROR_TIME.get(symbol, 0.0)
+    if now_err_ts - last_err_ts > 300.0:
+        logger.error(f"Cannot resolve active contract for '{symbol}'. Trade aborted.")
+        _LAST_RESOLUTION_ERROR_TIME[symbol] = now_err_ts
+    else:
+        logger.debug(f"Cannot resolve active contract for '{symbol}'. Trade aborted (throttled).")
     return None, None, None, None, None, None, None
 
 def get_dynamic_contract_info(symbol):
@@ -1473,7 +1515,17 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
                 refund_daily_notional(order_val)
                 return {"status": "error", "message": "Rate limit exceeded"}
             response = api_session.post(url, headers=headers, json=payload, timeout=8)
-            data = response.json()
+            try:
+                data = response.json()
+            except Exception:
+                logger.critical(f"BROKER RESPONSE NON-JSON for {order_ref} (HTTP {response.status_code}). Checking status by ref...")
+                chunk_ref = format_order_ref_chunk(order_ref, 1)
+                fallback_st = check_order_status_by_ref(chunk_ref)
+                if fallback_st in ("Filled", "PartiallyFilled", "New", "Open"):
+                    data = {"type": "success", "result": {"OrderStatus": fallback_st, "OrderUniqueIdentifier": chunk_ref}}
+                else:
+                    refund_daily_notional(order_val)
+                    return {"status": "error", "message": f"Invalid broker response (HTTP {response.status_code})"}
 
             if data.get('type') == 'success':
                 app_order_id = str(data.get("result", {}).get("AppOrderID") or "") if isinstance(data.get("result"), dict) else ""
@@ -1540,7 +1592,18 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
                 break
 
             response = api_session.post(url, headers=headers, json=chunk_payload, timeout=8)
-            data = response.json()
+            try:
+                data = response.json()
+            except Exception:
+                logger.critical(f"BROKER RESPONSE NON-JSON on slice [{idx}/{len(chunks)}] for {chunk_ref} (HTTP {response.status_code}). Checking status by ref...")
+                fallback_st = check_order_status_by_ref(chunk_ref)
+                if fallback_st in ("Filled", "PartiallyFilled", "New", "Open"):
+                    data = {"type": "success", "result": {"OrderStatus": fallback_st, "OrderUniqueIdentifier": chunk_ref}}
+                else:
+                    undispatched_val = base_price * (execution_qty - total_dispatched_qty) * contract_mult
+                    refund_daily_notional(undispatched_val)
+                    dispatched_results.append({"status": "error", "message": f"Invalid broker response (HTTP {response.status_code})"})
+                    break
             if data.get('type') == 'success':
                 app_order_id = str(data.get("result", {}).get("AppOrderID") or "") if isinstance(data.get("result"), dict) else ""
                 rms_res = verify_order_rms_acceptance(chunk_ref, app_order_id=app_order_id)
@@ -2408,7 +2471,7 @@ def panic_square_off_all():
                     "clientID": client_id,
                 }
                 try:
-                    if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
+                    if not ORDER_RATE_LIMITER.acquire(timeout=5.0):
                         logger.critical(f"PANIC: Rate limit timeout exceeded for square-off slice {order_ref}. Skipping.")
                         failed_chunks.append({
                             "symbol": sym,

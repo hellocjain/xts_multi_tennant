@@ -98,15 +98,18 @@ _DB_PATH = os.path.join(DATA_DIR, "signals.db")
 _DB_LOCK = threading.Lock()
 
 def _db_conn():
-    conn = sqlite3.connect(_DB_PATH, timeout=10, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=-2000")
+    conn = sqlite3.connect(_DB_PATH, timeout=30.0, check_same_thread=False)
+    conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
 def db_init():
     with _DB_LOCK:
-        with closing(_db_conn()) as conn:
+        with closing(sqlite3.connect(_DB_PATH, timeout=30.0)) as conn:
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA cache_size=-2000")
+            conn.execute("PRAGMA wal_autocheckpoint=1000")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS signals (
                     id TEXT PRIMARY KEY,
@@ -129,6 +132,10 @@ def db_init():
                     active_contract_desc TEXT
                 )
             """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_status ON signals(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_received_at ON signals(received_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_updated_at ON signals(updated_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_signal_dedup_ts ON signal_dedup(timestamp)")
             try:
                 cols = [c[1] for c in conn.execute("PRAGMA table_info(strategy_virtual_positions)").fetchall()]
                 if "active_contract_id" not in cols:
@@ -227,6 +234,14 @@ def db_prune_old(max_age_seconds=7 * 24 * 3600):
                 "DELETE FROM signals WHERE updated_at < ? AND status NOT IN ('pending','processing')",
                 (cutoff,),
             )
+            conn.execute(
+                "DELETE FROM signal_dedup WHERE timestamp < ?",
+                (cutoff,),
+            )
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
             conn.commit()
 
 def db_get_virtual_position(strategy_key: str) -> int:
@@ -619,16 +634,15 @@ TRADING_PAUSED = False
 async def health():
     unfinished = await anyio.to_thread.run_sync(db_fetch_unfinished)
     notional_state = await anyio.to_thread.run_sync(xts_api.get_daily_notional_state)
-    fut_contracts = sum(len(contracts) for contracts in xts_api.FUT_MASTER.values())
-    cash_contracts = sum(len(contracts) for contracts in xts_api.CASH_MASTER.values())
+    fut_len, fut_contracts, cash_len, cash_contracts = xts_api.get_cache_counts()
     return {
         "client_id": getattr(config, "CLIENT_ID", ""),
         "trading_paused": TRADING_PAUSED,
         "cache_healthy": xts_api.cache_is_healthy(),
         "cache_date": str(xts_api.CACHE_DATE) if xts_api.CACHE_DATE else "N/A",
-        "futures_loaded": len(xts_api.FUT_MASTER),
+        "futures_loaded": fut_len,
         "futures_contracts": fut_contracts,
-        "cash_loaded": len(xts_api.CASH_MASTER),
+        "cash_loaded": cash_len,
         "cash_contracts": cash_contracts,
         "interactive_token_active": bool(xts_api.INTERACTIVE_TOKEN),
         "market_data_token_active": bool(xts_api.MARKET_DATA_TOKEN),
@@ -650,16 +664,15 @@ async def refresh_master(request: Request):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
     ok = await anyio.to_thread.run_sync(xts_api.refresh_master_cache, True)
-    fut_contracts = sum(len(contracts) for contracts in xts_api.FUT_MASTER.values())
-    cash_contracts = sum(len(contracts) for contracts in xts_api.CASH_MASTER.values())
+    fut_len, fut_contracts, cash_len, cash_contracts = xts_api.get_cache_counts()
     
     return {
         "status": "success" if ok else "error",
         "cache_healthy": ok,
         "cached_date": str(xts_api.CACHE_DATE) if xts_api.CACHE_DATE else "N/A",
-        "futures_symbols": len(xts_api.FUT_MASTER),
+        "futures_symbols": fut_len,
         "futures_contracts": fut_contracts,
-        "cash_symbols": len(xts_api.CASH_MASTER),
+        "cash_symbols": cash_len,
         "cash_contracts": cash_contracts,
         "message": "Master cache refreshed successfully" if ok else "Failed to download master cache from broker"
     }
@@ -1081,16 +1094,16 @@ async def dry_run_custom_strategy_endpoint(request: Request):
     # Fetch real historical candles
     tf_seconds = parse_timeframe_to_seconds(timeframe) if "parse_timeframe_to_seconds" in globals() else 900
     try:
-        resolved = xts_api.resolve_contract(symbol)
+        resolved = await anyio.to_thread.run_sync(xts_api.resolve_contract, symbol)
         inst_id = resolved.get("inst_id") if resolved else None
         exch_seg = resolved.get("exch_seg", "MCXFO") if resolved else "MCXFO"
         if not inst_id:
             return {"status": "error", "message": f"Symbol '{symbol}' not found in contract master."}
-        candles = xts_api.fetch_ohlc_candles(exch_seg, inst_id, tf_seconds, 150)
+        candles = await anyio.to_thread.run_sync(xts_api.fetch_ohlc_candles, exch_seg, inst_id, tf_seconds, 150)
     except Exception as e:
         return {"status": "error", "message": f"Failed to fetch market data: {e}"}
 
-    result = MultiCustomStrategyEngine.evaluate_dry_run(code_str, candles, params=params)
+    result = await anyio.to_thread.run_sync(MultiCustomStrategyEngine.evaluate_dry_run, code_str, candles, params)
     if result.get("error"):
         return {"status": "error", "message": result["error"]}
 
@@ -1116,7 +1129,7 @@ async def validate_symbol_endpoint(request: Request, symbol: str = ""):
     if not sym:
         return {"valid": False, "error": "Symbol cannot be empty"}
 
-    contract = xts_api.resolve_contract(sym)
+    contract = await anyio.to_thread.run_sync(xts_api.resolve_contract, sym)
     if not contract or not contract.get("inst_id"):
         return {"valid": False, "symbol": sym, "error": f"Symbol '{sym}' not found in contract master file"}
 
@@ -1145,7 +1158,7 @@ async def get_market_readiness(request: Request, symbol: str = ""):
             return JSONResponse(status_code=403, content={"status": "error", "message": "Forbidden"})
 
     sym = symbol.strip() or supertrend_engine.symbol
-    return xts_api.check_live_market_readiness(sym)
+    return await anyio.to_thread.run_sync(xts_api.check_live_market_readiness, sym)
 
 @app.post("/internal/pause")
 async def pause_trading(request: Request):
@@ -1254,7 +1267,7 @@ async def panic(request: Request):
         "order_ref": panic_ref,
         "source": "admin_portal_killswitch"
     }
-    db_insert_pending(sig_id, panic_payload)
+    await anyio.to_thread.run_sync(db_insert_pending, sig_id, panic_payload)
 
     result = await anyio.to_thread.run_sync(xts_api.panic_square_off_all)
 
@@ -1268,13 +1281,13 @@ async def panic(request: Request):
             panic_payload["symbol"] = sym_names
 
     status = "done" if (isinstance(result, dict) and result.get("status") == "success") else "partial_failure" if (isinstance(result, dict) and result.get("status") == "partial_failure") else "failed"
-    db_update_status(sig_id, status, result, payload=panic_payload)
+    await anyio.to_thread.run_sync(db_update_status, sig_id, status, result, panic_payload)
 
-    # Finding #7 Fix: Reset virtual positions in memory and SQLite on Panic Square-off
+    # Reset virtual positions in memory and SQLite on Panic Square-off
     if supertrend_engine:
         for r in getattr(supertrend_engine, "strategies", {}).values():
             r.virtual_position = 0
-            db_set_virtual_position(r.strategy_key, r.symbol, r.timeframe, 0)
+            await anyio.to_thread.run_sync(db_set_virtual_position, r.strategy_key, r.symbol, r.timeframe, 0)
     if custom_strategy_engine:
         for r in getattr(custom_strategy_engine, "strategies", {}).values():
             if hasattr(r, "virtual_position"):
@@ -1321,7 +1334,8 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     secret_ok = bool(expected_secret) and hmac.compare_digest(incoming_secret, expected_secret)
 
     if not secret_ok:
-        prior = FAILED_ATTEMPTS.get(client_ip, [])
+        with FAILED_ATTEMPTS_LOCK:
+            prior = list(FAILED_ATTEMPTS.get(client_ip, []))
         prior = [ts for ts in prior if now - ts < 900]
         if len(prior) >= 10:
             logger.warning(f"RATE LIMIT: IP {client_ip} temporarily banned due to brute force.")

@@ -89,7 +89,7 @@ class BaseStrategy:
 
     @staticmethod
     def calculate_rsi(prices: List[float], period: int = 14) -> List[float]:
-        if len(prices) < period + 1:
+        if not prices or period <= 0 or len(prices) < period + 1:
             return []
         deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
         gains = [d if d > 0 else 0.0 for d in deltas]
@@ -193,6 +193,10 @@ async def run_strategy_in_isolated_process(
     )
     proc.start()
     worker_pid = proc.pid
+    try:
+        child_conn.close()
+    except Exception:
+        pass
 
     try:
         await asyncio.to_thread(proc.join, timeout)
@@ -212,6 +216,10 @@ async def run_strategy_in_isolated_process(
     finally:
         try:
             parent_conn.close()
+        except Exception:
+            pass
+        try:
+            child_conn.close()
         except Exception:
             pass
         if proc.is_alive():
@@ -352,7 +360,14 @@ class SingleCustomStrategyRunner:
             dt = datetime.datetime.fromtimestamp(last_ts, tz=ist_tz)
 
             seconds_from_0900 = (dt.hour - 9) * 3600 + dt.minute * 60 + dt.second + 1
-            is_valid_ist_boundary = (seconds_from_0900 % tf_seconds == 0)
+            seconds_from_0915 = (dt.hour - 9) * 3600 + (dt.minute - 15) * 60 + dt.second + 1
+            seconds_from_1700 = (dt.hour - 17) * 3600 + dt.minute * 60 + dt.second + 1
+
+            is_valid_ist_boundary = (
+                (seconds_from_0900 % tf_seconds == 0)
+                or (seconds_from_0915 >= 0 and seconds_from_0915 % tf_seconds == 0)
+                or (seconds_from_1700 >= 0 and seconds_from_1700 % tf_seconds == 0)
+            )
 
             if len(candles) >= 2:
                 prev_ts = int(candles[-2].get("time") or candles[-2].get("timestamp", 0))
@@ -379,7 +394,7 @@ class SingleCustomStrategyRunner:
 
         # 1. Resolve Instrument
         exch_seg = getattr(self, "exchange_segment", "MCXFO") or "MCXFO"
-        inst_info = xts_api_module.resolve_contract(self.symbol)
+        inst_info = await asyncio.to_thread(xts_api_module.resolve_contract, self.symbol)
         if not inst_info or not inst_info.get("inst_id"):
             self.last_error = f"Contract resolution failed for {self.symbol}"
             return
@@ -388,7 +403,7 @@ class SingleCustomStrategyRunner:
         freeze_limit = int(inst_info.get("freeze_qty") or 6000)
 
         # 2. Check Broker Positions
-        positions = xts_api_module.get_positions_telemetry()
+        positions = await asyncio.to_thread(xts_api_module.get_positions_telemetry)
         broker_qty = 0
         target_token = f"_{self.symbol}_"
         for p in positions.get("positions", []):
@@ -401,7 +416,7 @@ class SingleCustomStrategyRunner:
 
         # 3. Check for In-Flight / Open Orders for this exact strategy token
         try:
-            broker_orders = xts_api_module.get_broker_orders()
+            broker_orders = await asyncio.to_thread(xts_api_module.get_broker_orders)
             expected_ref_token = f"_{self.symbol}_{self.timeframe.upper()}_"
             for order in broker_orders:
                 status = str(order.get("OrderStatus", "")).strip().upper()
@@ -508,8 +523,15 @@ class SingleCustomStrategyRunner:
         sig_id = f"cs_exit_{uuid.uuid4().hex[:8]}"
         if self.dispatch_fn:
             await self.dispatch_fn(sig_id, payload)
-        elif hasattr(main_module, "dispatch_and_record_signal"):
-            await main_module.dispatch_and_record_signal(sig_id, payload)
+        elif main_module:
+            is_paper = (self.execution_mode == "PAPER")
+            if hasattr(main_module, "db_insert_pending"):
+                main_module.db_insert_pending(sig_id, payload)
+            if hasattr(main_module, "_dispatch_and_record"):
+                await asyncio.to_thread(
+                    main_module._dispatch_and_record,
+                    sig_id, action, self.symbol, qty, 0.0, order_ref, is_paper
+                )
 
         self.recent_trade_markers.append({
             "time": self.last_candle_time or int(time.time()),
@@ -518,6 +540,8 @@ class SingleCustomStrategyRunner:
             "shape": "arrowDown" if action == "SELL" else "arrowUp",
             "text": f"EXIT {side} ({qty})"
         })
+        if len(self.recent_trade_markers) > 100:
+            self.recent_trade_markers = self.recent_trade_markers[-100:]
 
     async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000) -> None:
         order_ref = f"CS_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}"
@@ -534,8 +558,15 @@ class SingleCustomStrategyRunner:
         sig_id = f"cs_entry_{uuid.uuid4().hex[:8]}"
         if self.dispatch_fn:
             await self.dispatch_fn(sig_id, payload)
-        elif hasattr(main_module, "dispatch_and_record_signal"):
-            await main_module.dispatch_and_record_signal(sig_id, payload)
+        elif main_module:
+            is_paper = (self.execution_mode == "PAPER")
+            if hasattr(main_module, "db_insert_pending"):
+                main_module.db_insert_pending(sig_id, payload)
+            if hasattr(main_module, "_dispatch_and_record"):
+                await asyncio.to_thread(
+                    main_module._dispatch_and_record,
+                    sig_id, action, self.symbol, qty, 0.0, order_ref, is_paper
+                )
 
         self.recent_trade_markers.append({
             "time": self.last_candle_time or int(time.time()),
@@ -544,6 +575,8 @@ class SingleCustomStrategyRunner:
             "shape": "arrowDown" if action == "SELL" else "arrowUp",
             "text": f"{action} {qty}"
         })
+        if len(self.recent_trade_markers) > 100:
+            self.recent_trade_markers = self.recent_trade_markers[-100:]
 
 
 class MultiCustomStrategyEngine:

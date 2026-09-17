@@ -661,9 +661,19 @@ class SingleSuperTrendRunner:
             ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
             dt = datetime.datetime.fromtimestamp(last_ts, tz=ist_tz)
 
-            # Exact seconds elapsed from 09:00:00 IST market open
+            # Exact seconds elapsed from market open:
+            # MCX standard open: 09:00:00 IST
+            # NSE / BSE standard open: 09:15:00 IST
+            # MCX morning session holiday open: 17:00:00 IST
             seconds_from_0900 = (dt.hour - 9) * 3600 + dt.minute * 60 + dt.second + 1
-            is_valid_ist_boundary = (seconds_from_0900 % tf_seconds == 0)
+            seconds_from_0915 = (dt.hour - 9) * 3600 + (dt.minute - 15) * 60 + dt.second + 1
+            seconds_from_1700 = (dt.hour - 17) * 3600 + dt.minute * 60 + dt.second + 1
+
+            is_valid_ist_boundary = (
+                (seconds_from_0900 % tf_seconds == 0)
+                or (seconds_from_0915 >= 0 and seconds_from_0915 % tf_seconds == 0)
+                or (seconds_from_1700 >= 0 and seconds_from_1700 % tf_seconds == 0)
+            )
 
             # Intra-bar partial tick candle suppression: if two candles are on same day and delta < tf_seconds - 60s
             if len(candles) >= 2:
@@ -690,7 +700,7 @@ class SingleSuperTrendRunner:
         """Executes on-demand diagnostic trace without mutating state."""
         sym = self.symbol
         tf_seconds = parse_timeframe_seconds(self.timeframe)
-        inst = xts_api_module.resolve_contract(sym)
+        inst = await asyncio.to_thread(xts_api_module.resolve_contract, sym)
         if not inst:
             return {"status": "ERROR", "error": f"Symbol '{sym}' not found in master cache"}
 
@@ -785,7 +795,7 @@ class SingleSuperTrendRunner:
         """
         async with self.lock:
             sym = self.symbol
-            inst = xts_api_module.resolve_contract(sym)
+            inst = await asyncio.to_thread(xts_api_module.resolve_contract, sym)
             if not inst:
                 return {"status": "ERROR", "error": f"Symbol '{sym}' not found in master cache"}
 
@@ -937,7 +947,7 @@ class SingleSuperTrendRunner:
             prev_side = self.strategy_position
             old_qty = abs(prev_pos)
             
-            inst = xts_api_module.resolve_contract(self.symbol) if xts_api_module else None
+            inst = await asyncio.to_thread(xts_api_module.resolve_contract, self.symbol) if xts_api_module else None
             freeze_limit = int(inst.get("freeze_qty") or 100000) if inst else 100000
             target_sym = self.last_resolved_symbol_desc or (inst.get("desc") if inst else self.symbol)
 
@@ -1019,11 +1029,22 @@ class SingleSuperTrendRunner:
 
         async with self.lock:
             # 1. Resolve Instrument
-            inst = xts_api_module.resolve_contract(self.symbol)
+            inst = await asyncio.to_thread(xts_api_module.resolve_contract, self.symbol)
             if not inst:
-                self.last_error = f"Contract resolution failed for '{self.symbol}'"
-                logger.error(f"SuperTrend [{self.symbol}]: {self.last_error}")
+                err_msg = f"Contract resolution failed for '{self.symbol}'"
+                now_err = time.time()
+                last_logged = getattr(self, "_last_res_err_log_ts", 0.0)
+                if self.last_error != err_msg or (now_err - last_logged > 300.0):
+                    logger.error(f"SuperTrend [{self.symbol}]: {err_msg}")
+                    self._last_res_err_log_ts = now_err
+                else:
+                    logger.debug(f"SuperTrend [{self.symbol}]: {err_msg} (throttled)")
+                self.last_error = err_msg
                 return
+            else:
+                if self.last_error and "Contract resolution failed" in self.last_error:
+                    logger.info(f"SuperTrend [{self.symbol}]: Contract resolution recovered successfully.")
+                    self.last_error = None
 
             inst_id = inst.get("inst_id")
             inst_desc = inst.get("desc") or self.symbol
@@ -1054,7 +1075,7 @@ class SingleSuperTrendRunner:
                     old_id = self.active_contract_id
                     old_desc = self.active_contract_desc or self.last_resolved_symbol_desc
                     if not old_desc and old_id and hasattr(xts_api_module, "get_instrument_by_id"):
-                        meta = xts_api_module.get_instrument_by_id(old_id)
+                        meta = await asyncio.to_thread(xts_api_module.get_instrument_by_id, old_id)
                         if meta and meta.get("desc"):
                             old_desc = meta["desc"]
 
@@ -1065,6 +1086,7 @@ class SingleSuperTrendRunner:
                         )
                         self.status = "ROLLOVER_FAILED_PAUSED"
                         self.is_enabled = False
+                        self.pending_rollover = False
                         if hasattr(xts_api_module, "send_ops_alert"):
                             xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} rollover aborted (unresolved expiring contract descriptor for ID {old_id}). PAUSED.")
                         return
@@ -1253,7 +1275,13 @@ class SingleSuperTrendRunner:
                     for p in positions:
                         p_sym = str(p.get("symbol", "")).upper()
                         p_id = p.get("instrument_id") or p.get("exchange_instrument_id")
-                        if p_id == inst_id or self.symbol in p_sym:
+                        id_matches = (str(p_id) == str(inst_id)) if (p_id is not None and inst_id is not None) else False
+                        sym_matches = (
+                            (self.symbol and self.symbol in p_sym) or
+                            (inst_desc and inst_desc in p_sym) or
+                            (self.active_contract_desc and self.active_contract_desc in p_sym)
+                        )
+                        if id_matches or sym_matches:
                             target_pos = p
                             break
 
@@ -1555,7 +1583,9 @@ class SingleSuperTrendRunner:
         action = "BUY" if delta > 0 else "SELL"
         is_paper = (self.execution_mode == "PAPER")
 
-        chunks = slice_quantity_for_freeze(abs_qty, freeze_limit, lot_size=getattr(self, "lot_size", 1))
+        lot_sz = max(1, int(getattr(self, "lot_size", 1) or 1))
+        freeze_lots = max(1, freeze_limit // lot_sz) if freeze_limit and freeze_limit > 0 else 100000
+        chunks = slice_quantity_for_freeze(abs_qty, freeze_lots, lot_size=1)
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             base_ref = f"ST_REV_{self.symbol}_{self.timeframe.upper()}_DELTA_{action}_{candle_ts}"
@@ -1641,7 +1671,9 @@ class SingleSuperTrendRunner:
         is_paper = (self.execution_mode == "PAPER")
         symbol_to_trade = str(target_symbol).strip() if target_symbol else self.symbol
         
-        chunks = slice_quantity_for_freeze(qty, freeze_limit, lot_size=getattr(self, "lot_size", 1))
+        lot_sz = max(1, int(getattr(self, "lot_size", 1) or 1))
+        freeze_lots = max(1, freeze_limit // lot_sz) if freeze_limit and freeze_limit > 0 else 100000
+        chunks = slice_quantity_for_freeze(qty, freeze_lots, lot_size=1)
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             base_ref = f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}"
@@ -1731,7 +1763,9 @@ class SingleSuperTrendRunner:
         is_paper = (self.execution_mode == "PAPER")
         symbol_to_trade = str(target_symbol).strip() if target_symbol else self.symbol
         
-        chunks = slice_quantity_for_freeze(qty, freeze_limit, lot_size=getattr(self, "lot_size", 1))
+        lot_sz = max(1, int(getattr(self, "lot_size", 1) or 1))
+        freeze_lots = max(1, freeze_limit // lot_sz) if freeze_limit and freeze_limit > 0 else 100000
+        chunks = slice_quantity_for_freeze(qty, freeze_lots, lot_size=1)
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             base_ref = f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}"
@@ -2049,6 +2083,9 @@ class MultiSuperTrendEngine:
         else:
             runner.is_enabled = bool(is_enabled)
         runner.status = "RUNNING" if runner.is_enabled else "DISABLED"
+        if runner.is_enabled:
+            self._drift_rejection_history.pop(runner.symbol, None)
+            runner.last_error = None
         return runner.get_telemetry()
 
     def get_strategy(self, key: str, timeframe: Optional[str] = None) -> Optional[SingleSuperTrendRunner]:
@@ -2168,7 +2205,7 @@ class MultiSuperTrendEngine:
 
         if target_sym and xts_api_module:
             try:
-                inst = xts_api_module.resolve_contract(target_sym)
+                inst = await asyncio.to_thread(xts_api_module.resolve_contract, target_sym)
                 if inst and inst.get("inst_id"):
                     inst_id = inst["inst_id"]
                     exch_seg = inst.get("exch_seg") or (runner.exchange_segment if runner else "MCXFO")
@@ -2370,7 +2407,7 @@ class MultiSuperTrendEngine:
             primary_r = runners_for_sym[0]
             total_configured_lots = sum(r.quantity for r in runners_for_sym)
 
-            inst = xts_api_module.resolve_contract(target_sym)
+            inst = await asyncio.to_thread(xts_api_module.resolve_contract, target_sym)
             if not inst:
                 continue
 
@@ -2408,8 +2445,13 @@ class MultiSuperTrendEngine:
 
             actual_raw_qty = 0
             for p in all_pos:
-                p_id = int(p.get("instrument_id") or 0)
-                if p_id == inst_id:
+                try:
+                    p_id = int(p.get("instrument_id") or 0)
+                except (ValueError, TypeError):
+                    p_id = 0
+                p_sym = str(p.get("symbol") or "").upper()
+                inst_desc = str(inst.get("desc") or "").upper()
+                if (p_id and p_id == inst_id) or (inst_desc and inst_desc == p_sym):
                     actual_raw_qty = int(p.get("quantity", 0) or 0)
                     break
 
@@ -2467,7 +2509,9 @@ class MultiSuperTrendEngine:
                     logger.info(f"🛡️ AUTO-HEAL: Dispatching corrective {action} {abs_adj_lots} lots on {target_sym}...")
                     is_paper = any(r.execution_mode == "PAPER" for r in runners_for_sym)
                     freeze_limit = getattr(config, "FREEZE_QTY_LIMIT", 100000)
-                    chunks = slice_quantity_for_freeze(abs_adj_lots, freeze_limit, lot_size=lot_size)
+                    lot_sz = max(1, int(lot_size or 1))
+                    freeze_lots = max(1, freeze_limit // lot_sz) if freeze_limit and freeze_limit > 0 else 100000
+                    chunks = slice_quantity_for_freeze(abs_adj_lots, freeze_lots, lot_size=1)
 
                     for chunk_idx, chunk_qty in enumerate(chunks, start=1):
                         chunk_ref = format_order_ref_chunk(order_ref, chunk_idx)
@@ -2673,9 +2717,11 @@ class MultiSuperTrendEngine:
                         # Batch query live touchline quotes (LTP) across all active symbols in a single request.
                         batch_pairs = []
                         seen_ids = set()
+                        runner_inst_map = {}
                         for r in mid_candle_runners:
-                            inst = xts_api_module.resolve_contract(r.symbol) if xts_api_module else None
+                            inst = await asyncio.to_thread(xts_api_module.resolve_contract, r.symbol) if xts_api_module else None
                             if inst:
+                                runner_inst_map[r.symbol] = inst
                                 iid = inst.get("inst_id")
                                 seg = inst.get("exch_seg") or r.exchange_segment or "MCXFO"
                                 if iid and iid not in seen_ids:
@@ -2686,7 +2732,7 @@ class MultiSuperTrendEngine:
                             try:
                                 live_prices = await asyncio.to_thread(xts_api_module.get_live_prices_batch, batch_pairs)
                                 for r in mid_candle_runners:
-                                    inst = xts_api_module.resolve_contract(r.symbol) if xts_api_module else None
+                                    inst = runner_inst_map.get(r.symbol)
                                     if inst:
                                         iid = inst.get("inst_id")
                                         ltp = live_prices.get(iid)
