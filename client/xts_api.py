@@ -12,6 +12,7 @@ import threading
 import fcntl
 import calendar
 import uuid
+import math
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 
 import config
@@ -392,7 +393,8 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
             return []
 
         data = resp.json()
-        raw_candles = data.get("result", {}).get("dataReponse", "")
+        res_obj = data.get("result", {})
+        raw_candles = res_obj.get("dataReponse") or res_obj.get("dataResponse") or ""
         if not raw_candles or not isinstance(raw_candles, str):
             return []
 
@@ -404,7 +406,7 @@ def fetch_ohlc_candles(exchange_segment: str, exchange_instrument_id: int, timef
             parts = row.split("|")
             if len(parts) >= 5:
                 try:
-                    raw_ts = int(parts[0])
+                    raw_ts = int(float(parts[0]))
                     # Symphony XTS Market Data API returns timestamps encoded in IST-epoch (+19,800s / 5h30m ahead of POSIX UTC).
                     # Normalize to true POSIX UTC epoch at ingestion for all downstream engines and charts.
                     ts = raw_ts - 19800
@@ -450,11 +452,12 @@ def _extract_expiry(parts, desc):
 
     desc_upper = desc.upper().strip()
 
-    m1 = re.search(r'(0[1-9]|[12]\d|3[01])([A-Z]{3})(20\d{2})', desc_upper)
+    m1 = re.search(r'(0[1-9]|[12]\d|3[01])([A-Z]{3})(20\d{2}|\d{2})', desc_upper)
     if m1:
         d, m, y = m1.groups()
+        year = int(y) if len(y) == 4 else 2000 + int(y)
         month_map = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,"JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
-        try: return datetime.date(int(y), month_map.get(m, 1), int(d)), None
+        try: return datetime.date(year, month_map.get(m, 1), int(d)), None
         except ValueError: pass
 
     m2 = re.search(r'(2\d)([1-9OND])(0[1-9]|[12]\d|3[01])\d+(?:\.\d+)?(?:CE|PE)$', desc_upper)
@@ -464,10 +467,15 @@ def _extract_expiry(parts, desc):
         try: return datetime.date(2000 + int(y), month_codes.get(m_char, 1), int(d)), None
         except ValueError: pass
 
-    m3 = re.search(r'(2\d)([A-Z]{3})(?:\d+(?:\.\d+)?(?:CE|PE)|FUT)$', desc_upper)
+    m3 = re.search(r'(?:(2\d)([A-Z]{3})|([A-Z]{3})(20\d{2}|2\d))(?:\d+(?:\.\d+)?(?:CE|PE)|FUT)$', desc_upper)
     if m3:
-        y, m = m3.groups()
-        year = 2000 + int(y)
+        y1, m1_str, m2_str, y2 = m3.groups()
+        if y1 and m1_str:
+            year = 2000 + int(y1)
+            m = m1_str
+        else:
+            year = int(y2) if len(y2) == 4 else 2000 + int(y2)
+            m = m2_str
         month_map = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,"JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
         month = month_map.get(m, 1)
         
@@ -489,10 +497,19 @@ def _sane_numeric(value, minimum, maximum, field_name, line_preview):
     return value
 
 def apply_tick_size(price, tick_size, action="BUY"):
-    if tick_size <= 0:
-        tick_size = 0.05
-    p = Decimal(str(round(float(price), 6)))
-    t = Decimal(str(tick_size))
+    try:
+        p_val = float(price)
+        t_val = float(tick_size)
+    except (ValueError, TypeError):
+        return float(price) if price else 0.0
+
+    if not math.isfinite(p_val) or p_val <= 0:
+        return 0.0
+    if not math.isfinite(t_val) or t_val <= 0:
+        t_val = 0.05
+
+    p = Decimal(str(round(p_val, 6)))
+    t = Decimal(str(t_val))
     if action == "BUY":
         ticks = (p / t).quantize(Decimal('1'), rounding=ROUND_CEILING)
     else:
@@ -500,10 +517,11 @@ def apply_tick_size(price, tick_size, action="BUY"):
     if ticks < Decimal('1'):
         ticks = Decimal('1')
     valid_price = ticks * t
-    if tick_size >= 1.0:
+    if t_val >= 1.0:
         return float(valid_price.quantize(Decimal('1')))
     else:
-        dec_places = len(str(tick_size).split('.')[1]) if '.' in str(tick_size) else 2
+        exp = t.as_tuple().exponent
+        dec_places = max(0, -exp) if isinstance(exp, int) else 2
         return round(float(valid_price), dec_places)
 
 def refresh_master_cache(force=False):
@@ -757,6 +775,9 @@ def _resolve_front_month(symbol, target_name, is_future_intent=True, depth=1):
                             valid_contracts.append(c)
 
                 candidates = valid_contracts if valid_contracts else available_contracts
+                if not candidates:
+                    logger.error(f"Cannot resolve active contract for '{symbol}': no candidate contracts found.")
+                    return None, None, None, None, None, None, None
                 idx = min(max(0, depth - 1), len(candidates) - 1)
                 front = candidates[idx]
                 exp_date, exch_id, exch_seg, desc, tick_size, lot_size, freeze_qty = front
@@ -906,7 +927,7 @@ def check_live_market_readiness(symbol: str = "") -> dict:
         contract = resolve_contract(symbol)
         if contract and contract.get("inst_id"):
             seg = contract.get("exch_seg") or "MCXFO"
-            inst_id = contract.get("inst_id")
+            inst_id = int(contract["inst_id"])
             feed_report["resolved_desc"] = contract.get("desc")
             feed_report["inst_id"] = inst_id
             feed_report["exch_seg"] = seg
@@ -924,14 +945,16 @@ def check_live_market_readiness(symbol: str = "") -> dict:
             feed_report["error"] = f"Symbol '{symbol}' cannot be resolved in master cache."
 
     # Market Hours Evaluation (IST)
-    cur_hm = (now_ist.hour, now_ist.minute)
     is_weekday = now_ist.weekday() < 5
-    if "MCX" in seg:
-        is_open = is_weekday and ((9, 0) <= cur_hm <= (23, 30))
-        hours_desc = "09:00 - 23:30 IST (Mon-Fri)"
+    if hasattr(config, "is_market_open_ist"):
+        is_open = config.is_market_open_ist(seg, now_ts=now_ist.timestamp(), force_check=True)
     else:
-        is_open = is_weekday and ((9, 15) <= cur_hm <= (15, 30))
-        hours_desc = "09:15 - 15:30 IST (Mon-Fri)"
+        cur_hm = (now_ist.hour, now_ist.minute)
+        if "MCX" in seg:
+            is_open = is_weekday and ((9, 0) <= cur_hm <= (23, 55))
+        else:
+            is_open = is_weekday and ((9, 15) <= cur_hm <= (15, 30))
+    hours_desc = "09:00 - 23:55 IST (Mon-Fri)" if "MCX" in seg else "09:15 - 15:30 IST (Mon-Fri)"
 
     market_hours_report = {
         "status": "OPEN" if is_open else "CLOSED",
@@ -1267,20 +1290,24 @@ def _monitor_and_clean_partial_fills(order_ref, client_id, token):
     except Exception as e:
         logger.error(f"Partial fill monitor error: {e}")
 
-def slice_quantity_for_freeze(quantity: int, freeze_limit: int) -> list:
+def slice_quantity_for_freeze(quantity: int, freeze_limit: int, lot_size: int = 1) -> list:
     """
     Unified freeze-quantity auto-slicing engine.
-    Splits an order quantity into an array of chunks compliant with the exchange/broker freeze limit.
+    Splits an order quantity into an array of chunks compliant with the exchange/broker freeze limit,
+    guaranteeing that chunks are strictly aligned to multiples of lot_size.
     If freeze_limit is None or <= 0 or quantity <= freeze_limit, returns [quantity].
     """
     if quantity <= 0:
         return []
+    safe_lot = max(1, int(lot_size or 1))
     if not freeze_limit or freeze_limit <= 0 or quantity <= freeze_limit:
         return [quantity]
+    
+    effective_freeze = max(safe_lot, (freeze_limit // safe_lot) * safe_lot)
     chunks = []
     rem = quantity
     while rem > 0:
-        c = min(rem, freeze_limit)
+        c = min(rem, effective_freeze)
         chunks.append(c)
         rem -= c
     return chunks
@@ -1288,7 +1315,7 @@ def slice_quantity_for_freeze(quantity: int, freeze_limit: int) -> list:
 def format_order_ref_chunk(base_ref: str, chunk_idx: int = 1, max_len: int = 50) -> str:
     """
     Safely formats and clamps an orderUniqueIdentifier to max_len (default 50 chars for Symphony XTS),
-    guaranteeing that chunk suffixes (_2, _3) and retry markers (_RETRY) are never truncated or duplicated.
+    guaranteeing that chunk suffixes (_2, _3) and retry markers (_RETRY, _RETRY2, etc.) are never truncated or duplicated.
     """
     if not base_ref:
         return ""
@@ -1297,7 +1324,8 @@ def format_order_ref_chunk(base_ref: str, chunk_idx: int = 1, max_len: int = 50)
     if len(full_ref) <= max_len:
         return full_ref
 
-    retry_suffix = "_RETRY" if "_RETRY" in str(base_ref) else ""
+    m_retry = re.search(r'(_RETRY\d*)$', str(base_ref))
+    retry_suffix = m_retry.group(1) if m_retry else ""
     combined_suffix = f"{retry_suffix}{chunk_suffix}"
     avail_prefix_len = max(1, max_len - len(combined_suffix))
 
@@ -1401,10 +1429,10 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
         "clientID": client_id or "PAPER_CLIENT",
     }
 
-    # Slicing chunk determination for freeze limits
-    chunks = slice_quantity_for_freeze(execution_qty, freeze_qty)
+    # Slicing chunk determination for freeze limits aligned to lot_size
+    chunks = slice_quantity_for_freeze(execution_qty, freeze_qty, lot_size=lot_size)
     if len(chunks) > 1:
-        logger.info(f"FREEZE AUTO-SLICING: Quantity {execution_qty} for {symbol} sliced into {len(chunks)} chunks: {chunks} (Freeze limit: {freeze_qty})")
+        logger.info(f"FREEZE AUTO-SLICING: Quantity {execution_qty} for {symbol} sliced into {len(chunks)} chunks: {chunks} (Freeze limit: {freeze_qty}, Lot size: {lot_size})")
 
     if is_paper:
         paper_order_ids = []
@@ -1451,6 +1479,12 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
                 app_order_id = str(data.get("result", {}).get("AppOrderID") or "") if isinstance(data.get("result"), dict) else ""
                 chunk_ref = format_order_ref_chunk(order_ref, 1)
                 rms_res = verify_order_rms_acceptance(chunk_ref, app_order_id=app_order_id)
+                if not rms_res.get("verified"):
+                    fallback_st = check_order_status_by_ref(chunk_ref)
+                    if fallback_st in ("Rejected", "Cancelled"):
+                        rej_reason = f"Broker RMS Rejection (Status: {fallback_st})"
+                        rms_res = {"verified": True, "status": fallback_st, "is_rejected": True, "reject_reason": rej_reason, "order_data": {}}
+
                 if rms_res.get("is_rejected"):
                     rej_reason = rms_res.get("reject_reason") or "Broker RMS Rejection"
                     logger.error(f"❌ BROKER RMS REJECTED ORDER {order_ref}: {rej_reason}")
@@ -1510,6 +1544,12 @@ def place_order(action, symbol, quantity, tv_price, order_ref, is_paper=False):
             if data.get('type') == 'success':
                 app_order_id = str(data.get("result", {}).get("AppOrderID") or "") if isinstance(data.get("result"), dict) else ""
                 rms_res = verify_order_rms_acceptance(chunk_ref, app_order_id=app_order_id)
+                if not rms_res.get("verified"):
+                    fallback_st = check_order_status_by_ref(chunk_ref)
+                    if fallback_st in ("Rejected", "Cancelled"):
+                        rej_reason = f"Broker RMS Rejection (Status: {fallback_st})"
+                        rms_res = {"verified": True, "status": fallback_st, "is_rejected": True, "reject_reason": rej_reason, "order_data": {}}
+
                 if rms_res.get("is_rejected"):
                     rej_reason = rms_res.get("reject_reason") or "Broker RMS Rejection"
                     logger.error(f"❌ BROKER RMS REJECTED SLICE [{idx}/{len(chunks)}] {chunk_ref}: {rej_reason}")
@@ -2300,11 +2340,13 @@ def panic_square_off_all():
                 tick_size = inst_meta["tick_size"]
                 freeze_limit = inst_meta["freeze_qty"]
                 exch_seg = inst_meta["exch_seg"]
+                lot_size = inst_meta.get("lot_size", 1)
             else:
                 clean_lookup = re.sub(r'[\s\-]+', '', sym)
-                _, _, _, inst_tick, _, inst_freeze, _ = get_dynamic_contract_info(clean_lookup)
+                _, _, _, inst_tick, inst_lot, inst_freeze, _ = get_dynamic_contract_info(clean_lookup)
                 tick_size = inst_tick or 0.05
                 freeze_limit = inst_freeze or getattr(config, "DEFAULT_FREEZE_QTY_IF_UNKNOWN", 100000)
+                lot_size = inst_lot or 1
 
             live_price = get_live_price(inst_id, exch_seg)
             if not live_price or live_price == "TOKEN_EXPIRED":
@@ -2345,8 +2387,8 @@ def panic_square_off_all():
             raw_limit = (live_price + buffer) if action == "BUY" else (live_price - buffer)
             exec_price = apply_tick_size(raw_limit, tick_size, action)
 
-            # Slicing chunk for freeze limits using shared slicing engine
-            chunks = slice_quantity_for_freeze(square_qty, freeze_limit)
+            # Slicing chunk for freeze limits using shared slicing engine aligned to lot_size
+            chunks = slice_quantity_for_freeze(square_qty, freeze_limit, lot_size=lot_size)
             for chunk_idx, chunk_qty in enumerate(chunks, start=1):
                 order_ref = f"PANIC_{int(time.time()*1000)}_{chunk_idx}_{uuid.uuid4().hex[:6]}"
                 order_url = f"{safe_url}/orders"
@@ -2367,7 +2409,7 @@ def panic_square_off_all():
                 }
                 try:
                     if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
-                        logger.critical(f"PANIC: Rate limit timeout exceeded for square-off slice {order_ref}. {chunk_qty} lots NOT closed.")
+                        logger.critical(f"PANIC: Rate limit timeout exceeded for square-off slice {order_ref}. Skipping.")
                         failed_chunks.append({
                             "symbol": sym,
                             "action": action,
@@ -2520,7 +2562,7 @@ def cancel_all_orders():
         logger.error(f"Sequential order cancellation error: {e}")
         return {"status": "error", "message": str(e)}
 
-def square_off_single_position(symbol: str = "", instrument_id: int = None, quantity: int = None, side: str = None, exchange_segment: str = None, product_type: str = None):
+def square_off_single_position(symbol: str = "", instrument_id: Optional[int] = None, quantity: Optional[int] = None, side: Optional[str] = None, exchange_segment: Optional[str] = None, product_type: Optional[str] = None):
     """Squares off an open position for a single instrument."""
     if getattr(config, "PAPER_TRADE_MODE", False):
         logger.info(f"PAPER TRADE: Square-off requested for symbol={symbol}")
@@ -2578,17 +2620,19 @@ def square_off_single_position(symbol: str = "", instrument_id: int = None, quan
     action = side.upper() if side else ("SELL" if qty_in_pos > 0 else "BUY")
     square_qty = abs(quantity) if (quantity is not None and quantity > 0) else abs(qty_in_pos)
 
-    # Instrument metadata for tick size and freeze limit
+    # Instrument metadata for tick size, freeze limit, and lot size
     inst_meta = get_instrument_by_id(inst_id)
     if inst_meta:
         tick_size = inst_meta["tick_size"]
         freeze_limit = inst_meta["freeze_qty"]
         exch_seg = inst_meta["exch_seg"]
+        lot_size = inst_meta.get("lot_size", 1)
     else:
         clean_lookup = re.sub(r'[\s\-]+', '', sym)
-        _, _, _, inst_tick, _, inst_freeze, _ = get_dynamic_contract_info(clean_lookup)
+        _, _, _, inst_tick, inst_lot, inst_freeze, _ = get_dynamic_contract_info(clean_lookup)
         tick_size = inst_tick or 0.05
         freeze_limit = inst_freeze or getattr(config, "DEFAULT_FREEZE_QTY_IF_UNKNOWN", 100000)
+        lot_size = inst_lot or 1
 
     live_price = get_live_price(inst_id, exch_seg)
     if not live_price or live_price == "TOKEN_EXPIRED":
@@ -2617,7 +2661,7 @@ def square_off_single_position(symbol: str = "", instrument_id: int = None, quan
     raw_limit = (live_price + buffer) if action == "BUY" else (live_price - buffer)
     exec_price = apply_tick_size(raw_limit, tick_size, action)
 
-    chunks = slice_quantity_for_freeze(square_qty, freeze_limit)
+    chunks = slice_quantity_for_freeze(square_qty, freeze_limit, lot_size=lot_size)
     successful_chunks = []
     failed_chunks = []
 
@@ -2639,8 +2683,9 @@ def square_off_single_position(symbol: str = "", instrument_id: int = None, quan
             "orderUniqueIdentifier": format_order_ref_chunk(order_ref, 1),
             "clientID": client_id,
         }
-        if not ORDER_RATE_LIMITER.acquire(timeout=3.0):
-            failed_chunks.append({"symbol": sym, "qty": chunk_qty, "reason": "Rate limit exceeded"})
+        if not ORDER_RATE_LIMITER.acquire(timeout=5.0):
+            logger.warning(f"SQUARE OFF: Rate limit timeout (5s) exceeded for {order_ref}. Skipping.")
+            failed_chunks.append({"symbol": sym, "action": action, "qty": chunk_qty, "reason": "Rate limit exceeded"})
             continue
         try:
             resp_post = api_session.post(order_url, headers=headers, json=payload, timeout=8)

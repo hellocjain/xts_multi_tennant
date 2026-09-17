@@ -375,6 +375,7 @@ class SingleSuperTrendRunner:
         self.is_configured: bool = bool(self.symbol and self.exchange_segment and self.quantity > 0)
         self.is_enabled: bool = bool(config_dict.get("is_enabled", False)) and self.is_configured
         self.strategy_key: str = f"{self.symbol}_{self.timeframe}"
+        self.lot_size: int = max(1, int(config_dict.get("lot_size", 1)))
 
         # Virtual Position & Active Contract Tracking
         self.active_contract_id: Optional[Any] = None
@@ -1029,6 +1030,7 @@ class SingleSuperTrendRunner:
             exch_seg = inst.get("exch_seg") or self.exchange_segment or "MCXFO"
             freeze_limit = int(inst.get("freeze_qty") or 100000)
             lot_size = int(inst.get("lot_size") or 1)
+            self.lot_size = lot_size
             is_derivative = exch_seg not in ["NSECM", "BSECM"]
             tf_seconds = parse_timeframe_seconds(self.timeframe)
             is_continuous = bool(CONTINUOUS_SUFFIX.search(self.symbol))
@@ -1049,8 +1051,23 @@ class SingleSuperTrendRunner:
                 contract_switched = (str(self.active_contract_id) != str(inst_id))
 
                 if contract_switched:
-                    old_desc = self.active_contract_desc or self.last_resolved_symbol_desc or self.symbol
                     old_id = self.active_contract_id
+                    old_desc = self.active_contract_desc or self.last_resolved_symbol_desc
+                    if not old_desc and old_id and hasattr(xts_api_module, "get_instrument_by_id"):
+                        meta = xts_api_module.get_instrument_by_id(old_id)
+                        if meta and meta.get("desc"):
+                            old_desc = meta["desc"]
+
+                    if not old_desc:
+                        logger.critical(
+                            f"🚨 SuperTrend [{self.symbol}]: Cannot resolve active expiring contract descriptor for ID {old_id}. "
+                            f"Aborting autonomous rollover to prevent misrouting order to new contract!"
+                        )
+                        self.status = "ROLLOVER_FAILED_PAUSED"
+                        self.is_enabled = False
+                        if hasattr(xts_api_module, "send_ops_alert"):
+                            xts_api_module.send_ops_alert(f"CRITICAL: Strategy {self.symbol} rollover aborted (unresolved expiring contract descriptor for ID {old_id}). PAUSED.")
+                        return
 
                     if self.virtual_position != 0:
                         if market_open:
@@ -1290,6 +1307,12 @@ class SingleSuperTrendRunner:
                                 return False
                         elif app_id in self.pending_order_first_seen and st not in ("NEW", "OPEN", "PENDINGNEW", "PENDINGREPLACE"):
                             self.pending_order_first_seen.pop(app_id, None)
+
+                    # Prune tracked pending order IDs older than 120s to prevent memory leak
+                    if self.pending_order_first_seen:
+                        stale_ids = [oid for oid, fts in self.pending_order_first_seen.items() if (now_ts_orders - fts) > 120.0]
+                        for oid in stale_ids:
+                            self.pending_order_first_seen.pop(oid, None)
                 except Exception as e:
                     logger.warning(f"SuperTrend [{self.symbol} ({self.timeframe})]: Order check warning: {e}")
 
@@ -1432,7 +1455,11 @@ class SingleSuperTrendRunner:
                         if not exit_ok:
                             logger.warning(f"SuperTrend [{self.symbol}]: Exit leg failed, retrying once after 2.0s...")
                             await asyncio.sleep(2.0)
-                            exit_ok = await self._execute_exit("SHORT", exit_qty, f"FLIP_EXIT_{candle_ts}_RETRY", main_module, freeze_limit)
+                            exit_qty_retry = abs(self.virtual_position)
+                            if exit_qty_retry > 0:
+                                exit_ok = await self._execute_exit("SHORT", exit_qty_retry, f"FLIP_EXIT_{candle_ts}_RETRY", main_module, freeze_limit)
+                            else:
+                                exit_ok = True
                         if not exit_ok:
                             logger.critical(f"SuperTrend [{self.symbol}]: Reversal Exit failed after retry! Aborting Entry to prevent duplicate exposure.")
                             self.status = "EXIT_FAILED_PAUSED"
@@ -1448,7 +1475,11 @@ class SingleSuperTrendRunner:
                         if not entry_ok:
                             logger.warning(f"SuperTrend [{self.symbol}]: Entry leg failed, retrying once after 2.0s...")
                             await asyncio.sleep(2.0)
-                            entry_ok = await self._execute_entry("BUY", entry_qty, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
+                            entry_qty_retry = self.quantity - self.virtual_position if self.virtual_position < self.quantity else 0
+                            if entry_qty_retry > 0:
+                                entry_ok = await self._execute_entry("BUY", entry_qty_retry, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
+                            else:
+                                entry_ok = True
                         if not entry_ok:
                             is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
                             pause_status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
@@ -1468,7 +1499,11 @@ class SingleSuperTrendRunner:
                         if not exit_ok:
                             logger.warning(f"SuperTrend [{self.symbol}]: Exit leg failed, retrying once after 2.0s...")
                             await asyncio.sleep(2.0)
-                            exit_ok = await self._execute_exit("LONG", exit_qty, f"FLIP_EXIT_{candle_ts}_RETRY", main_module, freeze_limit)
+                            exit_qty_retry = abs(self.virtual_position)
+                            if exit_qty_retry > 0:
+                                exit_ok = await self._execute_exit("LONG", exit_qty_retry, f"FLIP_EXIT_{candle_ts}_RETRY", main_module, freeze_limit)
+                            else:
+                                exit_ok = True
                         if not exit_ok:
                             logger.critical(f"SuperTrend [{self.symbol}]: Reversal Exit failed after retry! Aborting Entry to prevent duplicate exposure.")
                             self.status = "EXIT_FAILED_PAUSED"
@@ -1484,7 +1519,11 @@ class SingleSuperTrendRunner:
                         if not entry_ok:
                             logger.warning(f"SuperTrend [{self.symbol}]: Entry leg failed, retrying once after 2.0s...")
                             await asyncio.sleep(2.0)
-                            entry_ok = await self._execute_entry("SELL", entry_qty, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
+                            entry_qty_retry = self.quantity - abs(self.virtual_position) if abs(self.virtual_position) < self.quantity else 0
+                            if entry_qty_retry > 0:
+                                entry_ok = await self._execute_entry("SELL", entry_qty_retry, f"FLIP_ENTRY_{candle_ts}_RETRY", main_module, freeze_limit)
+                            else:
+                                entry_ok = True
                         if not entry_ok:
                             is_margin = any(kw in str(self.last_error).lower() for kw in ("margin", "shortfall", "rms"))
                             pause_status = "MARGIN_SHORTFALL_PAUSED" if is_margin else "ENTRY_FAILED_PAUSED"
@@ -1516,7 +1555,7 @@ class SingleSuperTrendRunner:
         action = "BUY" if delta > 0 else "SELL"
         is_paper = (self.execution_mode == "PAPER")
 
-        chunks = slice_quantity_for_freeze(abs_qty, freeze_limit)
+        chunks = slice_quantity_for_freeze(abs_qty, freeze_limit, lot_size=getattr(self, "lot_size", 1))
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             base_ref = f"ST_REV_{self.symbol}_{self.timeframe.upper()}_DELTA_{action}_{candle_ts}"
@@ -1554,8 +1593,8 @@ class SingleSuperTrendRunner:
                         order_ref,
                         is_paper,
                     )
-                    # Finding #5 Fix: Incrementally record filled chunk
-                    if res is None or (isinstance(res, dict) and res.get("status") in ("done", "paper_done", "partial_failure")):
+                    # Finding #5 Fix: Incrementally record filled chunk (strictly require valid dictionary status)
+                    if isinstance(res, dict) and res.get("status") in ("done", "paper_done", "partial_failure"):
                         chunk_delta = chunk_qty if delta > 0 else -chunk_qty
                         self.virtual_position += chunk_delta
                         self._save_virtual_position(main_module, self.virtual_position)
@@ -1577,6 +1616,8 @@ class SingleSuperTrendRunner:
             "shape": "arrowDown" if action == "SELL" else "arrowUp",
             "text": f"{action} {abs_qty}",
         })
+        if len(self.recent_trade_markers) > 100:
+            self.recent_trade_markers = self.recent_trade_markers[-100:]
 
     async def _execute_exit(self, side: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> bool:
         """Dispatches an Exit order with freeze-quantity slicing. Returns True on success, False on failure."""
@@ -1600,7 +1641,7 @@ class SingleSuperTrendRunner:
         is_paper = (self.execution_mode == "PAPER")
         symbol_to_trade = str(target_symbol).strip() if target_symbol else self.symbol
         
-        chunks = slice_quantity_for_freeze(qty, freeze_limit)
+        chunks = slice_quantity_for_freeze(qty, freeze_limit, lot_size=getattr(self, "lot_size", 1))
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             base_ref = f"ST_REV_EXIT_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}"
@@ -1665,6 +1706,8 @@ class SingleSuperTrendRunner:
             "shape": "arrowDown" if action == "SELL" else "arrowUp",
             "text": f"EXIT {side} ({qty})"
         })
+        if len(self.recent_trade_markers) > 100:
+            self.recent_trade_markers = self.recent_trade_markers[-100:]
         return True
 
     async def _execute_entry(self, action: str, qty: int, ref_suffix: str, main_module, freeze_limit: int = 100000, target_symbol: Optional[str] = None) -> bool:
@@ -1688,7 +1731,7 @@ class SingleSuperTrendRunner:
         is_paper = (self.execution_mode == "PAPER")
         symbol_to_trade = str(target_symbol).strip() if target_symbol else self.symbol
         
-        chunks = slice_quantity_for_freeze(qty, freeze_limit)
+        chunks = slice_quantity_for_freeze(qty, freeze_limit, lot_size=getattr(self, "lot_size", 1))
         payload = None
         for chunk_idx, chunk_qty in enumerate(chunks, start=1):
             base_ref = f"ST_REV_ENTRY_{self.symbol}_{self.timeframe.upper()}_{ref_suffix}"
@@ -1755,6 +1798,8 @@ class SingleSuperTrendRunner:
             "shape": "arrowUp" if action.upper() == "BUY" else "arrowDown",
             "text": f"{action.upper()} {qty}"
         })
+        if len(self.recent_trade_markers) > 100:
+            self.recent_trade_markers = self.recent_trade_markers[-100:]
         return True
 
 
@@ -2315,6 +2360,13 @@ class MultiSuperTrendEngine:
                 logger.info(f"reconcile_portfolio_drift [{target_sym}]: Runner in MARGIN_SHORTFALL_PAUSED. Suppressing auto-heal.")
                 continue
 
+            # Concurrency & Active Cycle Guard:
+            # If any runner for this symbol is currently locked in evaluate_cycle or has a pending rollover,
+            # suppress auto-heal to eliminate race conditions with candle closes / flips / rollovers.
+            if any(r.lock.locked() or getattr(r, "pending_rollover", False) for r in runners_for_sym):
+                logger.info(f"reconcile_portfolio_drift [{target_sym}]: Runner lock held or rollover pending. Suppressing auto-heal.")
+                continue
+
             primary_r = runners_for_sym[0]
             total_configured_lots = sum(r.quantity for r in runners_for_sym)
 
@@ -2397,120 +2449,129 @@ class MultiSuperTrendEngine:
                     })
                     continue
 
-                action = "BUY" if adj_delta > 0 else "SELL"
-                abs_adj_lots = abs(adj_delta)
-                now_ts = int(time.time())
-                order_ref = f"ST_AUTO_HEAL_{target_sym}_{action}_{now_ts}"
-                sig_id = f"st_autoheal_{str(uuid.uuid4())[:8]}"
+                async with primary_r.lock:
+                    # Re-verify latest target position and broker position after acquiring lock
+                    target_lots = sum(r.virtual_position for r in runners_for_sym)
+                    drift_lots = actual_broker_lots - target_lots
+                    if drift_lots == 0:
+                        logger.info(f"reconcile_portfolio_drift [{target_sym}]: Drift resolved during lock acquisition. Skipping dispatch.")
+                        continue
 
-                logger.info(f"🛡️ AUTO-HEAL: Dispatching corrective {action} {abs_adj_lots} lots on {target_sym}...")
-                is_paper = any(r.execution_mode == "PAPER" for r in runners_for_sym)
-                freeze_limit = getattr(config, "FREEZE_QTY_LIMIT", 100000)
-                chunks = slice_quantity_for_freeze(abs_adj_lots, freeze_limit)
+                    adj_delta = target_lots - actual_broker_lots
+                    action = "BUY" if adj_delta > 0 else "SELL"
+                    abs_adj_lots = abs(adj_delta)
+                    now_ts = int(time.time())
+                    order_ref = f"ST_AUTO_HEAL_{target_sym}_{action}_{now_ts}"
+                    sig_id = f"st_autoheal_{str(uuid.uuid4())[:8]}"
 
-                for chunk_idx, chunk_qty in enumerate(chunks, start=1):
-                    chunk_ref = format_order_ref_chunk(order_ref, chunk_idx)
-                    payload = {
-                        "action": action,
-                        "symbol": target_sym,
-                        "quantity": chunk_qty,
-                        "price": 0.0,
-                        "product_type": primary_r.product_type,
-                        "order_ref": chunk_ref,
-                        "source": "auto_heal_watchdog",
-                        "is_paper": is_paper,
-                    }
+                    logger.info(f"🛡️ AUTO-HEAL: Dispatching corrective {action} {abs_adj_lots} lots on {target_sym}...")
+                    is_paper = any(r.execution_mode == "PAPER" for r in runners_for_sym)
+                    freeze_limit = getattr(config, "FREEZE_QTY_LIMIT", 100000)
+                    chunks = slice_quantity_for_freeze(abs_adj_lots, freeze_limit, lot_size=lot_size)
 
-                    res = None
-                    if hasattr(main_module, "_dispatch_and_record"):
-                        res = await asyncio.to_thread(
-                            main_module._dispatch_and_record,
-                            f"{sig_id}_{chunk_idx}",
-                            action,
-                            target_sym,
-                            chunk_qty,
-                            0.0,
-                            chunk_ref,
-                            is_paper,
-                        )
-                    elif hasattr(xts_api_module, "place_order"):
-                        res = await asyncio.to_thread(
-                            xts_api_module.place_order,
-                            action,
-                            target_sym,
-                            chunk_qty,
-                            0.0,
-                            chunk_ref,
-                            is_paper,
-                        )
+                    for chunk_idx, chunk_qty in enumerate(chunks, start=1):
+                        chunk_ref = format_order_ref_chunk(order_ref, chunk_idx)
+                        payload = {
+                            "action": action,
+                            "symbol": target_sym,
+                            "quantity": chunk_qty,
+                            "price": 0.0,
+                            "product_type": primary_r.product_type,
+                            "order_ref": chunk_ref,
+                            "source": "auto_heal_watchdog",
+                            "is_paper": is_paper,
+                        }
 
-                    order_ok = (
-                        res is not None and 
-                        isinstance(res, dict) and 
-                        res.get("status") not in ("failed", "rejected") and
-                        res.get("order_status") != "Rejected" and
-                        res.get("code") != "e-rms-rejected" and
-                        (res.get("status") in ("done", "paper_done", "partial_failure") or res.get("type") == "success")
-                    )
-
-                    if order_ok:
-                        succ_msg = (
-                            f"✅ AUTO-HEAL EXECUTED: Dispatched {action} {chunk_qty} lots on {target_sym}. "
-                            f"Broker position brought into alignment with strategy target ({target_lots} lots)."
-                        )
-                        logger.info(succ_msg)
-                        if hasattr(xts_api_module, "send_ops_alert"):
-                            xts_api_module.send_ops_alert(succ_msg)
-                        actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "FILLED"})
-                        if target_sym in getattr(self, "_drift_rejection_history", {}):
-                            self._drift_rejection_history.pop(target_sym, None)
-                    else:
-                        fail_desc = str(
-                            (res.get("reject_reason") if isinstance(res, dict) else "") or
-                            (res.get("description") if isinstance(res, dict) else "") or
-                            (res.get("error") if isinstance(res, dict) else "") or
-                            res
-                        )
-                        is_margin_issue = any(kw in fail_desc.lower() for kw in ("margin exceeds", "margin shortfall", "margin", "rms : margin", "insufficient margin"))
-
-                        fail_msg = (
-                            f"❌ AUTO-HEAL ORDER REJECTED on {target_sym} ({action} {chunk_qty} lots): {fail_desc}. "
-                            f"Check broker margin, RMS limits, or instrument status!"
-                        )
-                        logger.error(fail_msg)
-                        if hasattr(xts_api_module, "send_ops_alert"):
-                            xts_api_module.send_ops_alert(fail_msg)
-                        actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "REJECTED", "details": res})
-
-                        if is_margin_issue:
-                            logger.critical(
-                                f"🚨 MARGIN SHORTFALL CIRCUIT BREAKER ACTIVATED on {target_sym}: "
-                                f"Extinguishing target drift (syncing virtual_position to broker {actual_broker_lots} lots) "
-                                f"and setting status to MARGIN_SHORTFALL_PAUSED."
+                        res = None
+                        if hasattr(main_module, "_dispatch_and_record"):
+                            res = await asyncio.to_thread(
+                                main_module._dispatch_and_record,
+                                f"{sig_id}_{chunk_idx}",
+                                action,
+                                target_sym,
+                                chunk_qty,
+                                0.0,
+                                chunk_ref,
+                                is_paper,
                             )
-                            for r in runners_for_sym:
-                                r.virtual_position = actual_broker_lots
-                                r.strategy_position = "FLAT" if actual_broker_lots == 0 else ("LONG" if actual_broker_lots > 0 else "SHORT")
-                                r.status = "MARGIN_SHORTFALL_PAUSED"
-                                r.last_error = f"RMS Margin Shortfall: {fail_desc[:120]}"
-                                r._save_virtual_position(main_module, actual_broker_lots)
+                        elif hasattr(xts_api_module, "place_order"):
+                            res = await asyncio.to_thread(
+                                xts_api_module.place_order,
+                                action,
+                                target_sym,
+                                chunk_qty,
+                                0.0,
+                                chunk_ref,
+                                is_paper,
+                            )
 
-                            self._drift_rejection_history[target_sym] = {
-                                "paused": True,
-                                "reason": fail_desc,
-                                "timestamp": time.time(),
-                            }
+                        order_ok = (
+                            res is not None and 
+                            isinstance(res, dict) and 
+                            res.get("status") not in ("failed", "rejected") and
+                            res.get("order_status") != "Rejected" and
+                            res.get("code") != "e-rms-rejected" and
+                            (res.get("status") in ("done", "paper_done", "partial_failure") or res.get("type") == "success")
+                        )
+
+                        if order_ok:
+                            succ_msg = (
+                                f"✅ AUTO-HEAL EXECUTED: Dispatched {action} {chunk_qty} lots on {target_sym}. "
+                                f"Broker position brought into alignment with strategy target ({target_lots} lots)."
+                            )
+                            logger.info(succ_msg)
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(succ_msg)
+                            actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "FILLED"})
+                            if target_sym in getattr(self, "_drift_rejection_history", {}):
+                                self._drift_rejection_history.pop(target_sym, None)
                         else:
-                            history = self._drift_rejection_history.setdefault(target_sym, {"count": 0, "backoff_until": 0})
-                            history["count"] += 1
-                            backoff_sec = min(60 * (2 ** history["count"]), 3600)
-                            history["backoff_until"] = time.time() + backoff_sec
-                            logger.warning(f"AUTO-HEAL COOLDOWN: Suppressing auto-heal for {target_sym} for {backoff_sec}s due to broker rejection.")
+                            fail_desc = str(
+                                (res.get("reject_reason") if isinstance(res, dict) else "") or
+                                (res.get("description") if isinstance(res, dict) else "") or
+                                (res.get("error") if isinstance(res, dict) else "") or
+                                res
+                            )
+                            is_margin_issue = any(kw in fail_desc.lower() for kw in ("margin exceeds", "margin shortfall", "margin", "rms : margin", "insufficient margin"))
 
-                        break
+                            fail_msg = (
+                                f"❌ AUTO-HEAL ORDER REJECTED on {target_sym} ({action} {chunk_qty} lots): {fail_desc}. "
+                                f"Check broker margin, RMS limits, or instrument status!"
+                            )
+                            logger.error(fail_msg)
+                            if hasattr(xts_api_module, "send_ops_alert"):
+                                xts_api_module.send_ops_alert(fail_msg)
+                            actions_taken.append({"symbol": target_sym, "action": action, "quantity": chunk_qty, "status": "REJECTED", "details": res})
 
-                    if chunk_idx < len(chunks):
-                        await asyncio.sleep(0.2)
+                            if is_margin_issue:
+                                logger.critical(
+                                    f"🚨 MARGIN SHORTFALL CIRCUIT BREAKER ACTIVATED on {target_sym}: "
+                                    f"Extinguishing target drift (syncing virtual_position to broker {actual_broker_lots} lots) "
+                                    f"and setting status to MARGIN_SHORTFALL_PAUSED."
+                                )
+                                for r in runners_for_sym:
+                                    r.virtual_position = actual_broker_lots
+                                    r.strategy_position = "FLAT" if actual_broker_lots == 0 else ("LONG" if actual_broker_lots > 0 else "SHORT")
+                                    r.status = "MARGIN_SHORTFALL_PAUSED"
+                                    r.last_error = f"RMS Margin Shortfall: {fail_desc[:120]}"
+                                    r._save_virtual_position(main_module, actual_broker_lots)
+
+                                self._drift_rejection_history[target_sym] = {
+                                    "paused": True,
+                                    "reason": fail_desc,
+                                    "timestamp": time.time(),
+                                }
+                            else:
+                                history = self._drift_rejection_history.setdefault(target_sym, {"count": 0, "backoff_until": 0})
+                                history["count"] += 1
+                                backoff_sec = min(60 * (2 ** history["count"]), 3600)
+                                history["backoff_until"] = time.time() + backoff_sec
+                                logger.warning(f"AUTO-HEAL COOLDOWN: Suppressing auto-heal for {target_sym} for {backoff_sec}s due to broker rejection.")
+
+                            break
+
+                        if chunk_idx < len(chunks):
+                            await asyncio.sleep(0.2)
 
         return {
             "status": "RECONCILED" if drift_count > 0 else "IN_SYNC",

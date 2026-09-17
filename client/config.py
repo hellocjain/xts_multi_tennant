@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import time
+import logging
 from typing import Optional
 
 # If a custom data directory is mounted (e.g. /app/data), ensure it is in sys.path
@@ -257,8 +258,11 @@ if os.path.exists(_mounted_config):
     try:
         with open(_mounted_config, "r") as _f:
             _overrides = json.load(_f)
-            for _k, _v in _overrides.items():
-                globals()[_k] = _v
+            if isinstance(_overrides, dict):
+                for _k, _v in _overrides.items():
+                    globals()[_k] = _v
+            else:
+                logging.getLogger("config").error(f"Mounted config {_mounted_config} is not a valid JSON dictionary: {_overrides}")
     except Exception as _e:
-        pass
+        logging.getLogger("config").error(f"Failed to load mounted config overrides from {_mounted_config}: {_e}", exc_info=True)
 

@@ -364,59 +364,71 @@ def send_execution_notification(action: str, symbol: str, quantity: int, price: 
 
     threading.Thread(target=_post, daemon=True, name=f"notify_{symbol}").start()
 
+_SYMBOL_LOCKS: Dict[str, threading.Lock] = {}
+_SYMBOL_LOCKS_GUARD = threading.Lock()
+
+def get_symbol_lock(symbol: str) -> threading.Lock:
+    clean_sym = symbol.strip().upper()
+    with _SYMBOL_LOCKS_GUARD:
+        if clean_sym not in _SYMBOL_LOCKS:
+            _SYMBOL_LOCKS[clean_sym] = threading.Lock()
+        return _SYMBOL_LOCKS[clean_sym]
+
 def _dispatch_and_record(sig_id, action, symbol, quantity, price, order_ref, is_paper=False):
     db_update_status(sig_id, "processing")
-    try:
-        raw_res = xts_api.execute_trade_with_retry(action, symbol, quantity, price, order_ref, is_paper=is_paper)
-        result: Dict[str, Any] = raw_res if isinstance(raw_res, dict) else {"type": "error", "raw_result": str(raw_res)}
-        res_payload = result.get("result")
-        is_paper_broker = bool(res_payload.get("IsPaperTrade")) if isinstance(res_payload, dict) else False
-        is_paper_trade = is_paper or is_paper_broker or getattr(config, "PAPER_TRADE_MODE", False)
+    sym_lock = get_symbol_lock(symbol)
+    with sym_lock:
+        try:
+            raw_res = xts_api.execute_trade_with_retry(action, symbol, quantity, price, order_ref, is_paper=is_paper)
+            result: Dict[str, Any] = raw_res if isinstance(raw_res, dict) else {"type": "error", "raw_result": str(raw_res)}
+            res_payload = result.get("result")
+            is_paper_broker = bool(res_payload.get("IsPaperTrade")) if isinstance(res_payload, dict) else False
+            is_paper_trade = is_paper or is_paper_broker or getattr(config, "PAPER_TRADE_MODE", False)
 
-        is_rejected = (
-            result.get("status") == "rejected" or 
-            result.get("order_status") == "Rejected" or
-            result.get("code") == "e-rms-rejected"
-        )
+            is_rejected = (
+                result.get("status") == "rejected" or 
+                result.get("order_status") == "Rejected" or
+                result.get("code") == "e-rms-rejected"
+            )
 
-        if is_rejected:
-            status = "failed"
-        elif result.get("type") == "success":
-            status = "paper_done" if is_paper_trade else "done"
-        elif result.get("status") == "partial_failure" or result.get("type") == "partial_failure":
-            status = "partial_failure"
-        else:
-            status = "failed"
+            if is_rejected:
+                status = "failed"
+            elif result.get("type") == "success":
+                status = "paper_done" if is_paper_trade else "done"
+            elif result.get("status") == "partial_failure" or result.get("type") == "partial_failure":
+                status = "partial_failure"
+            else:
+                status = "failed"
 
-        rej_reason = str(result.get("reject_reason") or result.get("description") or "").strip()
-        audit_result = dict(result) if isinstance(result, dict) else {"raw_result": result}
-        audit_result["_audit"] = {
-            "action": action,
-            "symbol": symbol,
-            "quantity": quantity,
-            "tv_price": price,
-            "order_ref": order_ref,
-            "is_paper_trade": is_paper_trade,
-            "dispatched_at": time.time(),
-            "reject_reason": rej_reason,
-        }
+            rej_reason = str(result.get("reject_reason") or result.get("description") or "").strip()
+            audit_result: Dict[str, Any] = dict(result) if isinstance(result, dict) else {"raw_result": result}
+            audit_result["_audit"] = {
+                "action": action,
+                "symbol": symbol,
+                "quantity": quantity,
+                "tv_price": price,
+                "order_ref": order_ref,
+                "is_paper_trade": is_paper_trade,
+                "dispatched_at": time.time(),
+                "reject_reason": rej_reason,
+            }
 
-        db_update_status(sig_id, status, audit_result)
-        send_execution_notification(action, symbol, quantity, price, status, audit_result)
-        return {
-            "status": status,
-            "result": audit_result,
-            "reject_reason": rej_reason,
-            "is_rejected": is_rejected,
-            "description": rej_reason
-        }
-    except Exception as e:
-        logger.error(f"UNCAUGHT ERROR dispatching signal {sig_id}: {e}")
-        err_res = {"error": str(e), "code": "e-uncaught"}
-        db_update_status(sig_id, "failed", err_res)
-        xts_api.send_ops_alert(f"XTS bot: uncaught error executing signal {sig_id} ({symbol}): {e}")
-        send_execution_notification(action, symbol, quantity, price, "failed", err_res)
-        return {"status": "failed", "error": str(e)}
+            db_update_status(sig_id, status, audit_result)
+            send_execution_notification(action, symbol, quantity, price, status, audit_result)
+            return {
+                "status": status,
+                "result": audit_result,
+                "reject_reason": rej_reason,
+                "is_rejected": is_rejected,
+                "description": rej_reason
+            }
+        except Exception as e:
+            logger.error(f"UNCAUGHT ERROR dispatching signal {sig_id}: {e}")
+            err_res = {"error": str(e), "code": "e-uncaught"}
+            db_update_status(sig_id, "failed", err_res)
+            xts_api.send_ops_alert(f"XTS bot: uncaught error executing signal {sig_id} ({symbol}): {e}")
+            send_execution_notification(action, symbol, quantity, price, "failed", err_res)
+            return {"status": "failed", "error": str(e)}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -536,10 +548,23 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(5)
 
     cs_task = asyncio.create_task(_custom_strat_loop())
+
+    async def _periodic_db_prune_loop():
+        while True:
+            try:
+                await asyncio.sleep(21600)  # Every 6 hours
+                await asyncio.to_thread(db_prune_old)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"Periodic db prune error: {e}")
+
+    prune_task = asyncio.create_task(_periodic_db_prune_loop())
     yield
     supertrend_engine.stop()
     st_task.cancel()
     cs_task.cancel()
+    prune_task.cancel()
 
 app = FastAPI(title="XTS Client Execution Gateway", lifespan=lifespan)
 
@@ -1260,7 +1285,7 @@ async def panic(request: Request):
 @app.post("/")
 @app.post("/webhook")
 async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
-    client_ip = request.client.host or "unknown"
+    client_ip = request.client.host if request.client else "unknown"
     now = time.time()
 
     if TRADING_PAUSED:
